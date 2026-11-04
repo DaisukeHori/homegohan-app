@@ -10,7 +10,10 @@
  *     new Date('YYYY-MM-DD').getDay() (UTC の 0 時を端末のローカル時刻で読む) で、UTC より西では前の日の曜日になった。
  *     月間統計の月の 1 日は端末のローカル時刻の月の 1 日で、月の変わり目の前後で別の月になった
  *   - 買い物リストの範囲 (明日・1週間 など) は端末のローカル時刻で日をずらしてから JST の日付にしていたので、夏時間の切り替えの日に
- *     JST の日付が 1 日ずれた
+ *     JST の日付が 1 日ずれた。範囲を選ぶ欄の表示 (ShoppingRangeModal) と、買い物リストを作る依頼の範囲 (page.tsx の calculateDateRange)
+ *     は同じ計算を 2 か所に書いていた。今は両方が shoppingRangeDates (_state/shoppingRangeDates.ts) を使うので、その関数を直接確かめる。
+ *     「○日分」の日数の欄は max 属性が打ち込みを止めないので、範囲の外の値 (3000000 など) を丸めないと日付の計算が RangeError を投げ、
+ *     画面ごと落ちる。欄の min / max の範囲に丸めることも確かめる
  *
  * ここでは、時計を止めた形で、実行環境のタイムゾーン (UTC・JST・JST より西 (America/Los_Angeles)・東 (Pacific/Kiritimati)) と
  * 時刻 (JST の日付が変わる前後・年の変わり目・うるう日・月の変わり目・夏時間の切り替え) を変えて、出す日付が JST の今日からの
@@ -23,6 +26,15 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { addDaysToDate, calendarDaysEndingAt, WEEKDAY_LABELS_JA } from '@homegohan/shared';
+import type { ShoppingRangeType } from '@/app/(main)/menus/weekly/_state/shoppingStore';
+import {
+  SHOPPING_RANGE_ALL_MEALS,
+  SHOPPING_RANGE_DAYS_MAX,
+  SHOPPING_RANGE_DAYS_MIN,
+  clampShoppingRangeDays,
+  shoppingRangeDates,
+  shoppingRangeRequest,
+} from '@/app/(main)/menus/weekly/_state/shoppingRangeDates';
 
 /** Supabase の問い合わせの記録 (表・呼んだメソッドと引数の並び) */
 interface RecordedQuery {
@@ -504,4 +516,227 @@ describe('買い物リストの範囲を選ぶ欄: 今日から n 日は JST の
       expect(text).toContain(`${c.today}〜${c.threeDaysEnd}`);
     });
   }
+});
+
+/** 「○日分」の欄で確かめる日数 (shoppingStore の既定と同じ 3 日) */
+const THREE_DAYS = 3;
+/** 「○日分」の欄に打ち込む、上限より大きい値 (2026-11-05 から 9999-12-31 までの約 2,912,074 日を超える) */
+const DAYS_FAR_ABOVE_MAX = 3000000;
+/** 「○日分」の欄に打ち込む、下限より小さい値 (0100-01-01 より前に戻る) */
+const DAYS_FAR_BELOW_MIN = -800000;
+
+interface ShoppingRangeDatesCase {
+  readonly timeZone: string;
+  /** 時計の時刻 (UTC) */
+  readonly at: string;
+  /** 選択肢ごとの範囲 (「○日分」は 3 日) */
+  readonly expected: Readonly<Record<'today' | 'tomorrow' | 'dayAfterTomorrow' | 'week' | 'days' | 'custom', readonly [string, string]>>;
+}
+
+const SHOPPING_RANGE_DATES_CASES: readonly ShoppingRangeDatesCase[] = [
+  // America/Los_Angeles の夏時間の始まりの前の日の朝 (2027-03-13 7:30 PST = JST 2027-03-14 0:30)。端末のローカル時刻で 1 日ずらすと
+  // 23 時間しか進まず、JST の日付が 1 日手前 (今日と同じ日) になる
+  {
+    timeZone: 'America/Los_Angeles',
+    at: '2027-03-13T15:30:00.000Z',
+    expected: {
+      today: ['2027-03-14', '2027-03-14'],
+      tomorrow: ['2027-03-15', '2027-03-15'],
+      dayAfterTomorrow: ['2027-03-16', '2027-03-16'],
+      week: ['2027-03-14', '2027-03-20'],
+      days: ['2027-03-14', '2027-03-16'],
+      custom: ['2027-03-14', '2027-03-14'],
+    },
+  },
+  // 夏時間の終わり (2026-11-01 PDT → PST) の前の日の朝 (2026-10-31 7:30 PDT = JST 2026-10-31 23:30)。端末のローカル時刻で 1 日ずらすと
+  // 25 時間進み、JST の日付が 1 日先になる
+  {
+    timeZone: 'America/Los_Angeles',
+    at: '2026-10-31T14:30:00.000Z',
+    expected: {
+      today: ['2026-10-31', '2026-10-31'],
+      tomorrow: ['2026-11-01', '2026-11-01'],
+      dayAfterTomorrow: ['2026-11-02', '2026-11-02'],
+      week: ['2026-10-31', '2026-11-06'],
+      days: ['2026-10-31', '2026-11-02'],
+      custom: ['2026-10-31', '2026-10-31'],
+    },
+  },
+  // JST の日付が変わる直前 (JST 23:59:59.999)
+  {
+    timeZone: 'Asia/Tokyo',
+    at: '2026-11-04T14:59:59.999Z',
+    expected: {
+      today: ['2026-11-04', '2026-11-04'],
+      tomorrow: ['2026-11-05', '2026-11-05'],
+      dayAfterTomorrow: ['2026-11-06', '2026-11-06'],
+      week: ['2026-11-04', '2026-11-10'],
+      days: ['2026-11-04', '2026-11-06'],
+      custom: ['2026-11-04', '2026-11-04'],
+    },
+  },
+  // JST の日付が変わった瞬間 (JST 0:00。UTC ではまだ前の日の 15 時)
+  {
+    timeZone: 'UTC',
+    at: '2026-11-04T15:00:00.000Z',
+    expected: {
+      today: ['2026-11-05', '2026-11-05'],
+      tomorrow: ['2026-11-06', '2026-11-06'],
+      dayAfterTomorrow: ['2026-11-07', '2026-11-07'],
+      week: ['2026-11-05', '2026-11-11'],
+      days: ['2026-11-05', '2026-11-07'],
+      custom: ['2026-11-05', '2026-11-05'],
+    },
+  },
+  // JST の年の変わり目の直前 (JST 2026-12-31 23:59:59.999。Pacific/Kiritimati ではもう 2027-01-01)
+  {
+    timeZone: 'Pacific/Kiritimati',
+    at: '2026-12-31T14:59:59.999Z',
+    expected: {
+      today: ['2026-12-31', '2026-12-31'],
+      tomorrow: ['2027-01-01', '2027-01-01'],
+      dayAfterTomorrow: ['2027-01-02', '2027-01-02'],
+      week: ['2026-12-31', '2027-01-06'],
+      days: ['2026-12-31', '2027-01-02'],
+      custom: ['2026-12-31', '2026-12-31'],
+    },
+  },
+];
+
+describe('買い物リストの範囲 (shoppingRangeDates): 範囲を選ぶ欄と依頼の範囲が同じ関数で、JST の今日から暦の計算だけでずらす (#2235 I3)', () => {
+  for (const c of SHOPPING_RANGE_DATES_CASES) {
+    describe(`実行環境のタイムゾーン ${c.timeZone}・${c.at}`, () => {
+      for (const [type, [startDate, endDate]] of Object.entries(c.expected) as [ShoppingRangeType, readonly [string, string]][]) {
+        it(`${type}: ${startDate}〜${endDate}`, () => {
+          process.env.TZ = c.timeZone;
+          const now = new Date(c.at);
+          expect(shoppingRangeDates(type, { now, daysCount: THREE_DAYS, currentWeekStart: now })).toEqual({ startDate, endDate });
+        });
+      }
+      it('買い物リストを作る依頼の範囲 (shoppingRangeRequest) も同じ日付で、今日の分は選んだ食事・ほかは 3 食とも', () => {
+        process.env.TZ = c.timeZone;
+        const now = new Date(c.at);
+        const basis = { now, currentWeekStart: now };
+        const [tomorrow] = c.expected.tomorrow;
+        expect(shoppingRangeRequest({ type: 'tomorrow', todayMeals: ['lunch'], daysCount: THREE_DAYS }, basis)).toEqual({
+          startDate: tomorrow,
+          endDate: tomorrow,
+          mealTypes: SHOPPING_RANGE_ALL_MEALS,
+        });
+        const [weekStart, weekEnd] = c.expected.week;
+        expect(shoppingRangeRequest({ type: 'week', todayMeals: ['lunch'], daysCount: THREE_DAYS }, basis)).toEqual({
+          startDate: weekStart,
+          endDate: weekEnd,
+          mealTypes: SHOPPING_RANGE_ALL_MEALS,
+        });
+        const [today] = c.expected.today;
+        expect(shoppingRangeRequest({ type: 'today', todayMeals: ['lunch', 'dinner'], daysCount: THREE_DAYS }, basis)).toEqual({
+          startDate: today,
+          endDate: today,
+          mealTypes: ['lunch', 'dinner'],
+        });
+      });
+    });
+  }
+
+  it('表示中の週 (currentWeek) は、週の始まりの JST の日付から 7 日 (夏時間の終わりの週・年をまたぐ週)', () => {
+    process.env.TZ = 'America/Los_Angeles';
+    // America/Los_Angeles の 2026-11-01 0:00 (PDT) = JST 2026-11-01 16:00。この週の中で PDT → PST に切り替わる
+    const dstEndWeekStart = new Date(2026, 10, 1);
+    expect(shoppingRangeDates('currentWeek', { now: dstEndWeekStart, daysCount: THREE_DAYS, currentWeekStart: dstEndWeekStart })).toEqual({
+      startDate: '2026-11-01',
+      endDate: '2026-11-07',
+    });
+    process.env.TZ = 'Asia/Tokyo';
+    const yearEndWeekStart = new Date(2026, 11, 28);
+    expect(shoppingRangeDates('currentWeek', { now: yearEndWeekStart, daysCount: THREE_DAYS, currentWeekStart: yearEndWeekStart })).toEqual({
+      startDate: '2026-12-28',
+      endDate: '2027-01-03',
+    });
+  });
+
+  it('「○日分」の日数は欄の min / max の範囲に丸める (範囲の外の値・小数・数でない値でも投げない)', () => {
+    expect(clampShoppingRangeDays(DAYS_FAR_ABOVE_MAX)).toBe(SHOPPING_RANGE_DAYS_MAX);
+    expect(clampShoppingRangeDays(DAYS_FAR_BELOW_MIN)).toBe(SHOPPING_RANGE_DAYS_MIN);
+    expect(clampShoppingRangeDays(0)).toBe(SHOPPING_RANGE_DAYS_MIN);
+    expect(clampShoppingRangeDays(Number.NaN)).toBe(SHOPPING_RANGE_DAYS_MIN);
+    expect(clampShoppingRangeDays(Number.POSITIVE_INFINITY)).toBe(SHOPPING_RANGE_DAYS_MIN);
+    expect(clampShoppingRangeDays(THREE_DAYS + 0.7)).toBe(THREE_DAYS);
+    expect(clampShoppingRangeDays(SHOPPING_RANGE_DAYS_MAX)).toBe(SHOPPING_RANGE_DAYS_MAX);
+    expect(clampShoppingRangeDays(SHOPPING_RANGE_DAYS_MIN)).toBe(SHOPPING_RANGE_DAYS_MIN);
+
+    process.env.TZ = 'UTC';
+    const now = new Date('2026-11-04T15:00:00.000Z');
+    expect(shoppingRangeDates('days', { now, daysCount: DAYS_FAR_ABOVE_MAX, currentWeekStart: now })).toEqual({
+      startDate: '2026-11-05',
+      endDate: addDaysToDate('2026-11-05', SHOPPING_RANGE_DAYS_MAX - 1),
+    });
+    expect(shoppingRangeDates('days', { now, daysCount: DAYS_FAR_BELOW_MIN, currentWeekStart: now })).toEqual({
+      startDate: '2026-11-05',
+      endDate: '2026-11-05',
+    });
+  });
+});
+
+describe('買い物リストの範囲を選ぶ欄: 「○日分」の日数に範囲の外の値を入れても欄が描け、丸めた日数の範囲を出す (#2235 I3)', () => {
+  /** 時計を JST 2026-11-05 0:00 (UTC で前の日の 15 時) に止めて、「○日分」を選んだ欄を描く */
+  async function renderDaysRange(daysCount: number) {
+    useShoppingStore.getState().setShoppingRange({ type: 'days', todayMeals: ['breakfast', 'lunch', 'dinner'], daysCount });
+    await renderAt(
+      'UTC',
+      '2026-11-04T15:00:00.000Z',
+      FROZEN_CLOCK_MS,
+      <ShoppingRangeModal
+        isTodayExpanded={false}
+        currentWeekStart={new Date('2026-11-04T15:00:00.000Z')}
+        onClose={() => undefined}
+        onToggleTodayExpanded={() => undefined}
+        onGenerate={async () => undefined}
+      />,
+    );
+  }
+
+  /** 日数の欄に value を打ち込む (React の onChange が拾う形: 値の setter で入れて input を投げる) */
+  async function typeDays(value: string) {
+    const input = container.querySelector<HTMLInputElement>('input[type="number"]');
+    expect(input, '日数の欄が無い').not.toBeNull();
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    await act(async () => {
+      setValue?.call(input, value);
+      input?.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    return input;
+  }
+
+  it(`上限より大きい値 (${DAYS_FAR_ABOVE_MAX}) を打ち込むと ${SHOPPING_RANGE_DAYS_MAX} 日に丸め、今日から ${SHOPPING_RANGE_DAYS_MAX} 日の範囲を出す`, async () => {
+    await renderDaysRange(THREE_DAYS);
+    const input = await typeDays(String(DAYS_FAR_ABOVE_MAX));
+    expect(useShoppingStore.getState().shoppingRange.daysCount).toBe(SHOPPING_RANGE_DAYS_MAX);
+    expect(input?.value).toBe(String(SHOPPING_RANGE_DAYS_MAX));
+    expect(input?.min).toBe(String(SHOPPING_RANGE_DAYS_MIN));
+    expect(input?.max).toBe(String(SHOPPING_RANGE_DAYS_MAX));
+    expect(container.textContent).toContain(`${SHOPPING_RANGE_DAYS_MAX}日分（11月5日〜11月18日）`);
+  });
+
+  it(`下限より小さい値 (${DAYS_FAR_BELOW_MIN})・数でない値を打ち込むと ${SHOPPING_RANGE_DAYS_MIN} 日に丸め、今日だけの範囲を出す`, async () => {
+    await renderDaysRange(THREE_DAYS);
+    await typeDays(String(DAYS_FAR_BELOW_MIN));
+    expect(useShoppingStore.getState().shoppingRange.daysCount).toBe(SHOPPING_RANGE_DAYS_MIN);
+    expect(container.textContent).toContain(`${SHOPPING_RANGE_DAYS_MIN}日分（11月5日）`);
+    await typeDays(String(THREE_DAYS + 1));
+    expect(container.textContent).toContain(`${THREE_DAYS + 1}日分（11月5日〜11月8日）`);
+    await typeDays('');
+    expect(useShoppingStore.getState().shoppingRange.daysCount).toBe(SHOPPING_RANGE_DAYS_MIN);
+    expect(container.textContent).toContain(`${SHOPPING_RANGE_DAYS_MIN}日分（11月5日）`);
+  });
+
+  it('範囲の外の日数がすでに入っていても (欄を通らずに入った値)、欄は描け、丸めた日数を出す', async () => {
+    await renderDaysRange(DAYS_FAR_ABOVE_MAX);
+    expect(container.textContent).toContain(`${SHOPPING_RANGE_DAYS_MAX}日分（11月5日〜11月18日）`);
+    await act(async () => {
+      root.render(<></>);
+    });
+    await renderDaysRange(DAYS_FAR_BELOW_MIN);
+    expect(container.textContent).toContain(`${SHOPPING_RANGE_DAYS_MIN}日分（11月5日）`);
+  });
 });

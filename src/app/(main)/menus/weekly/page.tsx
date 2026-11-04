@@ -11,7 +11,7 @@ import {
   useServingsConfigStore,
   usePantryStore,
   useShoppingStore,
-  SHOPPING_RANGE_WEEK_DAYS,
+  shoppingRangeRequest,
   useFormDraftStore,
   convertV4ProgressToUIFormat,
   resumePendingGenerationAction,
@@ -36,7 +36,7 @@ import { useAiConsultationReceiver, type AiConsultationPlaceResult, type AiConsu
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, addDaysToDate, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
 // isUltimateModeWeeklyMenuRequest (究極モードの生成かの判定) は、Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609)
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
@@ -3693,66 +3693,12 @@ export default function WeeklyMenuPage() {
   }, [cleanupShoppingListSubscription]);
 
   // 買い物範囲から日付範囲を計算
-  const calculateDateRange = useCallback(() => {
-    // 今日からの日付は、時計を 1 回だけ読んだ JST の今日から暦の計算だけでずらす (#2235 I3。範囲を選ぶ欄
-    // (ShoppingRangeModal) が出す日付と同じ求め方。端末のローカル時刻で日をずらすと、夏時間の切り替えの日に JST の日付が 1 日ずれうる)
-    const todayStr = todayLocal();
-    
-    switch (shoppingRange.type) {
-      case 'today':
-        return {
-          startDate: todayStr,
-          endDate: todayStr,
-          mealTypes: shoppingRange.todayMeals,
-        };
-      case 'tomorrow': {
-        const tomorrow = addDaysToDate(todayStr, 1);
-        return {
-          startDate: tomorrow,
-          endDate: tomorrow,
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-      }
-      case 'dayAfterTomorrow': {
-        const dayAfter = addDaysToDate(todayStr, 2);
-        return {
-          startDate: dayAfter,
-          endDate: dayAfter,
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-      }
-      case 'week': {
-        return {
-          startDate: todayStr,
-          endDate: addDaysToDate(todayStr, SHOPPING_RANGE_WEEK_DAYS - 1),
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-      }
-      case 'days': {
-        return {
-          startDate: todayStr,
-          endDate: addDaysToDate(todayStr, shoppingRange.daysCount - 1),
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-      }
-      // UX2-09: 「表示中の週」= カレンダーで現在開いている週（今日起点の1週間分とは独立）
-      case 'currentWeek': {
-        const currentWeekEnd = new Date(weekStart);
-        currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
-        return {
-          startDate: formatLocalDate(weekStart),
-          endDate: formatLocalDate(currentWeekEnd),
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-      }
-      default:
-        return {
-          startDate: todayStr,
-          endDate: todayStr,
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-    }
-  }, [shoppingRange, weekStart]);
+  // 範囲を選ぶ欄 (ShoppingRangeModal) が出す日付と同じ関数で求める (#2235 I3。今日から数える範囲は、時計を 1 回だけ読んだ
+  // JST の今日から暦の計算だけでずらす。端末のローカル時刻で日をずらすと、夏時間の切り替えの日に JST の日付が 1 日ずれうる)
+  const calculateDateRange = useCallback(
+    () => shoppingRangeRequest(shoppingRange, { now: new Date(), currentWeekStart: weekStart }),
+    [shoppingRange, weekStart],
+  );
 
   // Regenerate shopping list from menu (非同期版)
   const regenerateShoppingList = async () => {

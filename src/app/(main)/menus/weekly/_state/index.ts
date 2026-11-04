@@ -1,7 +1,14 @@
 // Refactor B Phase B-1: _state barrel export
 export { useFormDraftStore } from './formDraftStore';
 export { usePantryStore } from './pantryStore';
-export { useShoppingStore, SHOPPING_RANGE_WEEK_DAYS } from './shoppingStore';
+export { useShoppingStore } from './shoppingStore';
+export {
+  SHOPPING_RANGE_DAYS_MAX,
+  SHOPPING_RANGE_DAYS_MIN,
+  clampShoppingRangeDays,
+  shoppingRangeDates,
+  shoppingRangeRequest,
+} from './shoppingRangeDates';
 export type { ShoppingRangeType, ShoppingRangeSelection } from './shoppingStore';
 export { useServingsConfigStore } from './servingsConfigStore';
 

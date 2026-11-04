@@ -5,10 +5,17 @@ import { motion, AnimatePresence } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { X, ChevronDown, ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
 import type { ServingsConfig } from "@/types/domain";
-import { MEAL_LABELS, addDaysToDate, formatLocalDate, formatDateJa, todayLocal } from "@homegohan/shared";
+import { MEAL_LABELS, formatDateJa } from "@homegohan/shared";
 // 区分の短い名前 (人数の表の 朝 / 昼 / 夜) は Web の区分の見た目の表から引く (#1665)
 import { SERVINGS_MEAL_SHORT_LABELS } from "@/lib/meal-type-visuals";
-import { useShoppingStore, useServingsConfigStore, SHOPPING_RANGE_WEEK_DAYS } from "../../_state";
+import {
+  useShoppingStore,
+  useServingsConfigStore,
+  SHOPPING_RANGE_DAYS_MAX,
+  SHOPPING_RANGE_DAYS_MIN,
+  clampShoppingRangeDays,
+  shoppingRangeDates,
+} from "../../_state";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const colors = {
@@ -52,17 +59,17 @@ export function ShoppingRangeModal({
   const setServingsConfig = useServingsConfigStore((s) => s.setServingsConfig);
 
   // UX2-09: 各選択肢に具体的な日付範囲を併記する
-  // 今日からの日付は、時計を 1 回だけ読んだ JST の今日から暦の計算だけでずらす (#2235 I3。買い物リストを作る範囲
-  // (page.tsx の calculateDateRange) と同じ求め方。端末のローカル時刻で日をずらすと、夏時間の切り替えの日に JST の日付が 1 日ずれうる)
-  const todayStr = todayLocal();
-  const tomorrowStr = addDaysToDate(todayStr, 1);
-  const dayAfterStr = addDaysToDate(todayStr, 2);
-  const daysEndStr = addDaysToDate(todayStr, shoppingRange.daysCount - 1);
-  const weekEndStr = addDaysToDate(todayStr, SHOPPING_RANGE_WEEK_DAYS - 1);
-  const currentWeekStartStr = formatLocalDate(currentWeekStart);
-  const currentWeekEndDate = new Date(currentWeekStart);
-  currentWeekEndDate.setDate(currentWeekEndDate.getDate() + 6);
-  const currentWeekEndStr = formatLocalDate(currentWeekEndDate);
+  // 買い物リストを作る範囲 (page.tsx の calculateDateRange) と同じ関数 shoppingRangeDates で求める (#2235 I3。今日から数える範囲は、
+  // 時計を 1 回だけ読んだ JST の今日から暦の計算だけでずらす。端末のローカル時刻で日をずらすと、夏時間の切り替えの日に JST の日付が 1 日ずれうる)
+  // 「○日分」の日数は欄の min / max の範囲に丸めたものを表示にも範囲にも使う (範囲の外の値で日付の計算が投げないように)
+  const daysCount = clampShoppingRangeDays(shoppingRange.daysCount);
+  const rangeBasis = { now: new Date(), daysCount, currentWeekStart };
+  const todayStr = shoppingRangeDates('today', rangeBasis).startDate;
+  const tomorrowStr = shoppingRangeDates('tomorrow', rangeBasis).startDate;
+  const dayAfterStr = shoppingRangeDates('dayAfterTomorrow', rangeBasis).startDate;
+  const daysEndStr = shoppingRangeDates('days', rangeBasis).endDate;
+  const weekEndStr = shoppingRangeDates('week', rangeBasis).endDate;
+  const { startDate: currentWeekStartStr, endDate: currentWeekEndStr } = shoppingRangeDates('currentWeek', rangeBasis);
 
   // #1052 (体系的 a11y): ステップにより見出しが変わるため aria-labelledby ではなく
   // 動的な aria-label を使う。
@@ -237,7 +244,7 @@ export function ShoppingRangeModal({
                 }}
               >
                 <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'days' ? '#fff' : colors.text }}>
-                  {shoppingRange.daysCount}日分
+                  {daysCount}日分
                   <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateRangeLabel(todayStr, daysEndStr)}）</span>
                 </span>
               </button>
@@ -246,10 +253,11 @@ export function ShoppingRangeModal({
                 <div className="pl-4 pt-2 flex items-center gap-2">
                   <input
                     type="number"
-                    min={1}
-                    max={14}
-                    value={shoppingRange.daysCount}
-                    onChange={(e) => setShoppingRange({ ...shoppingRange, daysCount: parseInt(e.target.value) || 1 })}
+                    min={SHOPPING_RANGE_DAYS_MIN}
+                    max={SHOPPING_RANGE_DAYS_MAX}
+                    value={daysCount}
+                    // max 属性は打ち込みを止めないので、欄の範囲に丸めてから持つ (数でない入力・空は下限)
+                    onChange={(e) => setShoppingRange({ ...shoppingRange, daysCount: clampShoppingRangeDays(parseInt(e.target.value, 10)) })}
                     className="w-20 p-2 rounded-lg text-center text-[14px] outline-none"
                     style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
                   />
