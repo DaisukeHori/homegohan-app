@@ -197,10 +197,16 @@ async function waitFor(condition: () => boolean) {
   expect(condition()).toBe(true);
 }
 
+/**
+ * 押下のあとに何も起きないことを確かめるときに待つ実時間 (ミリ秒)。押下の続き (同意の確認はすぐ返る mock・fetch は mock) は
+ * マイクロタスクで進むので、待ちの 1 回 (tests/helpers/act-wait.ts の ACT_WAIT_POLL_MS = 20) より少し長く取る
+ */
+const SETTLE_MS = 50;
+
 /** 押下のあとの非同期の続き (同意の確認・fetch) が走りきるだけの実時間を待つ (何も起きないことを確かめるとき) */
 async function settle() {
   await act(async () => {
-    await sleepRealTime(50);
+    await sleepRealTime(SETTLE_MS);
   });
 }
 

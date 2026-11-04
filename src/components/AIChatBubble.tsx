@@ -16,7 +16,7 @@ import { useAiConsent } from "@/hooks/useAiConsent";
 import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiDailyLimitMessageOfResponse } from "@/lib/ai/daily-limit-client";
 import { aiSummarySkippedNote } from "@/lib/ai/consent-config";
-import { todayLocal, parseLocalDate, formatLocalDate } from "@/lib/date-utils";
+import { todayLocal, addDaysToDate } from "@/lib/date-utils";
 // AI 応答を HTML にして dangerouslySetInnerHTML へ渡すときは、必ずこの関数を通す (#1169)
 import { parseMarkdown } from "@/lib/markdown-lite";
 // AI 相談の緊急停止中 (503 + AI_CHAT_DISABLED) にサーバーが返すやさしい文面を、そのまま画面に出す (#1148)
@@ -387,6 +387,26 @@ function useUnmountClearedTimeouts(): (callback: () => void, delayMs: number) =>
   }, []);
 }
 
+/** 1 日分の献立の既定の日を、JST の今日から何日後にするか (週の画面の表示の日が無い・今日のときの明日) */
+const DAY_MENU_DEFAULT_OFFSET_DAYS = 1;
+
+/** 1 日分の献立の日付の欄で選べる最後の日を、JST の今日から何日後にするか (欄の下の『今日から2週間先まで選択できます』) */
+const DAY_MENU_MAX_OFFSET_DAYS = 14;
+
+/**
+ * JST の暦日 day (YYYY-MM-DD) を offsetDays 日ずらした暦日 (#2235 I8)。暦の計算 (addDaysToDate) だけで求めるので、端末の
+ * タイムゾーンに左右されない (以前は端末の 0 時の Date を setDate でずらしてから JST の日付にしていて、端末が JST より東だと
+ * 1 日戻った)。描画中に呼ぶので投げない: ずらした先が暦の計算で扱える範囲の外 (addDaysToDate の RangeError) なら null
+ */
+function shiftCalendarDayOrNull(day: string, offsetDays: number): string | null {
+  try {
+    return addDaysToDate(day, offsetDays);
+  } catch (e) {
+    if (e instanceof RangeError) return null;
+    throw e;
+  }
+}
+
 /** 献立の作成が、同意が無くて止められたときにチャットに出す一文 (T15 / #1154。同意画面は AiConsentRequiredHost が出す) */
 const V4_CONSENT_REQUIRED_CHAT_NOTE =
   'AI へのデータ提供への同意が必要なため、献立は作成しませんでした。同意したあとに、もう一度お試しください。';
@@ -455,6 +475,7 @@ export default function AIChatBubble() {
   // page (published via window.__weeklyCurrentDate). If unavailable, fall back
   // to *tomorrow* rather than today to avoid silently overwriting today's
   // existing menu when the user opens this modal for a future day.
+  // 明日は、時計を 1 回だけ読んだ JST の今日から暦の計算でずらす (#2235 I8)。翌日を暦の計算で扱えない日 (9999-12-31) は今日
   const computeDefaultDayMenuDate = (): string => {
     const todayStr = todayLocal();
     if (typeof window !== 'undefined') {
@@ -463,9 +484,7 @@ export default function AIChatBubble() {
         if (fromWeekly !== todayStr) return fromWeekly;
       }
     }
-    const tomorrow = parseLocalDate(todayStr);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    return formatLocalDate(tomorrow);
+    return shiftCalendarDayOrNull(todayStr, DAY_MENU_DEFAULT_OFFSET_DAYS) ?? todayStr;
   };
   const [selectedDate, setSelectedDate] = useState<string>(() => computeDefaultDayMenuDate());
 
@@ -544,6 +563,14 @@ export default function AIChatBubble() {
   // resolveUnconfirmedSends (モバイルの AIAdvisorSheet と同じ)
   const unconfirmedSendsRef = useRef<UnconfirmedSend[]>([]);
   const claimedSavedUserIdsRef = useRef<string[]>([]);
+  // 送信中か・相談を閉じる (/close) の応答待ちの最中か (#2235 I8。isSending / isClosingSession と同じ値を ref でも持つのは、
+  // ボタンを止める描画を待たずに今の値を見て、同じ描画のうちの 2 度目の押下も止めるため。モバイルの AIAdvisorSheet の sendingRef /
+  // closingSessionRef と同じ形)。閉じる応答待ちの間は、送信 (入力欄・送信ボタン・クイック質問)・新しい相談・相談の切り替えを止める
+  // (止めないと、送った文は閉じる側の相談へ送られて閉じたあとの新しい相談で画面から消え、手で始めた新しい相談は閉じる側の作成と
+  // 合わせて 2 つ作られ、選んだ相談は閉じたあとの新しい相談で上書きされた)。逆に送信中は閉じるを止める (送信の返答が閉じた相談にだけ
+  // 保存され、新しい相談の画面には出ない)
+  const sendingRef = useRef(false);
+  const closingSessionRef = useRef(false);
 
   /** 送った文の保存行 (id) をその送信に当てた印を付ける (確かめられなかった前の送信がこの行を自分のものとして当てないように) */
   const claimSavedUserMessageId = useCallback((id: unknown) => {
@@ -755,7 +782,16 @@ export default function AIChatBubble() {
     }
   };
 
-  // 新規セッション作成
+  /**
+   * 「新しい相談を始める」の押下 (#2235 I8)。相談を閉じる応答待ちの間は始めない (ボタンも止めている。ref で見るのは、閉じると同じ
+   * 描画のうちの押下も止めるため)。閉じる側は応答のあと自分で新しい相談を作る (createNewSession) ので、ここで作ると 2 つになる
+   */
+  const pressNewSession = async () => {
+    if (closingSessionRef.current) return;
+    await createNewSession();
+  };
+
+  // 新規セッション作成 (「新しい相談を始める」の押下 pressNewSession・チャットを開いたとき・相談を閉じたあとから呼ぶ)
   const createNewSession = async () => {
     setIsLoading(true);
     try {
@@ -1032,11 +1068,15 @@ export default function AIChatBubble() {
    * 入力欄に戻さず、『入力欄の文をもう一度送ってください』の文が空の入力欄を指した (おすすめの質問は、ようこその一文だけのときに
    * 出るので、楽観的に出したメッセージで消え、押し直せない)。#2206 G2 で 1 つにまとめた。
    * 送らなかったとき (「同意しない」・同意が必要で止められた) と、取り直しで届いていない・確かめられない・取り直せないときは、
-   * どちらから送っても、送った文を入力欄に戻す
+   * どちらから送っても、送った文を入力欄に戻す。
+   * 送信中・相談を閉じる応答待ちの最中は送らない (#2235 I8。送信ボタン・入力欄・おすすめの質問も止めている。ref で見るのは、
+   * 同じ描画のうちの 2 度目の押下も止めるため。閉じる応答待ちの最中に送ると、閉じる側の相談へ送られ、閉じたあとの新しい相談で
+   * 送った文と返答が画面から消える)。sendingRef は送らなかったとき (「同意しない」) と送り終わったとき (finally) に下ろす
    */
   const sendMessage = async (text: string) => {
     const userMessage = text.trim();
-    if (!userMessage || !currentSessionId || isSending) return;
+    if (!userMessage || !currentSessionId || isSending || sendingRef.current || closingSessionRef.current) return;
+    sendingRef.current = true;
 
     // 応答を受け取れなかったときの取り直しで、送った文を見分けるため、送る前に出ていたメッセージの id を持つ (#2201 U3)
     const knownMessageIds = knownUserMessageIdsOf(messages);
@@ -1074,6 +1114,7 @@ export default function AIChatBubble() {
     // 「同意しない」なら相談文を AI に送らない
     if ((await ensureAiConsent()) === 'declined') {
       undoOptimisticMessages();
+      sendingRef.current = false;
       setIsSending(false);
       return;
     }
@@ -1259,6 +1300,7 @@ export default function AIChatBubble() {
       ));
     } finally {
       clearTimeout(clientTimeoutId);
+      sendingRef.current = false;
       setIsSending(false);
     }
   };
@@ -1372,6 +1414,8 @@ export default function AIChatBubble() {
 
   // セッション切り替え
   const switchSession = async (sessionId: string) => {
+    // 相談を閉じる応答待ちの最中は切り替えない (#2235 I8。相談の行も止めている。閉じたあとの新しい相談が、選んだ相談を上書きする)
+    if (closingSessionRef.current) return;
     setCurrentSessionId(sessionId);
     setShowSessionList(false);
     await fetchMessages(sessionId);
@@ -1405,8 +1449,11 @@ export default function AIChatBubble() {
 
   // セッションを終了して要約を生成
   const closeSession = async () => {
-    if (!currentSessionId || isClosingSession) return;
+    // 送信中も閉じない (#2235 I8。送信の返答は閉じた相談にだけ保存され、閉じたあとの新しい相談の画面には出ない。ボタンも止めている。
+    // ref で見るのは、同じ描画のうちの 2 度目の押下・送信と同じ描画のうちの押下も止めるため)
+    if (!currentSessionId || isClosingSession || closingSessionRef.current || isSending || sendingRef.current) return;
 
+    closingSessionRef.current = true;
     setIsClosingSession(true);
     try {
       const res = await fetch(
@@ -1451,6 +1498,7 @@ export default function AIChatBubble() {
     } catch (e) {
       console.error('Failed to close session:', e);
     } finally {
+      closingSessionRef.current = false;
       setIsClosingSession(false);
     }
   };
@@ -1525,6 +1573,13 @@ export default function AIChatBubble() {
   if (isNativeApp) {
     return null;
   }
+
+  // 送信・入力・おすすめの質問を止めるか: 送信中・相談を閉じる応答待ちの最中 (#2235 I8)
+  const inputLocked = isSending || isClosingSession;
+  // 1 日分の献立の日付の欄の下限 (JST の今日) と上限 (その 14 日後)。時計は 1 回だけ読む (#2235 I8。以前は下限と上限で別々に読み、
+  // 上限は端末の 0 時の Date を setDate でずらしていた)。上限を暦の計算で扱えない日は、上限を付けない
+  const dayMenuToday = showDayMenuModal ? todayLocal() : null;
+  const dayMenuMaxDate = dayMenuToday === null ? null : shiftCalendarDayOrNull(dayMenuToday, DAY_MENU_MAX_OFFSET_DAYS);
 
   return (
     <>
@@ -1643,7 +1698,7 @@ export default function AIChatBubble() {
               <div className="flex items-center gap-1">
                 <button
                   onClick={closeSession}
-                  disabled={isClosingSession || !currentSessionId}
+                  disabled={isClosingSession || isSending || !currentSessionId}
                   className="p-2 rounded-full hover:bg-gray-100"
                   title="相談を終了して要約を保存"
                 >
@@ -1680,9 +1735,11 @@ export default function AIChatBubble() {
                   style={{ background: colors.card, borderColor: colors.border }}
                 >
                   <div className="p-2 max-h-40 overflow-y-auto">
+                    {/* 新しい相談・相談の切り替えは、相談を閉じる応答待ちの最中は止める (#2235 I8。送信中は止めない) */}
                     <button
-                      onClick={createNewSession}
-                      className="w-full px-3 py-2 rounded-lg text-left flex items-center gap-2 hover:bg-gray-100"
+                      onClick={pressNewSession}
+                      disabled={isClosingSession}
+                      className="w-full px-3 py-2 rounded-lg text-left flex items-center gap-2 hover:bg-gray-100 disabled:opacity-50"
                     >
                       <MessageCircle size={14} color={colors.primary} />
                       <span style={{ fontSize: 13, color: colors.primary, fontWeight: 500 }}>
@@ -1694,7 +1751,8 @@ export default function AIChatBubble() {
                       <button
                         key={session.id}
                         onClick={() => switchSession(session.id)}
-                        className={`w-full px-3 py-2 rounded-lg text-left hover:bg-gray-100 ${
+                        disabled={isClosingSession}
+                        className={`w-full px-3 py-2 rounded-lg text-left hover:bg-gray-100 disabled:opacity-50 ${
                           currentSessionId === session.id ? 'bg-gray-100' : ''
                         }`}
                       >
@@ -1769,7 +1827,8 @@ export default function AIChatBubble() {
                           key={prompt}
                           // 送信欄と同じ送信の流れ (sendMessage) を通す。取り直しの縁の扱いと、送った文を入力欄に戻すのも同じ (#2206 G2)
                           onClick={() => sendMessage(prompt)}
-                          className="w-full text-left px-3 py-2 rounded-xl border hover:bg-gray-50 transition-colors"
+                          disabled={inputLocked}
+                          className="w-full text-left px-3 py-2 rounded-xl border hover:bg-gray-50 transition-colors disabled:opacity-50"
                           style={{
                             borderColor: colors.border,
                             background: colors.card,
@@ -2000,11 +2059,11 @@ export default function AIChatBubble() {
                       fontSize: 14,
                       color: colors.text,
                     }}
-                    disabled={isSending || !currentSessionId}
+                    disabled={inputLocked || !currentSessionId}
                   />
                   <button
                     onClick={() => sendMessage(inputText)}
-                    disabled={!inputText.trim() || isSending || !currentSessionId}
+                    disabled={!inputText.trim() || inputLocked || !currentSessionId}
                     aria-label="メッセージを送信"
                     className="w-10 h-10 rounded-full flex items-center justify-center"
                     style={{
@@ -2063,12 +2122,8 @@ export default function AIChatBubble() {
                   type="date"
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
-                  min={todayLocal()}
-                  max={(() => {
-                    const maxDate = parseLocalDate(todayLocal());
-                    maxDate.setDate(maxDate.getDate() + 14);
-                    return formatLocalDate(maxDate);
-                  })()}
+                  min={dayMenuToday ?? undefined}
+                  max={dayMenuMaxDate ?? undefined}
                   className="w-full px-4 py-3 rounded-xl border text-center"
                   style={{
                     borderColor: colors.border,
