@@ -1434,16 +1434,15 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     expect(server.days.get(today)?.[0].isCompleted, '完了の切り替えを送っていない (検査が空振りしている)').toBe(true);
     expect(shownCompleted()).toBe(true);
 
-    const mealPlansCallsBeforeRelease = callsTo('/api/meal-plans');
+    const displayedWeekReadsBeforeRelease = mealPlansCallsFor(displayedWeekRangeKey());
     await act(async () => {
       release();
     });
     await settle();
     expect(shownCompleted(), '切り替えの前に読んだ取り直しの応答が、完了を戻した').toBe(true);
-    // 置かなかった応答のぶん 1 回読み直す (表示中の週 + 月のカレンダーの印の月。#2206 G1)
-    expect(callsTo('/api/meal-plans') - mealPlansCallsBeforeRelease, '置かなかった応答のぶん読み直していない').toBe(
-      1 + calendarMonthsReadByRefetch(),
-    );
+    // 置かなかった応答のぶん 1 回読み直す (表示中の週をもう 1 回読む。#2206 G1: 月のカレンダーの印は月ごとに順に読むので、止めていた
+    // 取り直しの残りの月も解いたあとに読む。読み直しの回数は表示中の週の読み取りで数える)
+    expect(mealPlansCallsFor(displayedWeekRangeKey()) - displayedWeekReadsBeforeRelease, '置かなかった応答のぶん読み直していない').toBe(1);
   });
 
   it('食事の完了の切り替えの待ち (250ms) のあいだに取り直しが置いた献立を、切り替えの楽観的な更新で古い献立に戻さない (#2201 U2)', async () => {
@@ -1744,12 +1743,11 @@ async function renderWithShoppingRegenerationInProgress(): Promise<{ complete: (
   };
 }
 
-/** 完了の知らせ (成功のモーダル) を閉じる (モーダルが開いている間は取り直しの応答を置かないので、置き方を確かめる前に閉じる) */
-async function dismissSuccessDialog() {
-  const ok = container.querySelector<HTMLButtonElement>('[role="dialog"] button');
-  if (!ok) throw new Error('完了の知らせが出ていない');
-  await clickButton(ok);
-  expect(document.querySelector('[role="dialog"]'), '完了の知らせが閉じていない').toBeNull();
+/** act の中で、応答の続き (fetch → res.json() → place) を流しきる (描画は act の終わりまで流さない) */
+async function drainTasks() {
+  for (let i = 0; i < SETTLE_TASKS; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 const shoppingItemNames = () => useShoppingStore.getState().shoppingList.map((item) => item.itemName);
@@ -1942,15 +1940,23 @@ describe('献立表 (/menus/weekly) の受け手の縁 (#2206 G1)', () => {
     await notifyAiConsultationSucceeded('update_meal', { updated: true });
     server.mealPlansHold = null;
 
-    // 再生成が終わる: 完了の監視が再生成した一覧を読んで置く
+    // 再生成が終わる: 完了の監視の一覧の読み直し (GET /api/shopping-list) の応答を止める
     server.shoppingItems = [AFTER_ITEM];
+    const listRead = heldResponse();
+    server.shoppingListHold = listRead.hold;
     await regeneration.complete();
-    expect(shoppingItemNames(), '完了の監視が再生成した一覧を置いていない (検査が空振りしている)').toEqual([AFTER_ITEM.itemName]);
-    await dismissSuccessDialog();
+    server.shoppingListHold = null;
+    expect(callsTo('/api/shopping-list'), '完了の監視が一覧を読み直していない (検査の前提が崩れた)').toBe(1);
 
-    // 再生成を待つあいだに始まった取り直しの応答 (再生成の前の一覧) が後から届く
+    // 完了の監視が再生成した一覧を置き、そのあとに取り直しの応答 (再生成の前の一覧) が届く。完了の知らせ (モーダル) は描画される前に
+    // 届けて、モーダルで取り直しの応答を止めずに置き方を見る (同じ act の中で、描画を流さずに応答を順に届ける)
     await act(async () => {
+      listRead.release();
+      await drainTasks();
+      expect(shoppingItemNames(), '完了の監視が再生成した一覧を置いていない (検査が空振りしている)').toEqual([AFTER_ITEM.itemName]);
+      expect(document.querySelector('[role="dialog"]'), '完了の知らせが先に描かれた (検査の前提が崩れた)').toBeNull();
       refetch.release();
+      await drainTasks();
     });
     await settle();
     expect(shoppingItemNames(), '取り直しの古い応答で、再生成した一覧を再生成の前の一覧に戻した').toEqual([AFTER_ITEM.itemName]);
