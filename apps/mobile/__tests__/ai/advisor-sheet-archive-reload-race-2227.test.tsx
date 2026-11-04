@@ -188,8 +188,8 @@ describe('#2227 H1 アーカイブの応答待ちの間は「最新の会話を�
       fireEvent.press(screen.getByTestId('ai-timeout-reload'));
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(CLOSE_URL, expect.objectContaining({ method: 'POST' })));
-    expect(reloadStarted()).toBe(false);
 
+    // 先に結果を見る (直す前は、取り直しが立てた印で createNewSession が黙って戻り、新しい相談が作られない)
     await expectNewSessionAfterArchive(close);
     expect(reloadStarted()).toBe(false);
   });
