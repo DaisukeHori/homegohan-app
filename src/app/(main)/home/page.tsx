@@ -8,7 +8,7 @@ import { useHomeData } from "@/hooks/useHomeData";
 import { AiSkippedNotice } from "@/components/consent/AiSkippedNotice";
 import { Icons } from "@/components/icons";
 import { OrgChallengeEntry } from "@/components/org-challenges/OrgChallengeEntry";
-import { todayLocal, parseLocalDate } from "@/lib/date-utils";
+import { todayLocal, parseLocalDate, jstDayStartTimestamp } from "@/lib/date-utils";
 import { MEAL_LABELS, STATUS_COLOR_TOKENS, type MealType } from "@homegohan/shared";
 import { MEAL_TYPE_HOME_THEME } from "@/lib/meal-type-visuals";
 import { 
@@ -61,6 +61,12 @@ const getCurrentMealType = (): MealType => {
   return 'midnight_snack';
 };
 
+/** 見出しの日付の書き方 (JST の暦日。例「2026年11月4日水曜日」) */
+const HOME_DATE_LABEL_FORMAT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: 'Asia/Tokyo' };
+
+/** JST の暦日 (YYYY-MM-DD) を見出しの日付にする (#2245 K2。読み取りの今日を見出しに出す) */
+const formatHomeDateLabel = (day: string): string => new Date(jstDayStartTimestamp(day)).toLocaleDateString('ja-JP', HOME_DATE_LABEL_FORMAT);
+
 export default function HomePage() {
   // Hydration 対応: new Date() 系は CSR のみで評価する
   const [clientDate, setClientDate] = useState<string>('');
@@ -70,7 +76,7 @@ export default function HomePage() {
 
   useEffect(() => {
     const now = new Date();
-    setClientDate(now.toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', timeZone: 'Asia/Tokyo' }));
+    setClientDate(now.toLocaleDateString('ja-JP', HOME_DATE_LABEL_FORMAT));
     setTodayISODate(todayLocal());
     const hour = now.getHours();
     if (hour < 5) setGreeting('おやすみなさい');
@@ -82,6 +88,7 @@ export default function HomePage() {
 
   const {
     user,
+    today,
     todayPlan,
     loading,
     dailySummary,
@@ -107,6 +114,11 @@ export default function HomePage() {
     submitPerformanceCheckin,
   } = useHomeData();
   // AI 相談の提案の実行で献立・記録が変わったときの取り直しは useHomeData の中 (useAiConsultationReceiver) が受け持つ (#2195 V1・#2206 G1)
+
+  // 見出しの今日 (#2245 K2)。読み取りが今日の献立を置いたら、その読み取りの今日 (today) に合わせる (0 時をまたいで開いたままの画面が
+  // 読み直したときに、見出し・週の棒の今日の印・期限までの日数が、読んだ献立・集計と同じ日になる)。置く前は開いたときに読んだ今日
+  const shownToday = today ?? todayISODate;
+  const shownDateLabel = today ? formatHomeDateLabel(today) : clientDate;
 
   const [showWeeklyDetail, setShowWeeklyDetail] = useState(false);
 
@@ -174,7 +186,7 @@ export default function HomePage() {
           <div className="flex justify-between items-start mb-6">
             <div>
               <p className="text-sm font-medium text-gray-500 mb-1" suppressHydrationWarning>
-                {clientDate}
+                {shownDateLabel}
               </p>
               <h1 className="text-2xl lg:text-3xl font-bold text-gray-900">
                 {user === null ? (
@@ -947,7 +959,7 @@ export default function HomePage() {
               {/* 棒グラフ */}
               <div className="flex items-end justify-between gap-2 h-24">
                 {weeklyStats.days.map((day, i) => {
-                  const isToday = todayISODate ? day.date === todayISODate : false;
+                  const isToday = shownToday ? day.date === shownToday : false;
                   const height = day.mealCount > 0 ? Math.max(day.cookRate, 10) : 5;
                   
                   return (
@@ -1041,7 +1053,7 @@ export default function HomePage() {
                 </div>
                 <div className="space-y-2">
                   {expiringItems.slice(0, 3).map(item => {
-                    const daysLeft = Math.ceil((parseLocalDate(item.expirationDate!).getTime() - parseLocalDate(todayLocal()).getTime()) / (1000 * 60 * 60 * 24));
+                    const daysLeft = Math.ceil((parseLocalDate(item.expirationDate!).getTime() - parseLocalDate(shownToday || todayLocal()).getTime()) / (1000 * 60 * 60 * 24));
                     return (
                       <div key={item.id} className="flex justify-between items-center">
                         <span className="text-sm text-amber-900">{item.name}</span>
@@ -1193,7 +1205,7 @@ export default function HomePage() {
                 <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">日別詳細</h3>
                 <div className="space-y-2">
                   {weeklyStats.days.map((day) => {
-                    const isToday = todayISODate ? day.date === todayISODate : false;
+                    const isToday = shownToday ? day.date === shownToday : false;
                     return (
                       <div key={day.date} className={`flex items-center justify-between p-3 rounded-xl ${isToday ? 'bg-orange-50 border border-orange-200' : 'bg-gray-50'}`}>
                         <div className="flex items-center gap-3">

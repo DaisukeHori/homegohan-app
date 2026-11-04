@@ -441,7 +441,7 @@ describe('YYYY-MM-DD の暦日を、実行環境のタイムゾーンに依ら�
 
 /**
  * 「今日の栄養」の見出しを確かめる時刻と、そのときの JST の今日 (親が渡す todayStr) と見出しの文字。
- * 親は todayStr を formatLocalDate(new Date()) (JST) で作る。見出しの文字は期待する暦日から直接書く
+ * 親は todayStr を描画ごとに 1 回 todayLocal() (JST) で作る (#2245 K2)。見出しの文字は期待する暦日から直接書く
  */
 const STATS_TODAY_CASES = [
   // JST 2026-11-05 (木) 10:00 (America/Los_Angeles では 11-04 (水) 17:00)

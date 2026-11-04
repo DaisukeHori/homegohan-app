@@ -37,7 +37,7 @@ import { useAiConsultationReceiver, type AiConsultationPlaceResult, type AiConsu
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, isCalendarDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, isCalendarDate, addDays, daysUntilFrom, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
 // isUltimateModeWeeklyMenuRequest (究極モードの生成かの判定) は、Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609)
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
@@ -411,13 +411,6 @@ const getDayLabels = (weekStartDay: WeekStartDay = 'monday'): string[] => {
     : ['月', '火', '水', '木', '金', '土', '日'];
 };
 
-const getDaysUntil = (dateStr: string | null | undefined): number | null => {
-  if (!dateStr) return null;
-  const target = parseLocalDate(dateStr);
-  const now = parseLocalDate(todayLocal());
-  return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-};
-
 // Get calendar grid days for a month
 const getCalendarDays = (month: Date, weekStartDay: WeekStartDay = 'monday'): Date[] => {
   const year = month.getFullYear();
@@ -634,6 +627,10 @@ export default function WeeklyMenuPage() {
 
   // ハンズオンツアー sandbox モード: ?tour=1 クエリで V4GenerateModal を sandbox モードで開く
   const tourMode = searchParams.get('tour') === '1';
+
+  // 描画の今日 (JST の暦日。#2245 K2)。描画ごとに 1 回だけ時計を読み、見出し・今日の印・空欄の数・期限までの日数と、この描画の effect が
+  // 読む今日はどれもこの値を使う (関数ごとに時計を読み直すと、0 時をまたいだときに見出しと別の日を読みうる)
+  const todayStr = todayLocal();
 
   // -------------------------------------------------------
   // Phase B-2: useReducer 群
@@ -1224,8 +1221,10 @@ export default function WeeklyMenuPage() {
   const autoExpandNextMeal = (plan: WeekPlan | null, dates: { dateStr: string }[]) => {
     if (!plan || !plan.days || hasAutoExpanded) return;
     
+    // 時計は 1 回だけ読み、今日と時刻の両方に使う (#2245 K2)。これは週の応答を置くときに呼ばれ (描画の外)、置くと描き直されて
+    // 見出しの今日 (描画の todayStr) も同じ新しい時計で読むので、描画の todayStr (応答の前の描画の値) ではなく今の時計に合わせる
     const now = new Date();
-    const todayStr = formatLocalDate(now);
+    const expandToday = formatLocalDate(now);
     const currentHour = now.getHours();
     
     // 時間帯に応じた食事タイプの優先順位
@@ -1239,7 +1238,7 @@ export default function WeeklyMenuPage() {
     const mealPriority = getMealPriority(currentHour);
     
     // 今日の日付インデックスを探す
-    const todayIndex = dates.findIndex(d => d.dateStr === todayStr);
+    const todayIndex = dates.findIndex(d => d.dateStr === expandToday);
     
     // 検索する日付の順序を決定（今日から順番に）
     const searchOrder: number[] = [];
@@ -2865,11 +2864,12 @@ export default function WeeklyMenuPage() {
   const currentPlanRef = useRef(currentPlan);
   currentPlanRef.current = currentPlan;
 
-  // Initialize selected day to today
+  // Initialize selected day to today (見出しと同じ描画の今日 todayStr。#2245 K2。週が変わったときだけ選び直し、日付が変わっただけでは
+  // 選んでいる日を動かさない)
   useEffect(() => {
-    const todayStr = formatLocalDate(new Date());
     const idx = weekDates.findIndex(d => d.dateStr === todayStr);
     if (idx !== -1) setSelectedDayIndex(idx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekStart, weekDates]);
 
   // Bug-5 (#21): Publish currently displayed date so the AI chat bubble's
@@ -3054,10 +3054,10 @@ export default function WeeklyMenuPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showNutritionDetailModal, selectedDayIndex, weekDates, lastFeedbackDate]);  // fetchNutritionFeedback は通常関数のため deps に含めると毎回再実行されるため個別 disable
   
-  // サマリーモーダルを開いた時も今日のフィードバックを取得
+  // サマリーモーダルを開いた時も今日のフィードバックを取得。今日は見出しと同じ描画の今日 todayStr (#2245 K2)。
+  // 開いたまま日付が変わったら (描き直しで todayStr が変わったら) 新しい今日のフィードバックを読む
   useEffect(() => {
     if (activeModal === 'stats' && weeklySummaryTab === 'today') {
-      const todayStr = formatLocalDate(new Date());
       // まだ取得していない場合のみ取得
       if (todayStr !== lastFeedbackDate) {
         setLastFeedbackDate(todayStr);
@@ -3065,7 +3065,7 @@ export default function WeeklyMenuPage() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeModal, weeklySummaryTab, lastFeedbackDate]);  // fetchNutritionFeedback は通常関数のため deps に含めると毎回再実行されるため個別 disable
+  }, [activeModal, weeklySummaryTab, lastFeedbackDate, todayStr]);  // fetchNutritionFeedback は通常関数のため deps に含めると毎回再実行されるため個別 disable
   
   // Week Navigation
   // UX2-24: 週送りしても選択中の曜日位置（dayIndex）は維持する（従来は常に週頭にリセットされていた）
@@ -5293,12 +5293,12 @@ export default function WeeklyMenuPage() {
   
   // 期限切れと期限間近 (今日から PANTRY_EXPIRING_SOON_DAYS 日後の期限まで。全画面共通の日数 #1602) の食材
   const expiringItems = fridgeItems.filter(i => {
-    const days = getDaysUntil(i.expirationDate);
+    const days = daysUntilFrom(i.expirationDate, todayStr);
     return days !== null && days <= PANTRY_EXPIRING_SOON_DAYS;
-  }).sort((a, b) => (getDaysUntil(a.expirationDate) || 0) - (getDaysUntil(b.expirationDate) || 0));
+  }).sort((a, b) => (daysUntilFrom(a.expirationDate, todayStr) || 0) - (daysUntilFrom(b.expirationDate, todayStr) || 0));
 
+  // 空欄・これからの献立の数は、見出しと同じ描画の今日 todayStr から数える (#2245 K2。関数ごとに時計を読み直さない)
   const countEmptySlots = () => {
-    const todayStr = formatLocalDate(new Date());
     let count = 0;
     
     // weekDatesを使って表示中の週の空欄をカウント
@@ -5317,7 +5317,6 @@ export default function WeeklyMenuPage() {
   
   // これからの献立数をカウント（空欄 + 既存の献立）
   const countFutureMeals = () => {
-    const todayStr = formatLocalDate(new Date());
     let count = 0;
     
     weekDates.forEach(({ dateStr }) => {
@@ -5331,7 +5330,6 @@ export default function WeeklyMenuPage() {
   
   // 既存の献立があるかどうか
   const hasFutureMeals = () => {
-    const todayStr = formatLocalDate(new Date());
     return weekDates.some(({ dateStr }) => {
       if (dateStr >= todayStr) {
         const day = currentPlan?.days?.find(d => d.dayDate === dateStr);
@@ -5367,7 +5365,6 @@ export default function WeeklyMenuPage() {
   const stats = getWeekStats();
   const emptySlotCount = countEmptySlots();
   const futureMealCount = countFutureMeals();
-  const todayStr = formatLocalDate(new Date());
 
   const getDayTotalCal = (day: MealPlanDay | undefined) => {
     if (!day?.meals) return 0;
@@ -6038,9 +6035,9 @@ export default function WeeklyMenuPage() {
               onClick={() => setActiveModal('fridge')}
               aria-label="冷蔵庫を確認"
               className="w-[34px] h-[34px] rounded-full flex items-center justify-center relative"
-              style={{ background: expiringItems.some(i => getDaysUntil(i.expirationDate)! <= 1) ? colors.dangerLight : colors.bg }}
+              style={{ background: expiringItems.some(i => daysUntilFrom(i.expirationDate, todayStr)! <= 1) ? colors.dangerLight : colors.bg }}
             >
-              <Refrigerator size={16} color={expiringItems.some(i => getDaysUntil(i.expirationDate)! <= 1) ? colors.danger : colors.textLight} aria-hidden="true" />
+              <Refrigerator size={16} color={expiringItems.some(i => daysUntilFrom(i.expirationDate, todayStr)! <= 1) ? colors.danger : colors.textLight} aria-hidden="true" />
               {/* #1119: 件数バッジの数字は 11px。2 桁でも丸からはみ出さないよう、固定の 16px 円ではなく最小 18px の丸み付き枠にする */}
               {expiringItems.length > 0 && (
                 <div className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center" style={{ background: colors.warning }}>
@@ -6347,11 +6344,11 @@ export default function WeeklyMenuPage() {
       )}
 
       {/* Expiring Items Alert */}
-      {expiringItems.filter(i => getDaysUntil(i.expirationDate)! <= 2).length > 0 && (
+      {expiringItems.filter(i => daysUntilFrom(i.expirationDate, todayStr)! <= 2).length > 0 && (
         <div className="mx-3 mt-2 px-3 py-2 rounded-[10px] flex items-center gap-2" style={{ background: colors.warningLight }}>
           <AlertTriangle size={14} color={colors.warning} />
           <span style={{ fontSize: 11, color: colors.text }}>
-            <strong>早めに使い切り:</strong> {expiringItems.filter(i => getDaysUntil(i.expirationDate)! <= 2).map(i => `${i.name}(${formatExpiry(getDaysUntil(i.expirationDate))})`).join(', ')}
+            <strong>早めに使い切り:</strong> {expiringItems.filter(i => daysUntilFrom(i.expirationDate, todayStr)! <= 2).map(i => `${i.name}(${formatExpiry(daysUntilFrom(i.expirationDate, todayStr))})`).join(', ')}
           </span>
         </div>
       )}
@@ -6678,6 +6675,7 @@ export default function WeeklyMenuPage() {
             {/* Fridge Modal */}
             {activeModal === 'fridge' && (
               <FridgeModal
+                todayStr={todayStr}
                 onClose={() => setActiveModal(null)}
                 onOpenAddFridge={() => { useFormDraftStore.getState().resetFridgeForm(); setActiveModal('addFridge'); }}
                 onDeleteItem={deletePantryItem}
@@ -7092,6 +7090,7 @@ export default function WeeklyMenuPage() {
         isImprovingMeal={isImprovingMeal}
         selectedDayIndex={selectedDayIndex}
         weekDates={weekDates}
+        todayStr={todayStr}
         improveMealTargets={improveMealTargets}
         improveNextDay={improveNextDay}
         nutritionFeedback={nutritionFeedback}

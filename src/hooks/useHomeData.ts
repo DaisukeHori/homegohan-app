@@ -5,7 +5,7 @@ import { LIST_ORDERS, orderListBy } from "@/lib/api/list-order";
 import { toAnnouncement, toPlannedMeal } from "@/lib/converter";
 import { resolveDisplayName } from "@/lib/user-display";
 import { shouldRefetchHomeOnAuthChange, type HomeLastReadAuthUserId } from "@/lib/home-auth-refetch";
-import { addDaysToDate, calendarDaysEndingAt, formatLocalDate, pantryExpiringSoonUntil, WEEKDAY_LABELS_JA, PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from "@homegohan/shared";
+import { addDaysToDate, calendarDaysEndingAt, pantryExpiringSoonUntil, todayLocal, WEEKDAY_LABELS_JA, PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from "@homegohan/shared";
 import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
@@ -44,7 +44,7 @@ interface MonthlyStats {
   cookRate: number;
 }
 
-// 記録の集計で読む日数 (どれも JST の今日 todayStr から addDaysToDate / calendarDaysEndingAt で数える。#2235 I3)
+// 記録の集計で読む日数 (どれも読み取りの始めに 1 回読んだ JST の今日 (today) から addDaysToDate / calendarDaysEndingAt で数える。#2235 I3・#2245 K2)
 /** 連続自炊の数を数えるために読む過去の日数 (今日の 30 日前から今日まで) */
 const COOKING_STREAK_LOOKBACK_DAYS = 30;
 /** 週間統計・今週のベスト料理の日数 (今日を含む過去 7 日) */
@@ -140,9 +140,9 @@ interface HomeFetchOptions {
 
 /**
  * 分析 (栄養・パフォーマンス) を読み始める関数 (#2206 G1)。readHomeData が主のデータ (今日の献立・集計) を読んだあとに呼び、待たない
- * (fetchHomeData の Promise は分析を待たない)
+ * (fetchHomeData の Promise は分析を待たない)。today はその読み取りの今日 (読み取りの始めに 1 回読んだ JST の暦日。#2245 K2)
  */
-type StartHomeAnalyses = (read: AiConsultationRead, userId: string) => void;
+type StartHomeAnalyses = (read: AiConsultationRead, userId: string, today: string) => void;
 
 /** 栄養の分析の API (GET /api/ai/nutrition-analysis) の今日の分析。AI のアドバイスと献立の変更の提案を付ける (開いたとき) */
 export const HOME_NUTRITION_ANALYSIS_WITH_AI_URL = '/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true';
@@ -200,6 +200,11 @@ export const useHomeData = () => {
    */
   const ownSessionSyncsRef = useRef(0);
   const [activityLevel, setActivityLevel] = useState<string | null>(null);
+  /**
+   * 出している今日の献立を読んだ読み取りの今日 (JST の暦日。#2245 K2)。まだ置いていなければ null。ホームの見出しの日付・週の棒の
+   * 今日の印は、この日に合わせる (0 時をまたいで開いたままの画面の読み直しが新しい今日を読んだら、見出しも同じ日になる)
+   */
+  const [homeToday, setHomeToday] = useState<string | null>(null);
   // 今日のアドバイスの帯 (文と出所。#2206 G3)
   const [suggestionBand, setSuggestionBand] = useState<SuggestionBand | null>(null);
   const suggestion = suggestionBand?.text ?? null;
@@ -259,7 +264,8 @@ export const useHomeData = () => {
   });
 
   const supabase = createClient();
-  const todayStr = formatLocalDate(new Date());
+  // 今日 (JST の暦日) は描画の値に持たない (#2245 K2)。読み取り・書き込みのたびに todayLocal() を 1 回だけ読み、その中では同じ今日を使う
+  // (描画の値を使うと、0 時をまたいで開いたままの画面の取り直し・ログインの状態の変化の読み直し・書き込みが前の日を読み書きした)
 
   const syncSessionFromServer = async () => {
     const syncResponse = await fetch('/api/auth/session-sync', {
@@ -333,6 +339,8 @@ export const useHomeData = () => {
    * 主のデータ (今日の献立・集計) を読んだあとに startAnalyses で分析を読み始め、待たない
    */
   const readHomeData = async (read: AiConsultationRead, startAnalyses: StartHomeAnalyses) => {
+    // この読み取りの今日 (JST の暦日。#2245 K2)。読み取りの始めに 1 回だけ時計を読み、今日の献立・記録の集計・分析はどれもこの日で読む
+    const today = todayLocal();
     // 1. ユーザー情報取得
     const authUser = await resolveAuthUser();
     // 確かめた利用者は、ここでは覚えない (主のデータを置けたときに place の apply の中で覚える。#2227 H3・#2235 I2)
@@ -371,7 +379,7 @@ export const useHomeData = () => {
         .from('daily_activity_logs')
         .select('*')
         .eq('user_id', authUser.id)
-        .eq('date', todayStr)
+        .eq('date', today)
         .maybeSingle();
 
       // 取り直しの応答を待つあいだに気分・活動量を押した (upsert を終えていても): 押す前に読んだ値で楽観的な表示を戻さない。
@@ -388,7 +396,7 @@ export const useHomeData = () => {
           day_date,
           planned_meals(*)
         `)
-        .eq('day_date', todayStr)
+        .eq('day_date', today)
         .eq('user_id', authUser.id)
         .maybeSingle();
 
@@ -397,6 +405,8 @@ export const useHomeData = () => {
       // place が番兵と書き込みの窓を見る)。読み取りの失敗では今の表示を残す (置かない)
       if (!dailyMealError) {
         read.place(KEY_TODAY_PLAN, () => {
+          // 置いた今日の献立の日 (見出しの日付・週の棒の今日の印はこの日に合わせる。#2245 K2)
+          setHomeToday(today);
           if (dailyMealData && dailyMealData.planned_meals) {
             const mealsData = dailyMealData.planned_meals;
             const meals: PlannedMeal[] = mealsData.map((m: any) => toPlannedMeal(m));
@@ -432,19 +442,19 @@ export const useHomeData = () => {
       // どれも応答は自分の鍵に read.place で置く (#2206 G1)。取り直し (mode が 'refetch') の読み取りの失敗では
       // 今の表示を残す (空・0 で上書きしない。#2201 U1)
       await Promise.all([
-        fetchCookingStreak(authUser.id, read),
-        fetchWeeklyStats(authUser.id, read),
-        fetchMonthlyStats(authUser.id, read),
-        fetchExpiringItems(authUser.id, read),
+        fetchCookingStreak(authUser.id, read, today),
+        fetchWeeklyStats(authUser.id, read, today),
+        fetchMonthlyStats(authUser.id, read, today),
+        fetchExpiringItems(authUser.id, read, today),
         fetchShoppingRemaining(authUser.id, read),
         fetchBadgeInfo(authUser.id, read),
-        fetchBestMealThisWeek(authUser.id, read),
-        fetchHealthSummary(authUser.id, read),
+        fetchBestMealThisWeek(authUser.id, read, today),
+        fetchHealthSummary(authUser.id, read, today),
       ]);
 
       // 栄養の分析とパフォーマンスの分析を読み始める (待たない)。取り直しに追い越されたページの読み取りも自分で読む
       // (分析は鍵が分かれているので、古い応答は place が置かない。#2206 G1)
-      startAnalyses(read, authUser.id);
+      startAnalyses(read, authUser.id, today);
     } else if (read.mode === 'mount') {
       // 取り直しでログインを確かめられなかったときは、今の表示を残す (#2201 U1。ログアウトはログインの状態の変化の読み込みが反映する)。
       // ログインしていないと置けたときに覚える (#2227 H3・#2235 I2。追い越されたときは前の値のまま。取り直しでログインを確かめられなかったときは覚えた値を変えない)
@@ -481,10 +491,10 @@ export const useHomeData = () => {
 
   // 連続自炊ストリーク（完了した自炊のみカウント）
   // read は呼んだ読み取り (readHomeData)。応答は自分の鍵に read.place で置く。下の記録の集計の取得も同じ (#2206 G1。古い応答を置かない)
-  const fetchCookingStreak = async (userId: string, read: AiConsultationRead) => {
+  const fetchCookingStreak = async (userId: string, read: AiConsultationRead, today: string) => {
     try {
-      // 過去30日分のデータを取得（日付ベースモデル）。JST の今日 (todayStr) から暦の計算だけでずらす (#2235 I3。時計を読み直さない)
-      const thirtyDaysAgo = addDaysToDate(todayStr, -COOKING_STREAK_LOOKBACK_DAYS);
+      // 過去30日分のデータを取得（日付ベースモデル）。JST の今日 (today) から暦の計算だけでずらす (#2235 I3。時計を読み直さない)
+      const thirtyDaysAgo = addDaysToDate(today, -COOKING_STREAK_LOOKBACK_DAYS);
       
       const { data: daysData } = await supabase
         .from('user_daily_meals')
@@ -494,7 +504,7 @@ export const useHomeData = () => {
         `)
         .eq('user_id', userId)
         .gte('day_date', thirtyDaysAgo)
-        .lte('day_date', todayStr)
+        .lte('day_date', today)
         .order('day_date', { ascending: false });
 
       type DayWithStreakMeals = { day_date: string; planned_meals: Pick<Tables<"planned_meals">, "mode" | "is_completed">[] };
@@ -514,7 +524,7 @@ export const useHomeData = () => {
           
           if (hasCompletedCookMeal) {
             streak++;
-          } else if (day.day_date < todayStr) {
+          } else if (day.day_date < today) {
             // 今日以前で完了した自炊がない日があったらストリーク終了
             break;
           }
@@ -527,11 +537,11 @@ export const useHomeData = () => {
   };
 
   // 週間統計（日付ベースモデル）
-  const fetchWeeklyStats = async (userId: string, read: AiConsultationRead) => {
+  const fetchWeeklyStats = async (userId: string, read: AiConsultationRead, today: string) => {
     try {
-      // 今日を含む過去 7 日 (#2235 I3)。JST の今日 (todayStr) から暦の計算だけで並べる。日ごとに new Date() を読むと、
+      // 今日を含む過去 7 日 (#2235 I3)。JST の今日 (today) から暦の計算だけで並べる。日ごとに new Date() を読むと、
       // 0 時をまたぐ瞬間に日が飛ぶか重なり、端末のローカル時刻で日をずらすと夏時間の切り替えの日に 1 時間ずれる
-      const weekCells = calendarDaysEndingAt(todayStr, WEEKLY_STATS_DAYS);
+      const weekCells = calendarDaysEndingAt(today, WEEKLY_STATS_DAYS);
       
       const { data: daysData } = await supabase
         .from('user_daily_meals')
@@ -541,7 +551,7 @@ export const useHomeData = () => {
         `)
         .eq('user_id', userId)
         .gte('day_date', weekCells[0].date)
-        .lte('day_date', todayStr)
+        .lte('day_date', today)
         .order('day_date');
 
       if (daysData) {
@@ -590,11 +600,11 @@ export const useHomeData = () => {
   };
 
   // 月間統計（日付ベースモデル、完了した自炊のみカウント）
-  const fetchMonthlyStats = async (userId: string, read: AiConsultationRead) => {
+  const fetchMonthlyStats = async (userId: string, read: AiConsultationRead, today: string) => {
     try {
-      // JST の今日 (todayStr) の月の 1 日 (#2235 I3)。端末のローカル時刻の月で 1 日にすると、端末のタイムゾーンが日本でないときに
+      // JST の今日 (today) の月の 1 日 (#2235 I3)。端末のローカル時刻の月で 1 日にすると、端末のタイムゾーンが日本でないときに
       // 月の変わり目の前後で別の月・別の日になる
-      const [thisYear, thisMonth] = todayStr.split('-');
+      const [thisYear, thisMonth] = today.split('-');
       const firstOfMonth = `${thisYear}-${thisMonth}-01`;
       
       const { data: daysData } = await supabase
@@ -605,7 +615,7 @@ export const useHomeData = () => {
         `)
         .eq('user_id', userId)
         .gte('day_date', firstOfMonth)
-        .lte('day_date', todayStr);
+        .lte('day_date', today);
 
       if (daysData) {
         let cookCount = 0;
@@ -637,15 +647,15 @@ export const useHomeData = () => {
   };
 
   // 冷蔵庫の期限切れ間近 (今日から PANTRY_EXPIRING_SOON_DAYS 日後の期限まで。全画面共通の範囲 #1602)
-  const fetchExpiringItems = async (userId: string, read: AiConsultationRead) => {
+  const fetchExpiringItems = async (userId: string, read: AiConsultationRead, today: string) => {
     try {
       const { data } = await orderListBy(
         supabase
           .from('pantry_items')
           .select('*')
           .eq('user_id', userId)
-          .lte('expiration_date', pantryExpiringSoonUntil(todayStr))
-          .gte('expiration_date', todayStr),
+          .lte('expiration_date', pantryExpiringSoonUntil(today))
+          .gte('expiration_date', today),
         LIST_ORDERS.pantryItemsByExpiration,
       );
 
@@ -747,10 +757,10 @@ export const useHomeData = () => {
   };
 
   // 今週のベスト料理（日付ベースモデル）
-  const fetchBestMealThisWeek = async (userId: string, read: AiConsultationRead) => {
+  const fetchBestMealThisWeek = async (userId: string, read: AiConsultationRead, today: string) => {
     try {
-      // 今日を含む過去 7 日の最初の日 (#2235 I3。JST の今日 (todayStr) から暦の計算だけでずらす)
-      const sevenDaysAgo = addDaysToDate(todayStr, -(WEEKLY_STATS_DAYS - 1));
+      // 今日を含む過去 7 日の最初の日 (#2235 I3。JST の今日 (today) から暦の計算だけでずらす)
+      const sevenDaysAgo = addDaysToDate(today, -(WEEKLY_STATS_DAYS - 1));
       
       const bestMealQuery = supabase
         .from('planned_meals')
@@ -782,14 +792,14 @@ export const useHomeData = () => {
   };
 
   // 健康記録サマリー
-  const fetchHealthSummary = async (userId: string, read: AiConsultationRead) => {
+  const fetchHealthSummary = async (userId: string, read: AiConsultationRead, today: string) => {
     try {
       // 今日の記録
       const { data: todayRecord, error: todayRecordError } = await supabase
         .from('health_records')
         .select('*')
         .eq('user_id', userId)
-        .eq('record_date', todayStr)
+        .eq('record_date', today)
         .maybeSingle();
 
       // 連続記録
@@ -932,18 +942,18 @@ export const useHomeData = () => {
   // (KEY_PERFORMANCE) を別の鍵に置く (#2206 G1。§6.2・S-28)。分析の応答 (ok・非 ok) が届いたあとにチェックインを置き、
   // 分析の読み取りが投げたときはどちらも置かない。分析が非 ok のときは分析の鍵に置かない (今の分析を残してチェックインだけ置く)。
   // 取り直しで今日のチェックインを読めなかったときは、今のチェックインを残す (#2201 U1。チェックイン済みの表示を未記入に戻さない)
-  const fetchPerformanceAnalysis = async (userId: string, read: AiConsultationRead) => {
+  const fetchPerformanceAnalysis = async (userId: string, read: AiConsultationRead, today: string) => {
     try {
       // 今日のチェックインを取得
       const { data: todayCheckin, error: todayCheckinError } = await supabase
         .from('user_performance_checkins')
         .select('*')
         .eq('user_id', userId)
-        .eq('checkin_date', todayStr)
+        .eq('checkin_date', today)
         .maybeSingle();
 
       // 7日分析を取得
-      const response = await fetch(`/api/performance/analyze?date=${todayStr}`);
+      const response = await fetch(`/api/performance/analyze?date=${today}`);
 
       if (response.ok) {
         const data = await response.json();
@@ -974,9 +984,9 @@ export const useHomeData = () => {
    * 終わったあとに 1 回取り直す (place が見る)
    */
   const refetchHome = (read: AiConsultationRead) =>
-    readHomeData(read, (refetchRead, userId) => {
+    readHomeData(read, (refetchRead, userId, today) => {
       void fetchNutritionAnalysis(refetchRead, { analysisWithoutAi: true });
-      void fetchPerformanceAnalysis(userId, refetchRead);
+      void fetchPerformanceAnalysis(userId, refetchRead, today);
     });
   // 最初の描画から全画面の読み込み中 (今の loading の初期値 true。分析の 2 つは今も初期値 false なので入れない)
   const receiver = useAiConsultationReceiver(refetchHome, { initialLoadingKeys: [KEY_HOME_LOADING] });
@@ -991,13 +1001,19 @@ export const useHomeData = () => {
    */
   const fetchHomeData = () =>
     receiver.read({ loadingKeys: [KEY_HOME_LOADING] }, (read) =>
-      readHomeData(read, (_mainRead, userId) => {
+      readHomeData(read, (_mainRead, userId, today) => {
         void receiver.read({ loadingKeys: [KEY_NUTRITION_SCORE] }, (analysisRead) =>
           fetchNutritionAnalysis(analysisRead, { analysisWithoutAi: false }),
         );
-        void receiver.read({ loadingKeys: [KEY_PERFORMANCE] }, (analysisRead) => fetchPerformanceAnalysis(userId, analysisRead));
+        void receiver.read({ loadingKeys: [KEY_PERFORMANCE] }, (analysisRead) => fetchPerformanceAnalysis(userId, analysisRead, today));
       }),
     );
+  /**
+   * 最新の描画の fetchHomeData (#2245 K2)。ログインの状態の変化の購読 (下の useEffect([])) は最初の描画で 1 回だけ作るので、
+   * 関数を直に呼ぶと最初の描画の閉包を呼び続ける。購読からはこの ref を通して呼ぶ
+   */
+  const fetchHomeDataRef = useRef(fetchHomeData);
+  fetchHomeDataRef.current = fetchHomeData;
 
   // Performance OS v3: 30秒チェックインを保存
   const submitPerformanceCheckin = async (checkinData: {
@@ -1011,6 +1027,8 @@ export const useHomeData = () => {
     weight?: number;
     note?: string;
   }) => {
+    // このチェックインの今日 (JST の暦日。#2245 K2)。保存・健康記録への同期・保存のあとの分析の読み直しは、どれもこの日で行う
+    const today = todayLocal();
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) return { success: false, error: 'Not authenticated' };
@@ -1023,7 +1041,7 @@ export const useHomeData = () => {
           .from('user_performance_checkins')
           .upsert({
             user_id: authUser.id,
-            checkin_date: todayStr,
+            checkin_date: today,
             sleep_hours: checkinData.sleepHours,
             sleep_quality: checkinData.sleepQuality,
             fatigue: checkinData.fatigue,
@@ -1059,7 +1077,7 @@ export const useHomeData = () => {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                record_date: todayStr,
+                record_date: today,
                 ...(checkinData.sleepHours !== undefined && { sleep_hours: checkinData.sleepHours }),
                 ...(checkinData.sleepQuality !== undefined && { sleep_quality: checkinData.sleepQuality }),
                 // mood_score は意図的に送信しない (sleep_quality が mood に誤マッピングされるのを防ぐ)
@@ -1072,7 +1090,7 @@ export const useHomeData = () => {
         }
 
         // チェックイン後に分析を再取得（非同期で実行し、フィードバック表示をブロックしない。ページの読み取り。#2206 G1）
-        void receiver.read({ loadingKeys: [KEY_PERFORMANCE] }, (read) => fetchPerformanceAnalysis(authUser.id, read));
+        void receiver.read({ loadingKeys: [KEY_PERFORMANCE] }, (read) => fetchPerformanceAnalysis(authUser.id, read, today));
 
         return { success: true, data };
       } finally {
@@ -1096,13 +1114,14 @@ export const useHomeData = () => {
     }
     
     try {
-      // suggestionがある場合はそれを使用、なければissuesから生成
-      let targetDate = todayStr;
+      // suggestionがある場合はそれを使用、なければissuesから生成。日付の無い提案は、押したときの今日 (JST の暦日を 1 回だけ読む。#2245 K2)
+      const today = todayLocal();
+      let targetDate = today;
       let targetMealType = 'dinner';
       let prompt = '';
       
       if (suggestion) {
-        targetDate = suggestion.targetDate || todayStr;
+        targetDate = suggestion.targetDate || today;
         targetMealType = suggestion.targetMeal || 'dinner';
         const dishes = suggestion.suggestedDishes || [];
         const dishNames = dishes.map((d: any) => d.name).join('、');
@@ -1257,7 +1276,7 @@ export const useHomeData = () => {
       // SIGNED_IN はタブを前に戻したときにも同じ人で来ることがあるので、前回読んだ利用者と違うときだけ読み直す (#2227 H3)
       // ホームの読み取りが自分で setSession している間の SIGNED_IN は、その読み取りの同期の知らせなので読み直さない (#2235 I2)
       if (shouldRefetchHomeOnAuthChange(event, session?.user.id, lastReadAuthUserIdRef.current, ownSessionSyncsRef.current > 0)) {
-        void fetchHomeData();
+        void fetchHomeDataRef.current();
       }
     });
 
@@ -1271,6 +1290,8 @@ export const useHomeData = () => {
     // 今日の気分・活動量の書き込みの窓 (楽観的な更新から upsert の応答まで。#2201 U2・#2206 G1):
     // この間に来た AI 相談の成功では取り直さず、終わったら 1 回取り直す。取り直しの応答を待つあいだに押したときも、その応答
     // (押す前に読んだ気分・活動量) を置かない (readHomeData は気分・活動量を read.place で置き、place が書き込みの窓を見る)
+    // 押したときの今日 (JST の暦日を 1 回だけ読む。#2245 K2)
+    const today = todayLocal();
     const endWrite = receiver.beginWrite();
     try {
       setActivityLevel(level);
@@ -1279,7 +1300,7 @@ export const useHomeData = () => {
         .from('daily_activity_logs')
         .upsert({
           user_id: user.id,
-          date: todayStr,
+          date: today,
           feeling: level,
         }, { onConflict: 'user_id, date' });
     } finally {
@@ -1310,6 +1331,8 @@ export const useHomeData = () => {
 
   return {
     user,
+    // 出している今日の献立を読んだ今日 (JST の暦日。まだ置いていなければ null。#2245 K2)
+    today: homeToday,
     todayPlan,
     loading,
     dailySummary,

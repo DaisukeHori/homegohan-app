@@ -59,6 +59,7 @@ function render(onEditItem = vi.fn(), onClose = vi.fn(), onDeleteItem = vi.fn())
   act(() => {
     root.render(
       h(FridgeModal, {
+        todayStr: '2026-07-01',
         onClose,
         onOpenAddFridge: () => {},
         onDeleteItem,
