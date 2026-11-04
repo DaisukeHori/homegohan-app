@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { formatLocalDate } from "@/lib/date-utils";
+import { addDaysToDate, todayLocal } from "@/lib/date-utils";
 import { createClient } from "@/lib/supabase/client";
 import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 import {
@@ -56,6 +56,9 @@ interface HealthRecord {
   /** health_checkups 由来のデータかどうか */
   fromCheckup?: boolean;
 }
+
+/** 期間ごとにグラフに並べる日数 (今日 (JST の暦日) を最後の日として、この日数の暦日を並べる) */
+const PERIOD_DAYS: Record<Period, number> = { week: 7, month: 30, '3months': 90, year: 365 };
 
 /** 開いたときの期間 (useState の初期値と、最初の描画から読み込み中にする鍵の両方に使う。#2206 G1) */
 const INITIAL_PERIOD: Period = 'month';
@@ -154,16 +157,14 @@ export default function HealthGraphsPage() {
   const fetchData = useCallback(async (read: AiConsultationRead, options: GraphsFetchOptions = {}) => {
     // 読み始めた期間 (置く鍵と、置く直前の比べに使う)
     const requestedPeriod = period;
-    // 期間に応じた日数を計算
-    const days = requestedPeriod === 'week' ? 7 : requestedPeriod === 'month' ? 30 : requestedPeriod === '3months' ? 90 : 365;
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    
+    // 読み始めの日 = 今日 (JST の暦日) の期間の日数だけ前 (グラフの最初の日の前の日から読む)。時計は 1 回だけ読み、暦日の文字列で数える (#2227 H6)
+    const startDay = addDaysToDate(todayLocal(), -PERIOD_DAYS[requestedPeriod]);
+
     try {
       // 3 つとも投げずに読む (どれかが通信の失敗で投げても・本文が壊れていても、読めた本文は置く。#2206 G5)。
       // 記録・健診を通信の失敗・本文の壊れで読めなかったときは、その応答が 2xx でないときと同じに扱う
       const [recordsRes, checkupsRes, goalsRes] = await Promise.all([
-        fetchOrNull(`/api/health/records?start_date=${formatLocalDate(startDate)}&limit=365`, 'health records'),
+        fetchOrNull(`/api/health/records?start_date=${startDay}&limit=365`, 'health records'),
         fetchOrNull(`/api/health/checkups?limit=365`, 'health checkups'),
         fetchOrNull('/api/health/goals?status=active', 'health goals'),
       ]);
@@ -191,7 +192,7 @@ export default function HealthGraphsPage() {
       if (checkupsBody !== null) {
         for (const c of (checkupsBody.checkups || [])) {
           // checkup_date が期間内のものだけ
-          if (c.checkup_date < formatLocalDate(startDate)) continue;
+          if (c.checkup_date < startDay) continue;
           // 同じ日付がすでに health_records にあれば weight/bp のみ補完
           const existing = mergedRecords.find(r => r.record_date === c.checkup_date);
           if (existing) {
@@ -292,14 +293,12 @@ export default function HealthGraphsPage() {
 
     let values: { date: string; value: number | null; value2?: number | null; fromCheckup?: boolean }[] = [];
 
-    // 期間内の全日付を生成
-    const days = period === 'week' ? 7 : period === 'month' ? 30 : period === '3months' ? 90 : 365;
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days + 1);
-
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const dateStr = formatLocalDate(d);
+    // 期間内の全日付 (今日 (JST の暦日) までの PERIOD_DAYS 日) を生成する。
+    // 時計は 1 回だけ読み、暦日の文字列で前の日を数える (#2227 H6: 以前は期間の終わりと始まりで時計を 2 回読み、始まりから 1 日ずつ
+    // 進めた日時が終わりの日時以下のあいだを並べていたので、2 回の読み取りの間に時計が 1 ms 進むと今日が期間から落ちた)
+    const today = todayLocal();
+    for (let daysBefore = PERIOD_DAYS[period] - 1; daysBefore >= 0; daysBefore -= 1) {
+      const dateStr = addDaysToDate(today, -daysBefore);
       const record = records.find(r => r.record_date === dateStr);
 
       let value: number | null = null;
