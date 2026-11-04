@@ -49,7 +49,7 @@ import {
   type MealImageJobSeed,
 } from '@/lib/meal-image';
 import { buildDishImagePayload, cancelPendingMealImageJobs } from '@/lib/meal-image-jobs';
-import { enqueueMealImageJobsAfterSave } from '@/lib/meal-image-enqueue-after-save';
+import { enqueueMealImageJobsAfterSave, withMealAfterEnqueueThrew } from '@/lib/meal-image-enqueue-after-save';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
 import {
@@ -1020,7 +1020,7 @@ export async function runConsultationAction(
         }
       }
 
-      const { data: updatedMeal, error: updateError } = await supabase
+      const { data: savedMeal, error: updateError } = await supabase
         .from('planned_meals')
         .update(updateData)
         .eq('id', mealId)
@@ -1035,11 +1035,13 @@ export async function runConsultationAction(
         break;
       }
 
+      // 結果とログの献立の行 (積み込みの例外のときは、印を書いた後の料理を重ねる。書き直す前の 'pending' の行を残さない。#2206 G4)
+      let updatedMeal = savedMeal;
       if (imageAllowed && jobs.length > 0) {
         // 献立の更新は済んでいる。画像のジョブの積み込みで例外が出ても、更新は成功として返す (#2195 V2)。
         // 積み込みの例外は数えた 1 回を戻して料理を見送りの状態 ('failed' + 'enqueue_failed') に書き直し、
         // 処理の起動の例外は記録だけにする (ジョブは積めているので数え戻さない。#2201 U4。src/lib/meal-image-enqueue-after-save.ts)
-        await enqueueMealImageJobsAfterSave({
+        const enqueueOutcome = await enqueueMealImageJobsAfterSave({
           userDb: supabase,
           plannedMealId: mealId,
           userId: user.id,
@@ -1049,6 +1051,7 @@ export async function runConsultationAction(
           usage: imageUsage,
           logContext: { action_id: action.id, action_type: action.action_type },
         });
+        if (updatedMeal) updatedMeal = withMealAfterEnqueueThrew(updatedMeal, enqueueOutcome);
       }
 
       console.log('Meal updated successfully:', updatedMeal);

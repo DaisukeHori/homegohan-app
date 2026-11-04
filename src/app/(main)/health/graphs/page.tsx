@@ -67,6 +67,56 @@ interface HealthRecord {
  */
 type GraphsFetchMode = 'mount' | 'refetch';
 
+/** GET /api/health/records の本文 (使う欄だけ) */
+interface RecordsBody {
+  records?: HealthRecord[];
+}
+
+/** GET /api/health/checkups の本文 (使う欄だけ) */
+interface CheckupsBody {
+  checkups?: {
+    checkup_date: string;
+    weight?: number | null;
+    blood_pressure_systolic?: number | null;
+    blood_pressure_diastolic?: number | null;
+  }[];
+}
+
+/** GET /api/health/goals の本文 (使う欄だけ) */
+interface GoalsBody {
+  goals?: { goal_type: string; target_value: number }[];
+}
+
+/**
+ * fetch する。通信の失敗 (fetch そのものが投げた) ときは null (投げない)。
+ * 3 つを Promise.all で並べて読むので、1 つが投げると読めたほかの応答まで捨てて catch に入る (#2206 G5: 目標の取得が
+ * 通信の失敗で投げて、読めた記録の線を置かずに前の期間の線を新しい見出しの下に残していた)
+ */
+async function fetchOrNull(input: string, label: string): Promise<Response | null> {
+  try {
+    return await fetch(input);
+  } catch (error) {
+    console.error(`Failed to fetch ${label}:`, error);
+    return null;
+  }
+}
+
+/**
+ * 2xx の応答の本文を読む。応答が無い (通信の失敗)・2xx でない・本文が壊れている (JSON として読めない) ときは null (投げない)。
+ * 1 つの本文が壊れていても、ほかの読めた本文を置く (#2206 G5: 目標の本文の解析が投げて、読めた記録の線を置かずに
+ * 前の期間の線を新しい見出しの下に残していた)
+ */
+async function readOkJson<T>(res: Response | null, label: string): Promise<T | null> {
+  if (res === null || !res.ok) return null;
+  try {
+    const body: T = await res.json();
+    return body;
+  } catch (error) {
+    console.error(`Failed to parse ${label}:`, error);
+    return null;
+  }
+}
+
 export default function HealthGraphsPage() {
   const router = useRouter();
   // 開いたとき・期間の切り替えの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
@@ -82,7 +132,7 @@ export default function HealthGraphsPage() {
 
   /**
    * 期間の健康記録・健診・目標を読む。mode が 'refetch' (AI 相談の成功・Realtime の取り直し。#2201 U1) なら、読み込み中の表示を
-   * 出さずに読み直し、失敗 (通信の失敗・記録か健診の非 2xx) では今の表示 (線) を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
+   * 出さずに読み直し、記録か健診を読めなかった (通信の失敗・非 2xx・本文が壊れている) ときは今の表示 (線) を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
    * (期間を切り替えたあとに前の期間の応答が届いても置かない)
    */
   const fetchData = useCallback(async (ticket: AiConsultationFetchTicket, mode: GraphsFetchMode) => {
@@ -94,27 +144,33 @@ export default function HealthGraphsPage() {
     startDate.setDate(startDate.getDate() - days);
     
     try {
+      // 3 つとも投げずに読む (どれかが通信の失敗で投げても・本文が壊れていても、読めた本文は置く。#2206 G5)。
+      // 記録・健診を通信の失敗・本文の壊れで読めなかったときは、その応答が 2xx でないときと同じに扱う
       const [recordsRes, checkupsRes, goalsRes] = await Promise.all([
-        fetch(`/api/health/records?start_date=${formatLocalDate(startDate)}&limit=365`),
-        fetch(`/api/health/checkups?limit=365`),
-        fetch('/api/health/goals?status=active'),
+        fetchOrNull(`/api/health/records?start_date=${formatLocalDate(startDate)}&limit=365`, 'health records'),
+        fetchOrNull(`/api/health/checkups?limit=365`, 'health checkups'),
+        fetchOrNull('/api/health/goals?status=active', 'health goals'),
+      ]);
+
+      const [recordsBody, checkupsBody, goalsBody] = await Promise.all([
+        readOkJson<RecordsBody>(recordsRes, 'health records'),
+        readOkJson<CheckupsBody>(checkupsRes, 'health checkups'),
+        readOkJson<GoalsBody>(goalsRes, 'health goals'),
       ]);
 
       // 取り直しで記録か健診を読めなかった: 片方だけで線を作り直すと点が欠けるので、今の線を残す (目標は読めていれば置く)
-      const keepShownRecords = mode === 'refetch' && (!recordsRes.ok || !checkupsRes.ok);
+      const keepShownRecords = mode === 'refetch' && (recordsBody === null || checkupsBody === null);
 
       const mergedRecords: HealthRecord[] = [];
 
-      if (recordsRes.ok) {
-        const data = await recordsRes.json();
-        for (const r of (data.records || [])) {
+      if (recordsBody !== null) {
+        for (const r of (recordsBody.records || [])) {
           mergedRecords.push(r);
         }
       }
 
-      if (checkupsRes.ok) {
-        const data = await checkupsRes.json();
-        for (const c of (data.checkups || [])) {
+      if (checkupsBody !== null) {
+        for (const c of (checkupsBody.checkups || [])) {
           // checkup_date が期間内のものだけ
           if (c.checkup_date < formatLocalDate(startDate)) continue;
           // 同じ日付がすでに health_records にあれば weight/bp のみ補完
@@ -123,7 +179,7 @@ export default function HealthGraphsPage() {
             if (c.weight != null && existing.weight == null) existing.weight = c.weight;
             if (c.blood_pressure_systolic != null && existing.systolic_bp == null) {
               existing.systolic_bp = c.blood_pressure_systolic;
-              existing.diastolic_bp = c.blood_pressure_diastolic;
+              existing.diastolic_bp = c.blood_pressure_diastolic ?? undefined;
             }
           } else {
             mergedRecords.push({
@@ -139,16 +195,17 @@ export default function HealthGraphsPage() {
 
       // 日付降順でソート（gridsを日付昇順で表示するため reversed later in getGraphData）
       mergedRecords.sort((a, b) => b.record_date.localeCompare(a.record_date));
-      const goalsData = goalsRes.ok ? await goalsRes.json() : null;
       if (!ticket.isLatest()) return;
+      // 記録は目標より先に置く (目標を読めなくても、読めた記録の線を出す。#2206 G5)
       if (!keepShownRecords) setRecords(mergedRecords);
 
-      if (goalsData !== null) {
-        const weightGoal = goalsData.goals?.find((g: any) => g.goal_type === 'weight');
+      if (goalsBody !== null) {
+        const weightGoal = goalsBody.goals?.find((g) => g.goal_type === 'weight');
         // 体重の目標が無くなった (削除・達成) ときは線を消す (取り直しで前の目標の線を残さない。#2195 V1)
         setTargetWeight(weightGoal ? weightGoal.target_value : null);
       }
     } catch (error) {
+      // 上の読み取りは投げない (fetchOrNull・readOkJson) ので、ここは思わぬ例外の受け皿 (読み込み中の表示は下の finally で下ろす)
       console.error('Failed to fetch data:', error);
     } finally {
       settleLoading(ticket);

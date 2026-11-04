@@ -44,7 +44,9 @@ vi.mock("../supabase/functions/_shared/meal-nutrition-debug.ts", () => ({
   insertMealNutritionDebugLog: vi.fn(async () => null),
 }));
 
-import { saveMealToDb } from "../supabase/functions/_shared/save-meal.ts";
+import { enqueueSavedMealImageJobs, saveMealToDb } from "../supabase/functions/_shared/save-meal.ts";
+import { MEAL_IMAGE_ENQUEUE_FAILED_ERROR } from "../supabase/functions/_shared/meal-image.ts";
+import { createRecordingSupabase, firstMethodOf, type RecordedQuery } from "./helpers/recording-supabase";
 
 const JOB = {
   dishIndex: 0,
@@ -155,6 +157,78 @@ describe("saveMealToDb: 料理画像のジョブを積んだあとに処理を�
     h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 0 });
     await save();
 
+    expect(h.trigger).not.toHaveBeenCalled();
+  });
+});
+
+describe("#2206 G4 積み込みと処理の起動の例外を分ける (enqueueSavedMealImageJobs)", () => {
+  /** 保存済みの献立の、画像を待つ料理 (ジョブ JOB の料理) */
+  const PENDING_DISH = { name: "カレー", role: "main", image_source: "generated_ai", image_status: "pending", image_subject_hash: "hash-0", image_url: null };
+  const SAVED_AT = "2026-11-04T00:00:00.000Z";
+
+  /** service role のクライアント: 献立の読み取りは画像を待つ料理のある行、料理の書き込み (select('id')) は 1 行書けた */
+  function serviceDb() {
+    return createRecordingSupabase((query: RecordedQuery) => {
+      if (query.table !== "planned_meals") throw new Error(`unexpected table: ${query.table}`);
+      if (firstMethodOf(query) === "update") return { data: [{ id: "planned-meal-1" }] };
+      return { data: { dishes: [PENDING_DISH], image_url: null, updated_at: SAVED_AT, catalog_product_id: null, source_type: null } };
+    });
+  }
+
+  /** 料理を 'failed' + 'enqueue_failed' にした書き込み */
+  function enqueueFailedMarks(queries: RecordedQuery[]) {
+    return queries.filter((query) => {
+      if (firstMethodOf(query) !== "update") return false;
+      const values = query.calls[0].args[0] as { dishes?: Array<{ image_status?: string; image_error?: string }> };
+      return values.dishes?.[0]?.image_status === "failed" && values.dishes[0].image_error === MEAL_IMAGE_ENQUEUE_FAILED_ERROR;
+    });
+  }
+
+  beforeEach(() => {
+    h.enqueue.mockReset();
+    h.trigger.mockClear();
+    h.jobs = [JOB];
+    vi.stubGlobal("Deno", { env: { get: (name: string) => (name === "SUPABASE_URL" ? "http://supabase.test" : name === "SUPABASE_SERVICE_ROLE_KEY" ? "service-key" : undefined) } });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function run() {
+    const db = serviceDb();
+    await enqueueSavedMealImageJobs({ supabase: db.client, plannedMealId: "planned-meal-1", userId: "user-1", jobs: [JOB], requestId: "req-1" });
+    return db.queries;
+  }
+
+  it("積み込みが投げたら、処理を起こさず、ジョブの無い料理を見送りの状態 (failed + enqueue_failed) に書き直す。例外は外へ出さない", async () => {
+    h.enqueue.mockRejectedValue(new Error("enqueue failed"));
+
+    const queries = await run();
+
+    expect(h.trigger).not.toHaveBeenCalled();
+    const marks = enqueueFailedMarks(queries);
+    expect(marks).toHaveLength(1);
+    // 読んだときの updated_at の行にだけ書く (ワーカーと同時でも、そのあいだに書かれた画像を巻き戻さない)
+    expect(marks[0].calls).toEqual(expect.arrayContaining([{ method: "eq", args: ["updated_at", SAVED_AT] }]));
+  });
+
+  it("処理の起動が投げても、料理は書き直さず、例外を外へ出さない (積んだジョブは定期の処理が拾う)", async () => {
+    h.enqueue.mockResolvedValue({ inserted: 1, duplicates: 0, duplicatesProcessing: 0, failed: 0 });
+    h.trigger.mockRejectedValueOnce(new Error("trigger failed"));
+
+    const queries = await run();
+
+    expect(h.trigger).toHaveBeenCalledTimes(1);
+    expect(queries).toEqual([]);
+  });
+
+  it("saveMealToDb は、積み込みが投げても献立の保存を成功として返す", async () => {
+    h.enqueue.mockRejectedValue(new Error("enqueue failed"));
+
+    const result = await save();
+
+    expect(result).toMatchObject({ outcome: "inserted", plannedMealId: "planned-meal-1" });
     expect(h.trigger).not.toHaveBeenCalled();
   });
 });

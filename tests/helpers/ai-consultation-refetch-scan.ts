@@ -17,6 +17,10 @@
  *   - 内側の範囲で同じ名前を付け直したもの (外の宣言を参照したものとして数える。多めに数える向き)
  *   - `.from(<変数>)` (表の名前がリテラルでないもの)・`.rpc(...)` の中で読み書きする表
  *   - node_modules と、パスの別名で解けない import
+ *   - DB のトリガーが書く表 (例: weekly_menu_requests の award_planner_badge_on_weekly_menu_completed が user_badges を書く・
+ *     recipe_likes のトリガーが recipes.like_count を書く)
+ *   - Edge Function の中から呼ぶ別の Edge Function (例: _shared/meal-image-jobs.ts → process-meal-image-jobs)
+ *   (今は、この 2 つのせいで取り直しが漏れているところは無い)
  */
 import fs from 'node:fs';
 import path from 'node:path';

@@ -71,6 +71,11 @@ const JOB: MealImageJobSeed = {
 };
 /** 保存済みの献立の、画像を待つ料理 (ジョブ JOB の料理) */
 const PENDING_DISH = { name: '筑前煮', role: 'main', image_source: 'generated_ai', image_status: 'pending', image_subject_hash: SUBJECT_HASH, image_url: null };
+/**
+ * 積み込みの例外のあとに読み直す献立の料理と updated_at (#2206 G4)。この偽のクライアントの読み取りは、書いたあとも
+ * 同じ行 (画像を待つ料理) を返すので、その行の値になる (書いた後の値を返すことは tests/meal-image-enqueue-threw-response-2206.test.ts)
+ */
+const MEAL_AFTER_MARK = { dishes: [PENDING_DISH], updated_at: SAVED_AT };
 const ENQUEUED_ONE = { inserted: 1, duplicates: 0, duplicatesProcessing: 0, failed: 0 };
 const ENQUEUED_NONE = { inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 1 };
 
@@ -139,7 +144,7 @@ describe('enqueueMealImageJobsAfterSave (#2201 U4)', () => {
 
     const { outcome, queries } = await run();
 
-    expect(outcome).toEqual({ status: 'enqueue_threw' });
+    expect(outcome).toEqual({ status: 'enqueue_threw', mealAfterMark: MEAL_AFTER_MARK });
     expect(h.refundAiUsage).toHaveBeenCalledTimes(1);
     expect(h.refundAiUsage).toHaveBeenCalledWith(USER_ID, 'meal_image_auto', AI_USAGE_ALLOWED);
     expect(h.triggerMealImageJobProcessing).not.toHaveBeenCalled();
@@ -159,7 +164,7 @@ describe('enqueueMealImageJobsAfterSave (#2201 U4)', () => {
 
     const { outcome, queries } = await run();
 
-    expect(outcome).toEqual({ status: 'enqueue_threw' });
+    expect(outcome).toEqual({ status: 'enqueue_threw', mealAfterMark: MEAL_AFTER_MARK });
     expect(h.enqueueMealImageJobs).not.toHaveBeenCalled();
     expect(h.refundAiUsage).toHaveBeenCalledTimes(1);
     expect(enqueueFailedMarks(queries)).toHaveLength(1);
@@ -170,7 +175,7 @@ describe('enqueueMealImageJobsAfterSave (#2201 U4)', () => {
 
     const { outcome, queries } = await run(null);
 
-    expect(outcome).toEqual({ status: 'enqueue_threw' });
+    expect(outcome).toEqual({ status: 'enqueue_threw', mealAfterMark: MEAL_AFTER_MARK });
     expect(h.refundAiUsage).not.toHaveBeenCalled();
     expect(enqueueFailedMarks(queries)).toHaveLength(1);
   });

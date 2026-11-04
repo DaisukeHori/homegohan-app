@@ -514,9 +514,9 @@ true;
  *   が Web のソースで確かめる (印を持たないモーダルが足されたら赤になる)
  *   - '/comparison' (src/app/(main)/comparison/page.tsx): 表示だけ (入力の部品もモーダルも無い)
  *   - '/profile' (src/app/(main)/profile/page.tsx。#2195 V3): ページの本体に入力の部品は無い。編集は編集のモーダル (isEditing の
- *     間だけ出る) の中だけで、モーダルの入力 (editForm) は保存するまで React の state にしか無い。モーダルは role="dialog" も
- *     aria-modal も持たず、開いている欄 (競技など) によっては入力の部品も出ないので、基本の要素 (AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR)
- *     だけでは守れない。ページごとに足す要素 (AI_CONSULTATION_RELOAD_PAGE_BLOCKING_SELECTORS) でモーダルの層を見て守る。
+ *     間だけ出る) の中だけで、モーダルの入力 (editForm) は保存するまで React の state にしか無い。編集のモーダルは role="dialog" と
+ *     aria-modal を持つ (#2195 V1) ので、開いている欄 (競技など) に入力の部品が出なくても、基本の要素 (AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR)
+ *     で止まる。ページごとに足す要素 (AI_CONSULTATION_RELOAD_PAGE_BLOCKING_SELECTORS の '.fixed.inset-0') は重ねての守りとして残す。
  *     マイページのタブは、知らせを受けたときではなく、タブが前に出たときに読み込み直す (WebViewScreen の aiConsultationReloadTiming)
  *
  * 入れないページ (例): '/profile/nutrition-targets' (入力の画面)・'/menus/weekly/request' (手順つきの入力の画面。currentStep / formData は
@@ -542,7 +542,8 @@ export const AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR = [
 
 /**
  * ページごとに、AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR に足す「これがある間は読み込み直さない」要素 (#2195 V3)。
- * 鍵は AI_CONSULTATION_RELOADABLE_PATHS のページ。基本の要素 (入力の部品・role="dialog" など) を持たないモーダルを守る。
+ * 鍵は AI_CONSULTATION_RELOADABLE_PATHS のページ。基本の要素 (入力の部品・role="dialog" など) を持たないモーダルを守る
+ * ('/profile' の編集のモーダルは今は role="dialog" と aria-modal を持つ (#2195 V1) ので、重ねての守り)。
  *   - '/profile': 編集のモーダル (src/app/(main)/profile/page.tsx の isEditing の間だけ出る、画面全体を覆う `fixed inset-0` の層)。
  *     ページの本体には `fixed inset-0` の要素が無いので、ふだんの表示では当たらない (どちらも tests の静的な検査が確かめる)
  */

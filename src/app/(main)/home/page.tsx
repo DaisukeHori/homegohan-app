@@ -102,8 +102,8 @@ export default function HomePage() {
     performanceAnalysis,
     toggleMealCompletion,
     updateActivityLevel,
-    setAnnouncement,
-    setSuggestion,
+    dismissAnnouncement,
+    dismissSuggestion,
     executeNutritionSuggestion,
     submitPerformanceCheckin,
     refetch,
@@ -424,7 +424,7 @@ export default function HomePage() {
                     <p className="text-sm font-bold text-blue-900">{announcement.title}</p>
                     <p className="text-xs text-blue-700 mt-0.5">{announcement.content}</p>
                   </div>
-                  <button onClick={() => setAnnouncement(null)} className="text-blue-400 hover:text-blue-600 p-1">
+                  <button onClick={dismissAnnouncement} className="text-blue-400 hover:text-blue-600 p-1">
                     <X size={16} />
                   </button>
                 </div>
@@ -715,7 +715,7 @@ export default function HomePage() {
                     <p className="text-xs font-bold text-white/80 mb-0.5">💡 今日のアドバイス</p>
                     <p className="text-sm font-medium leading-relaxed">{suggestion}</p>
                   </div>
-                  <button onClick={() => setSuggestion(null)} className="text-white/60 hover:text-white">
+                  <button onClick={dismissSuggestion} className="text-white/60 hover:text-white">
                     <X size={16} />
                   </button>
                 </div>

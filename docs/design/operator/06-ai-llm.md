@@ -193,7 +193,7 @@ export async function logStreamingUsage(
 | 上限の値 | `public.ai_daily_limits(plan_key PK, daily_limit)`。NULL は無制限。行は `free` = 3・`pro` = 30・`family_basic` = 30・`family_pro` = 50 (migration `20261021100000_billing_paid_plans_iap.sql` の (5b)・(5c)) と、組織のプランの値 (`standard`・`premium`・`enterprise` = 10。同じ migration の (5a) と `20261021110000_org_plan_ai_daily_limits.sql`)。組織の利用者の上限は `organizations.plan` の値の行で決まり、`subscription_plans` の `org_*` の行 (同じ (5a) で 10 を入れた) は判定に使われない。行の無いプランは `free` の行の値 |
 | 行の無いプラン | `free` の行の値 (`free` の行も無ければ無制限) |
 | 変更 | 運営画面 `/super-admin/llm/quotas` (GET / PATCH `/api/super-admin/llm/quotas`。super_admin のみ。監査ログ `super_admin.llm_quota.update`)。`org_*` の行は保存できない (409 `PLAN_READ_ONLY`)。プランの表にも組織のプランにも無いキー (unknown) の行は 404 (`PLAN_NOT_FOUND`) |
-| 上限に数えない機能 | 画面を開く・保存するだけで呼ばれる AI。`nutrition_advice_auto` (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント) と `meal_image_auto` (料理を保存・更新したときに付ける料理画像。AI 相談の update_meal も同じ)。1 日の上限の合計には入れず、機能ごとの安全弁 (下の行) で止める。利用者が押して画像を作る操作 (`POST /api/ai/image/generate`) は `image_generation` で、上限に数える |
+| 上限に数えない機能 | 画面を開く・保存するだけで呼ばれる AI。`nutrition_advice_auto` (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント。AI 相談の成功のあとのホームの取り直しは、栄養の分析を AI を付けずに読むので数えない。開いたときの読み込み中に始まった取り直しは、その読み込みの役を引き継ぐ。読み込みがまだ AI つきの読み取りを始めていなければ AI つきで読むので 1 回数え、始めていれば AI を付けずに読むので数えない) と `meal_image_auto` (料理を保存・更新したときに付ける料理画像。AI 相談の update_meal も同じ)。1 日の上限の合計には入れず、機能ごとの安全弁 (下の行) で止める。利用者が押して画像を作る操作 (`POST /api/ai/image/generate`) は `image_generation` で、上限に数える |
 | 機能ごとの 1 日の上限 (上限に数える機能・#1142) | 究極モード (献立の生成で `ultimateMode: true`) は機能名 `menu_generation_ultimate` で数え、1 回で 1 日の上限の合計に 1 回・究極モードの上限に 1 回入る (両方に数える。`ai_usage_counters` の同じ 1 行なので、数え戻しも 1 回で両方から戻る)。究極モードの上限は利用者ごと・1 日 (JST) の回数で、プランで決まる (billing/03 §6.5)。`ai_plan_feature_caps` に行のあるプランは行の値 (`free` = 0・`pro` = 2・`family_basic` = 2・`family_pro` = 3。migration `20261021100000_billing_paid_plans_iap.sql` の (5'))。0 はそのプランでは使えない (403 `AI_FEATURE_NOT_IN_PLAN`。画面は錠を出す)。行のあるプランでは `consume_ai_usage_capped` は呼び出し側が渡す上限を使わず、`consume_ai_usage_at` が行の値で判定する。行の無いプラン (組織のプランなど) にだけ、呼び出し側が渡す上限が効く: 既定は 1 回 (`AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT`。`supabase/functions/_shared/ai-usage-core.ts`)。環境変数 `AI_ULTIMATE_MODE_DAILY_LIMIT` (0 以上の整数。0 はその日は使えない。無い・形が違うときは既定の 1) で変える。Next.js (Vercel) と Edge Functions (Supabase の secrets) の両方に同じ値で入れる (片方だけだと、入口によって上限が変わる) |
 | 安全弁 (上限に数えない機能) | `public.ai_unmetered_daily_caps(feature PK, daily_cap)`。利用者ごと・1 日 (JST) の、機能ごとの回数。既定は `nutrition_advice_auto` = 30・`meal_image_auto` = 20 (ふつうの使い方では当たらない値)。行の無い機能は 20 (無制限にしない)。値は DB の行で変える (運営画面は無い)。上限に数えない機能を選ぶ材料 (forceRefresh・includeAdvice など) はクライアントが送る値なので、API を直接呼んで上限と無関係に AI を使えないように置く |
 
@@ -262,7 +262,11 @@ export async function logStreamingUsage(
   `MEAL_DISH_WRITE_MAX_ATTEMPTS` 回で諦めて失敗にする)。積めなかった料理の印・失敗の印も同じ書き方 (`writePlannedMealDishesWithOptimisticLock`) で書く (#1532・#1553)
   ジョブは行ごとの insert で積む (冪等キーの一意な索引は待ち・処理中だけの部分索引なので、`ON CONFLICT (idempotency_key)` の upsert は使えない)。
   同じ料理のジョブが待ち・処理中なら一意制約の違反 (23505) を重複として数え、1 行も積めなかったとき (重複・書き込みの失敗) は数えた 1 回を戻す。
-  献立の保存に失敗したときも戻す
+  献立の保存に失敗したときも戻す。献立を保存したあとの積み込みで例外が出たとき (service role のクライアントの取り出し・積み込みの関数の例外) も戻し、
+  ジョブの無い料理を保存済みの献立の上で `image_status: 'failed'` + `image_error: 'enqueue_failed'` にする (献立の保存は成功のまま)。
+  処理の起動 (`triggerMealImageJobProcessing`) の例外はログに残すだけで戻さない (積んだジョブは定期の処理が拾う)。
+  AI 相談の update_meal と料理を保存する 4 つの route (`POST /api/meals`・`PATCH /api/meals/[id]`・`POST /api/meal-plans/meals`・
+  `PATCH /api/meal-plans/meals/[id]`) は、積み込みと処理の起動を `src/lib/meal-image-enqueue-after-save.ts` の `enqueueMealImageJobsAfterSave` で行う
 - 料理画像のジョブの積み方 (#1505): Next.js (`lib/meal-image-jobs.ts`) と Edge Function (`supabase/functions/_shared/meal-image-jobs.ts`。
   献立の生成 `generate-menu-v5` / `generate-menu-v4` の `saveMealToDb`) は、同じ積み方 (`supabase/functions/_shared/meal-image.ts` の
   `buildMealImageJobRecords` / `insertMealImageJobRecords`) を使う。料理を保存したあとにジョブの書き込みが失敗した料理 (23505 以外のエラー・例外) は、

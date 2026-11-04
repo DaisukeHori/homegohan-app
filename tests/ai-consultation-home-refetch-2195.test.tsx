@@ -45,8 +45,8 @@ const supabaseMock = vi.hoisted(() => ({
   tableHoldFor: null as null | { table: string; hold: Promise<void> },
   /** true の間に始めた表の読み取りは reject する (#2201 U1。読み取りが投げたとき) */
   tableRejects: false,
-  /** ページが auth.onAuthStateChange に渡した関数 (ログインの状態の変化を起こす。#2201 U1) */
-  authStateListener: null as null | (() => void),
+  /** ページが auth.onAuthStateChange に渡した関数 (ログインの状態の変化を起こす。#2201 U1。event は supabase-js の AuthChangeEvent) */
+  authStateListener: null as null | ((event: string) => void),
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
@@ -85,7 +85,7 @@ vi.mock('@/lib/supabase/client', () => {
         getSession: async () => ({ data: { session: { user } }, error: null }),
         getUser: async () => ({ data: { user }, error: null }),
         refreshSession: async () => ({ data: { session: { user } }, error: null }),
-        onAuthStateChange: (listener: () => void) => {
+        onAuthStateChange: (listener: (event: string) => void) => {
           supabaseMock.authStateListener = listener;
           return { data: { subscription: { unsubscribe: () => undefined } } };
         },
@@ -153,6 +153,8 @@ const { useAiConsultationDataRefetch } = await import('@/hooks/useAiConsultation
 const { default: HomePage } = await import('@/app/(main)/home/page');
 const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
 const { AI_CONSULTATION_GENERATION_STATUS_PATH, AI_CONSULTATION_GENERATION_WATCH_INTERVAL_MS } = await import('@/lib/ai/consultation-generation-watch');
+const { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_CHECK_FAILED_CODE } = await import('@/lib/ai/consent-config');
+const { AI_DAILY_LIMIT_CODE } = await import('../supabase/functions/_shared/ai-daily-limit');
 const {
   ReadRecorder,
   expectEmptyRefetchMatchesFreshMount,
@@ -193,8 +195,9 @@ let nutritionAnalysisBody: unknown;
 
 /**
  * 栄養の分析の API の作り物: AI つきの URL には nutritionAnalysisBody をそのまま、AI を付けない URL には AI の部分
- * (advice・suggestion) を空にしたものを返す (src/app/api/ai/nutrition-analysis/route.ts は includeAdvice / includeSuggestion が
- * 無ければ AI を呼ばず、advice・suggestion は null)。どちらでもない・答えが無いときは null (呼び出し側が 404 にする)
+ * (advice・suggestion) を空にし、aiSkipped を外したものを返す (src/app/api/ai/nutrition-analysis/route.ts は includeAdvice /
+ * includeSuggestion が無ければ AI を呼ばず (aiRequested が false)、advice・suggestion は null で、同意も上限も確かめないので
+ * aiSkipped を付けない。#2206 G3)。どちらでもない・答えが無いときは null (呼び出し側が 404 にする)
  */
 function nutritionAnalysisAnswer(input: unknown): unknown {
   if (nutritionAnalysisBody === undefined) return null;
@@ -202,7 +205,9 @@ function nutritionAnalysisAnswer(input: unknown): unknown {
   if (url === NUTRITION_ANALYSIS_URL) return nutritionAnalysisBody;
   if (url !== NUTRITION_ANALYSIS_WITHOUT_AI_URL) return null;
   const body = nutritionAnalysisBody as { analysis?: unknown };
-  return body.analysis ? { ...body, advice: null, suggestion: null } : body;
+  const withoutAi: Record<string, unknown> = body.analysis ? { ...body, advice: null, suggestion: null } : { ...body };
+  delete withoutAi.aiSkipped;
+  return withoutAi;
 }
 
 /** 今週の完了した・写真のある食事 (planned_meals の行) */
@@ -978,7 +983,7 @@ describe('useHomeData: 開いたときの読み込みの最中に始まった取
     expect(loadingText()).toBe('false');
   });
 
-  it('開いたときの読み込みの役を引き継いだ取り直しは、栄養の分析を AI つきで読み、今日のアドバイスの帯を出す (#2201 U1 + U4)', async () => {
+  it('開いたときの読み込みがもう AI つきの栄養の分析を読み始めていれば、その役を引き継いだ取り直しは AI を付けずに読み (AI つきを 2 回読まない)、開いたときの分析が届いたら今日のアドバイスの帯を出す (#2201 U1 + U4・#2206 G3)', async () => {
     const ADVICE = '夕食のタンパク質が不足しています';
     nutritionAnalysisBody = analysisResponse(ADVICE);
     let refetch: (() => Promise<void>) | null = null;
@@ -1014,21 +1019,70 @@ describe('useHomeData: 開いたときの読み込みの最中に始まった取
     expect(loadingText(), '開いたときの読み込みを止められていない (検査が空振りしている)').toBe('true');
     expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '開いたときの栄養の分析を始めていない (検査が空振りしている)').toBe(1);
 
-    // その間に AI 相談の成功の取り直しが始まる: 開いたときの読み込みの役 (栄養の分析も) を引き継ぐ
+    // その間に AI 相談の成功の取り直しが始まる: 開いたときの読み込みの役を引き継ぐ。AI つきの読み取りはもう始まっているので AI を付けない
     holdFetches = false;
     await act(async () => {
       await refetch!();
     });
     await settle();
     expect(loadingText()).toBe('false');
-    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL), '引き継いだ取り直しが AI を付けない栄養の分析を読んだ').toBe(0);
-    expect(adviceBannerText(), '開いたときの栄養の分析を引き継いだ取り直しが、今日のアドバイスの帯を出さなかった').toBe(ADVICE);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '引き継いだ取り直しが AI つきの栄養の分析をもう 1 回読んだ (LLM と安全弁を余分に使う)').toBe(1);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL), '引き継いだ取り直しが点数を読み直していない').toBe(1);
 
-    // 先に始めた開いたときの読み込みの応答が後から届いても、帯はそのまま
+    // 先に始めた開いたときの AI つきの分析の応答が後から届くと、そのアドバイスを帯に出す (AI の部分の鍵は取り直しが始めていない)
     await act(async () => {
       for (const release of heldMountFetches) release();
     });
     await settle();
+    expect(adviceBannerText(), '開いたときの AI つきの分析のアドバイスを帯に出さなかった').toBe(ADVICE);
+    expect(loadingText()).toBe('false');
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(1);
+  });
+
+  it('開いたときの読み込みがまだ AI つきの栄養の分析を読み始めていなければ、その役を引き継いだ取り直しが AI つきで 1 回だけ読み、今日のアドバイスの帯を出す (#2201 U1 + U4・#2206 G3)', async () => {
+    const ADVICE = '夕食のタンパク質が不足しています';
+    nutritionAnalysisBody = analysisResponse(ADVICE);
+    let refetch: (() => Promise<void>) | null = null;
+    function HomeMountProbe() {
+      const home = useHomeData();
+      refetch = home.refetch;
+      return (
+        <div>
+          <p data-testid="home-loading">{String(home.loading)}</p>
+          <p data-testid="advice-banner">{home.suggestion ?? ''}</p>
+        </div>
+      );
+    }
+    const loadingText = () => container.querySelector('[data-testid="home-loading"]')?.textContent;
+    const fetchCallsTo = (url: string) => vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === url).length;
+
+    // 開いたときの読み込みの表の読み取りを止める (栄養の分析はまだ読み始めていない)
+    let releaseMount: () => void = () => undefined;
+    supabaseMock.tableHold = new Promise<void>((resolve) => {
+      releaseMount = resolve;
+    });
+    await act(async () => {
+      root.render(<HomeMountProbe />);
+    });
+    await settle();
+    expect(loadingText(), '開いたときの読み込みを止められていない (検査が空振りしている)').toBe('true');
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '開いたときの読み込みが栄養の分析を読み始めた (検査の前提が崩れた)').toBe(0);
+
+    supabaseMock.tableHold = null;
+    await act(async () => {
+      await refetch!();
+    });
+    await settle();
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '引き継いだ取り直しが AI つきで読まなかった (アドバイスと帯がどこにも無い)').toBe(1);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL)).toBe(0);
+    expect(adviceBannerText()).toBe(ADVICE);
+
+    // 追い越された開いたときの読み込みの応答が後から届いても、栄養の分析を読み始めない
+    await act(async () => {
+      releaseMount();
+    });
+    await settle();
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '追い越された開いたときの読み込みが AI つきの栄養の分析を読んだ').toBe(1);
     expect(adviceBannerText()).toBe(ADVICE);
     expect(loadingText()).toBe('false');
   });
@@ -1345,7 +1399,7 @@ describe('useHomeData: 取り直しの読み取りの失敗では、記録の集
     );
     expect(supabaseMock.authStateListener, 'ログインの状態の変化を受け取る関数が無い (検査の前提が崩れた)').not.toBeNull();
     await act(async () => {
-      supabaseMock.authStateListener!();
+      supabaseMock.authStateListener!('SIGNED_IN');
     });
     await settle();
     expect(summaryShown()).toMatchObject({
@@ -1377,6 +1431,272 @@ describe('useHomeData: 取り直しの読み取りの失敗では、記録の集
       'has-alert': 'false',
       'shopping-remaining': '0',
       'today-checkin': 'false',
+    });
+  });
+});
+
+describe('useHomeData: /home のお知らせ・同意の知らせ・今日のアドバイスの帯・AI つきの栄養の分析の余分な読み取り (#2206 G3)', () => {
+  const ADVICE = '夕食のタンパク質が不足しています';
+  /** 公開のお知らせの一覧 (GET /api/announcements?mode=public) */
+  const ANNOUNCEMENTS_URL = '/api/announcements?mode=public';
+  /** お知らせの行 (announcements の行。src/lib/converter.ts の toAnnouncement が読む形) */
+  function announcementRow(id: string, title: string) {
+    return { id, title, content: `${title}の本文`, is_public: true, published_at: null, created_at: '2026-11-01T00:00:00.000Z' };
+  }
+  const FIRST_ANNOUNCEMENT = announcementRow('22060000-0000-4000-8000-0000000000a1', 'メンテナンスのお知らせ');
+  const NEXT_ANNOUNCEMENT = announcementRow('22060000-0000-4000-8000-0000000000a2', '新しい機能のお知らせ');
+
+  /** GET /api/announcements?mode=public の今の答え */
+  let announcementRows: unknown[];
+  /** true の間に始めた GET の fetch は応答を止める (読み込み中の表示のまま、栄養の分析・お知らせの応答を待つ) */
+  let holdGetFetches: boolean;
+  /** 止めた GET の fetch の応答 */
+  let heldGetFetches: (() => void)[];
+  let home: ReturnType<typeof useHomeData> | null;
+
+  function HomeG3Probe() {
+    const data = useHomeData();
+    home = data;
+    // ホームのページと同じく、通知のたびに hook が渡す札を refetch に渡す
+    useAiConsultationDataRefetch((ticket) => data.refetch(ticket), { writeInFlightRef: data.aiConsultationWrites });
+    return (
+      <div>
+        <p data-testid="home-loading">{String(data.loading)}</p>
+        <p data-testid="announcement">{data.announcement?.title ?? ''}</p>
+        <p data-testid="advice-banner">{data.suggestion ?? ''}</p>
+        <p data-testid="ai-skipped">{data.nutritionAnalysis.aiSkipped ?? ''}</p>
+        <p data-testid="analysis-score">{data.nutritionAnalysis.score}</p>
+      </div>
+    );
+  }
+  const textOf = (testId: string) => container.querySelector(`[data-testid="${testId}"]`)?.textContent;
+  const fetchCallsTo = (url: string) => vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === url).length;
+
+  beforeEach(() => {
+    home = null;
+    announcementRows = [];
+    holdGetFetches = false;
+    heldGetFetches = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init?: { method?: string }) => {
+        if ((init?.method ?? 'GET').toUpperCase() === 'POST' && String(input) === '/api/ai/nutrition-analysis') {
+          return { ok: true, status: OK_STATUS, json: async () => ({ success: true }) };
+        }
+        // 答えは読み取りを始めたときのもの
+        const answer = String(input) === ANNOUNCEMENTS_URL ? { announcements: announcementRows } : nutritionAnalysisAnswer(input);
+        if (holdGetFetches) await new Promise<void>((resolve) => heldGetFetches.push(resolve));
+        if (answer !== null) return { ok: true, status: OK_STATUS, json: async () => answer };
+        return { ok: false, status: NOT_FOUND_STATUS, json: async () => ({}) };
+      }),
+    );
+  });
+
+  async function renderProbe() {
+    await act(async () => {
+      root.render(<HomeG3Probe />);
+    });
+    await settle();
+  }
+
+  async function notifyAiConsultationSucceeded() {
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(AI_CONSULTATION_DATA_CHANGED_EVENT, { detail: { actionType: 'update_meal', result: {} } }));
+    });
+    await settle();
+  }
+
+  async function changeAuthState(event: string) {
+    expect(supabaseMock.authStateListener, 'ログインの状態の変化を受け取る関数が無い (検査の前提が崩れた)').not.toBeNull();
+    await act(async () => {
+      supabaseMock.authStateListener!(event);
+    });
+    await settle();
+  }
+
+  describe('閉じたお知らせ', () => {
+    it('× で閉じたお知らせは、AI 相談の成功の取り直し・ログインの状態の変化の読み込みで置き直さない', async () => {
+      announcementRows = [FIRST_ANNOUNCEMENT];
+      await renderProbe();
+      expect(textOf('announcement')).toBe(FIRST_ANNOUNCEMENT.title);
+
+      await act(async () => {
+        home!.dismissAnnouncement();
+      });
+      expect(textOf('announcement')).toBe('');
+
+      await notifyAiConsultationSucceeded();
+      expect(fetchCallsTo(ANNOUNCEMENTS_URL), '取り直しがお知らせを読んでいない (検査が空振りしている)').toBe(2);
+      expect(textOf('announcement'), '閉じたお知らせを AI 相談の成功の取り直しが戻した').toBe('');
+
+      await changeAuthState('SIGNED_IN');
+      expect(textOf('announcement'), '閉じたお知らせをログインの状態の変化の読み込みが戻した').toBe('');
+    });
+
+    it('閉じたあとに別のお知らせが出たら、取り直しでそのお知らせを出す (閉じたお知らせだけを置かない)', async () => {
+      announcementRows = [FIRST_ANNOUNCEMENT];
+      await renderProbe();
+      await act(async () => {
+        home!.dismissAnnouncement();
+      });
+
+      announcementRows = [NEXT_ANNOUNCEMENT];
+      await notifyAiConsultationSucceeded();
+      expect(textOf('announcement')).toBe(NEXT_ANNOUNCEMENT.title);
+    });
+
+    it('閉じていないお知らせは、これまでどおり取り直しで置く', async () => {
+      announcementRows = [FIRST_ANNOUNCEMENT];
+      await renderProbe();
+      announcementRows = [NEXT_ANNOUNCEMENT];
+      await notifyAiConsultationSucceeded();
+      expect(textOf('announcement')).toBe(NEXT_ANNOUNCEMENT.title);
+    });
+  });
+
+  describe('同意が無くて AI を省いた知らせ (aiSkipped)', () => {
+    it('開いたときに consent_required だった知らせは、AI 相談の成功 (同意済み) の取り直しで消す。AI つきでは読み直さない', async () => {
+      nutritionAnalysisBody = { ...analysisResponse(null), aiSkipped: AI_CONSENT_REQUIRED_CODE };
+      await renderProbe();
+      expect(textOf('ai-skipped'), '開いたときの同意の知らせを置いていない (検査の前提が崩れた)').toBe('consent_required');
+
+      // チャットで同意して AI 相談が成功した。AI を付けない読み取りは aiSkipped を返さない (本物の route の形)
+      nutritionAnalysisBody = analysisResponse(null);
+      await notifyAiConsultationSucceeded();
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL), '取り直しが栄養の分析を読んでいない (検査が空振りしている)').toBe(1);
+      expect(textOf('ai-skipped'), '同意して AI 相談が成功したのに「同意すると表示されます」を残した').toBe('');
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(1);
+    });
+
+    it('取り直しの栄養の分析の読み取りが失敗しても、consent_required の知らせは消す (成功は同意済みで、読み取りの失敗とは関係が無い)', async () => {
+      nutritionAnalysisBody = { ...analysisResponse(null), aiSkipped: AI_CONSENT_REQUIRED_CODE };
+      await renderProbe();
+      expect(textOf('ai-skipped')).toBe('consent_required');
+
+      nutritionAnalysisBody = undefined; // 404
+      await notifyAiConsultationSucceeded();
+      expect(textOf('ai-skipped')).toBe('');
+      expect(textOf('analysis-score'), '読み取りの失敗で前の点数を消した').toBe(String(ANALYSIS_SCORE));
+    });
+
+    it.each([
+      { code: AI_DAILY_LIMIT_CODE, reason: 'daily_limit' },
+      { code: AI_CONSENT_CHECK_FAILED_CODE, reason: 'check_failed' },
+    ])('開いたときに $reason だった知らせは、取り直し (AI を付けない) で前の値を残す', async ({ code, reason }) => {
+      nutritionAnalysisBody = { ...analysisResponse(null), aiSkipped: code };
+      await renderProbe();
+      expect(textOf('ai-skipped'), '開いたときの知らせを置いていない (検査の前提が崩れた)').toBe(reason);
+
+      await notifyAiConsultationSucceeded();
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL), '取り直しが栄養の分析を読んでいない (検査が空振りしている)').toBe(1);
+      expect(textOf('ai-skipped')).toBe(reason);
+    });
+  });
+
+  describe('今日のアドバイスの帯の出所', () => {
+    it('分析できなくなった取り直しでも、今日の気分・活動量の文は消さない (消すのは AI のアドバイスだけ)', async () => {
+      nutritionAnalysisBody = analysisResponse(ADVICE);
+      await renderProbe();
+      expect(textOf('advice-banner')).toBe(ADVICE);
+
+      await act(async () => {
+        await home!.updateActivityLevel('active');
+      });
+      await settle();
+      const activityText = textOf('advice-banner');
+      expect(activityText, '活動量の文を帯に出していない (検査の前提が崩れた)').not.toBe(ADVICE);
+      expect(activityText).not.toBe('');
+
+      nutritionAnalysisBody = NO_MEALS_RESPONSE;
+      await notifyAiConsultationSucceeded();
+      expect(textOf('analysis-score'), '取り直しが分析できない答えを置いていない (検査が空振りしている)').toBe('0');
+      expect(textOf('advice-banner'), '分析と関係の無い活動量の文を、分析できない取り直しが消した').toBe(activityText);
+    });
+
+    it('分析できなくなった取り直しでも、献立の変更の結果の文は消さない', async () => {
+      nutritionAnalysisBody = { ...analysisResponse(ADVICE), suggestion: { currentIssue: '野菜が不足しています', suggestedDishes: [] } };
+      await renderProbe();
+
+      await act(async () => {
+        await home!.executeNutritionSuggestion();
+      });
+      await settle();
+      const menuChangeText = textOf('advice-banner');
+      expect(menuChangeText, '献立の変更の結果の文を帯に出していない (検査の前提が崩れた)').not.toBe(ADVICE);
+      expect(menuChangeText).not.toBe('');
+
+      nutritionAnalysisBody = NO_MEALS_RESPONSE;
+      await notifyAiConsultationSucceeded();
+      expect(textOf('analysis-score')).toBe('0');
+      expect(textOf('advice-banner'), '分析と関係の無い献立の変更の文を、分析できない取り直しが消した').toBe(menuChangeText);
+    });
+
+    it('帯の × は、出所によらず帯を消す', async () => {
+      nutritionAnalysisBody = analysisResponse(ADVICE);
+      await renderProbe();
+      expect(textOf('advice-banner')).toBe(ADVICE);
+      await act(async () => {
+        home!.dismissSuggestion();
+      });
+      expect(textOf('advice-banner')).toBe('');
+    });
+
+    it('ログインの状態の変化の読み込み (AI つき) は、帯に文が出ているときは AI のアドバイスで上書きしない (置く時点の帯を見る)', async () => {
+      nutritionAnalysisBody = analysisResponse(ADVICE);
+      await renderProbe();
+      await act(async () => {
+        await home!.updateActivityLevel('active');
+      });
+      await settle();
+      const activityText = textOf('advice-banner');
+
+      await changeAuthState('SIGNED_IN');
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), 'ログインの状態の変化で読み直していない (検査が空振りしている)').toBe(2);
+      expect(textOf('advice-banner'), '帯に出ていた活動量の文を、古い帯の値を見た AI のアドバイスで上書きした').toBe(activityText);
+    });
+  });
+
+  describe('AI つきの栄養の分析を余分に読まない', () => {
+    it('ログインの状態の変化のうち INITIAL_SESSION・TOKEN_REFRESHED では読み直さない (SIGNED_IN・SIGNED_OUT・USER_UPDATED では読み直す)', async () => {
+      nutritionAnalysisBody = analysisResponse(ADVICE);
+      await renderProbe();
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(1);
+
+      await changeAuthState('INITIAL_SESSION');
+      await changeAuthState('TOKEN_REFRESHED');
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), 'トークンの更新・購読の始めで AI つきの栄養の分析を読み直した').toBe(1);
+
+      await changeAuthState('SIGNED_IN');
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(2);
+      await changeAuthState('USER_UPDATED');
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(3);
+      await changeAuthState('SIGNED_OUT');
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(4);
+    });
+
+    it('ログインの状態の変化の読み込みが AI つきの読み取りを始めたあとに来た取り直し (その読み込みの役を引き継ぐ) は、AI を付けずに読む', async () => {
+      nutritionAnalysisBody = analysisResponse(ADVICE);
+      await renderProbe();
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(1);
+
+      // ログインの状態の変化の読み込みの、栄養の分析・お知らせの応答を止める (読み込み中の表示のまま)
+      holdGetFetches = true;
+      await changeAuthState('SIGNED_IN');
+      expect(textOf('home-loading'), 'ログインの状態の変化の読み込みを止められていない (検査が空振りしている)').toBe('true');
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), 'ログインの状態の変化の読み込みが AI つきの読み取りを始めていない (検査の前提が崩れた)').toBe(2);
+
+      holdGetFetches = false;
+      await notifyAiConsultationSucceeded();
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '引き継いだ取り直しが AI つきの栄養の分析をもう 1 回読んだ').toBe(2);
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL)).toBe(1);
+      expect(textOf('home-loading')).toBe('false');
+
+      await act(async () => {
+        for (const release of heldGetFetches) release();
+      });
+      await settle();
+      expect(textOf('advice-banner')).toBe(ADVICE);
+      expect(textOf('home-loading')).toBe('false');
     });
   });
 });
