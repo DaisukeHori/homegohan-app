@@ -15,6 +15,7 @@ import {
   summarizeMealImageJobOutcomes,
   type EnqueueMealImageJobsResult,
   type MealImageDish,
+  type MealImageEnqueueAftercareFailure,
   type MealImageJobSeed,
 } from './meal-image';
 
@@ -170,9 +171,36 @@ interface EnqueueJobsParams {
 /** ログの名前 (ロガーは使うときに作る。import のときに作ると、ロガーを差し替えるテストの初期化の順に依存する) */
 const ENQUEUE_LOG_NAME = 'lib/meal-image-jobs';
 
+/** 積み込みの後始末が投げたときに app_logs へ残すログの文 (#2235 I5。諦めた後始末は metadata の step) */
+export const MEAL_IMAGE_ENQUEUE_AFTERCARE_FAILED_LOG_MESSAGE = 'Meal image enqueue aftercare failed';
+
+/** 後始末の名前 (ログの step と console の文に出る) */
+export const MEAL_IMAGE_ENQUEUE_AFTERCARE_STEPS = Object.freeze({
+  logFailedRows: 'logging the failed rows',
+  markFailedDishes: 'marking the dishes whose jobs were not enqueued',
+  refundUnusedUsage: 'refunding the unused usage',
+});
+
+/**
+ * 後始末が投げたことを app_logs に残す (runMealImageEnqueueAftercare の onFailure。#2235 I5)。
+ * 印の失敗の warn と同じ形 (userId・plannedMealId) に、諦めた後始末 (step) を足す。やり直しはしない
+ * (数え戻しは一部だけ戻して投げることがあり、やり直すと二重に戻しうる)
+ */
+function logAftercareFailure(params: EnqueueJobsParams): (failure: MealImageEnqueueAftercareFailure) => void {
+  return ({ label, error }) => {
+    createLogger(ENQUEUE_LOG_NAME).error(MEAL_IMAGE_ENQUEUE_AFTERCARE_FAILED_LOG_MESSAGE, error, {
+      userId: params.userId,
+      plannedMealId: params.plannedMealId,
+      step: label,
+    });
+  };
+}
+
 /**
  * 料理画像のジョブを積む (service role)。行ごとに insert し、積めた・重複・失敗を数えて返す。例外は投げない。
  * 行を積み始めたあとの後始末 (ログ・印・数え戻し) は runMealImageEnqueueAftercare で囲み、投げても結果を返す (#2227 H4)。
+ * 積む種が無いときの数え戻しも同じく囲む (#2235 I5。投げると、呼び出し側の catch がもう一度戻しうる)。
+ * 後始末が投げたときは app_logs に残す (logAftercareFailure。#2235 I5)。
  *
  * 1 回の upsert (onConflict: 'idempotency_key', ignoreDuplicates) にしない理由 (#1487):
  * 冪等キーの一意な索引は部分索引 (WHERE status IN ('pending','processing')) なので、PostgREST の on_conflict が作る
@@ -191,8 +219,15 @@ const ENQUEUE_LOG_NAME = 'lib/meal-image-jobs';
  * (AI へは何も送らないので。上限の数え戻しの決まりは src/lib/plan/entitlements.ts の【数え戻し】)。
  */
 export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<EnqueueMealImageJobsResult> {
+  const onAftercareFailure = logAftercareFailure(params);
   if (!params.jobSeeds.length) {
-    await refundUnusedMealImageUsage(params);
+    // 数え戻しが投げても外へ出さない (#2235 I5)。投げると呼び出し側 (enqueueMealImageJobsAfterSave) の catch が
+    // 積み込みの例外とみなしてもう一度戻す (数え戻しは一部だけ戻して投げることがあるので、二重に戻しうる)
+    await runMealImageEnqueueAftercare(
+      MEAL_IMAGE_ENQUEUE_AFTERCARE_STEPS.refundUnusedUsage,
+      () => refundUnusedMealImageUsage(params),
+      onAftercareFailure,
+    );
     return { ...EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT };
   }
 
@@ -225,7 +260,7 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<E
   }
 
   if (failures.length > 0) {
-    await runMealImageEnqueueAftercare('logging the failed rows', () => {
+    await runMealImageEnqueueAftercare(MEAL_IMAGE_ENQUEUE_AFTERCARE_STEPS.logFailedRows, () => {
       const logger = createLogger(ENQUEUE_LOG_NAME);
       for (const outcome of outcomes) {
         if (outcome.kind !== 'failed') continue;
@@ -237,8 +272,8 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<E
           error: outcome.message,
         });
       }
-    });
-    await runMealImageEnqueueAftercare('marking the dishes whose jobs were not enqueued', async () => {
+    }, onAftercareFailure);
+    await runMealImageEnqueueAftercare(MEAL_IMAGE_ENQUEUE_AFTERCARE_STEPS.markFailedDishes, async () => {
       // 読んだときの updated_at の行にだけ書く (ワーカーと同時でも、そのあいだに書かれた料理の画像を巻き戻さない。#1532)
       const marked = await markEnqueueFailedDishesInMeal({
         failures,
@@ -253,10 +288,16 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<E
           error: marked.message,
         });
       }
-    });
+    }, onAftercareFailure);
   }
 
-  if (result.inserted === 0) await runMealImageEnqueueAftercare('refunding the unused usage', () => refundUnusedMealImageUsage(params));
+  if (result.inserted === 0) {
+    await runMealImageEnqueueAftercare(
+      MEAL_IMAGE_ENQUEUE_AFTERCARE_STEPS.refundUnusedUsage,
+      () => refundUnusedMealImageUsage(params),
+      onAftercareFailure,
+    );
+  }
   return result;
 }
 
