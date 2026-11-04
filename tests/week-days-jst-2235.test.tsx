@@ -474,8 +474,9 @@ const SHOPPING_RANGE_CASES: readonly ShoppingRangeCase[] = [
   // America/Los_Angeles の夏時間の始まりの前の日の朝 (2027-03-13 7:30 PST = JST 2027-03-14 0:30)。端末のローカル時刻で 1 日ずらすと
   // 夏時間に入って 23 時間しか進まず、JST の日付が 1 日手前になる
   { timeZone: 'America/Los_Angeles', at: '2027-03-13T15:30:00.000Z', today: '3月14日', tomorrow: '3月15日', dayAfterTomorrow: '3月16日', weekEnd: '3月20日', threeDaysEnd: '3月16日' },
-  // 夏時間の終わり (2026-11-01 PDT → PST) の前の日の朝 (2026-10-31 8:30 PDT = JST 2026-11-01 0:30)。1 日ずらすと 25 時間進む
-  { timeZone: 'America/Los_Angeles', at: '2026-10-31T15:30:00.000Z', today: '11月1日', tomorrow: '11月2日', dayAfterTomorrow: '11月3日', weekEnd: '11月7日', threeDaysEnd: '11月3日' },
+  // 夏時間の終わり (2026-11-01 PDT → PST) の前の日の朝 (2026-10-31 7:30 PDT = JST 2026-10-31 23:30)。端末のローカル時刻で 1 日ずらすと
+  // 25 時間進み、JST の日付が 1 日先になる
+  { timeZone: 'America/Los_Angeles', at: '2026-10-31T14:30:00.000Z', today: '10月31日', tomorrow: '11月1日', dayAfterTomorrow: '11月2日', weekEnd: '11月6日', threeDaysEnd: '11月2日' },
   { timeZone: 'UTC', at: '2026-11-04T15:00:00.000Z', today: '11月5日', tomorrow: '11月6日', dayAfterTomorrow: '11月7日', weekEnd: '11月11日', threeDaysEnd: '11月7日' },
   { timeZone: 'Pacific/Kiritimati', at: '2026-12-31T14:59:59.999Z', today: '12月31日', tomorrow: '1月1日', dayAfterTomorrow: '1月2日', weekEnd: '1月6日', threeDaysEnd: '1月2日' },
 ];
