@@ -29,7 +29,7 @@
  *     少し待って 1 回だけ読み直す (#2206 G2。実行できていれば一文を足して知らせる)
  *   - 取り直し (GET) とそのあとの記録の直読みは CONSULTATION_REPLY_RELOAD_TIMEOUT_MS で打ち切る (#2227 H1。Web とモバイルで同じ)
  *   - 届いたかを確かめられなかった送信は画面が覚え、後の取り直しで保存行が見つかったら入力欄に戻した文を消し、今回の送信の
- *     保存行を探すときはその行を除く (resolveUnconfirmedSends。#2227 H1)
+ *     保存行を探すときはその行を除く (resolveUnconfirmedSends。送信ごとに当てた行も返すのは resolveUnconfirmedSendRows。#2227 H1)
  *   - この決まりは previousRequestNotePlanOf (取り直したとき) と previousRequestRecheckPlanOf・
  *     messagesAfterPreviousRequestRecheck (読み直したとき) の 1 か所で決め、Web とモバイルの画面はその結果を描くだけにする
  *     (#2206 G2。以前は画面ごとに判定を写していて、Web にだけ足した決まりがモバイルに無かった)
