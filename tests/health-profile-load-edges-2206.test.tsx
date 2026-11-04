@@ -17,6 +17,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { todayLocal } from '@/lib/date-utils';
 
 const USER_ID = '22060000-0000-4000-8000-0000000000aa';
 
@@ -213,9 +214,11 @@ async function click(button: HTMLButtonElement | undefined, what: string) {
   await settle();
 }
 
-const pad2 = (n: number) => String(n).padStart(2, '0');
-const localDate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-const TODAY = localDate(new Date());
+/**
+ * /health/graphs の今日 (グラフの最後の日)。ページと同じく JST の暦日にする (#2227 H6: 実行環境の暦日で作ると、JST より東の
+ * タイムゾーンでは JST の明日になり、期間から外れる)。流している間に JST の日付が変わっても、前の日は期間の中
+ */
+const TODAY = todayLocal();
 
 // ─── /health/graphs ─────────────────────────────────────────────
 
