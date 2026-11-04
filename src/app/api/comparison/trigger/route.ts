@@ -103,7 +103,8 @@ async function recordRunNowAudit(
   try {
     supabase = await createClient();
   } catch (err) {
-    createLogger(ROUTE_NAME).error('監査ログ (admin_audit_logs) への記録に失敗しました', err, {
+    // 操作した運営者は withUser で app_logs の user_id 列に入れる (metadata の actor_id にだけ渡すと user_id 列で絞ったときに出てこない。#2245 K5)
+    createLogger(ROUTE_NAME).withUser(actorId).error('監査ログ (admin_audit_logs) への記録に失敗しました', err, {
       action_type: CRON_RUN_NOW_AUDIT_ACTION,
       actor_id: actorId,
       stage: 'client',

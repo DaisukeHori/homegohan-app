@@ -220,15 +220,16 @@ async function readMealImageJobPlanDecision(ownerId: string): Promise<MealImageJ
   try {
     const { data, error } = await supabase.rpc("ai_plan_feature_daily_cap", { p_user_id: ownerId, p_feature: "meal_image_auto" });
     if (error) {
-      // 読めなかったときは止めない (mealImageJobPlanDecision の注)。生のエラーは app_logs にだけ残す
-      logger.warn("料理画像のプランの門を読めなかったため、止めずに処理します", { ownerId, code: error.code ?? null });
+      // 読めなかったときは止めない (mealImageJobPlanDecision の注)。生のエラーは app_logs にだけ残す。
+      // ジョブの持ち主は withUser で app_logs の user_id 列に入れる (metadata にだけ渡すと user_id 列で絞ったときに出てこない。#2245 K5)
+      logger.withUser(ownerId).warn("料理画像のプランの門を読めなかったため、止めずに処理します", { ownerId, code: error.code ?? null });
       return "allowed";
     }
     return mealImageJobPlanDecision(data);
   } catch (cause: unknown) {
     // RPC が投げた (接続の失敗など) ときも止めない。processJob の try より前で呼ぶので、ここで投げるとジョブが貸し出し中のまま残り、
-    // 同じ実行の残りのジョブも処理されない (processJobs に try が無い)。生のエラーは残さず名前だけ
-    logger.warn("料理画像のプランの門を読めなかったため、止めずに処理します", { ownerId, code: cause instanceof Error ? cause.name : null });
+    // 同じ実行の残りのジョブも処理されない (processJobs に try が無い)。生のエラーは残さず名前だけ (持ち主は withUser。#2245 K5)
+    logger.withUser(ownerId).warn("料理画像のプランの門を読めなかったため、止めずに処理します", { ownerId, code: cause instanceof Error ? cause.name : null });
     return "allowed";
   }
 }
