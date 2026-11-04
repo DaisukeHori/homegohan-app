@@ -709,6 +709,34 @@ describe('#2227 H1 (R2) 確かめていない時間切れの送信の案内を�
     expect(alertSpy).not.toHaveBeenCalled();
   });
 
+  it('「最新の会話を読み込む」の取り直しの最中に別の相談へ移り、取り直しが失敗したら、前の相談に戻ったときに保存されていれば入力欄の文を消す', async () => {
+    await openSheet();
+    await timeOutSend();
+    const reload = gate();
+    serveMessages({
+      reload: async () => {
+        await reload.promise;
+        throw new Error('Network request failed');
+      },
+      open: () => SAVED_MESSAGES,
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-timeout-reload'));
+    });
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith(MESSAGES_PATH, { timeoutMs: AI_CHAT_RELOAD_TIMEOUT_MS }));
+
+    await selectSessionById(OTHER_SESSION.id, '別の相談の返答です');
+    await act(async () => {
+      reload.release();
+    });
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('エラー', expect.any(String)));
+    expect(inputValue()).toBe(SENT_TEXT);
+
+    await selectSessionById(SESSION.id, SAVED_REPLY);
+
+    expect(inputValue()).toBe('');
+  });
+
   it('「最新の会話を読み込む」の取り直しの最中に別の相談へ移って戻っても、取り直しの結果を『届いていません』に変えない', async () => {
     await openSheet();
     await timeOutSend();
