@@ -28,6 +28,7 @@ import {
   signOutAfterAccountDeletion,
 } from "@/lib/account-self-service";
 import { getMfaStatus } from "@/lib/auth/mfa/client";
+import { todayLocal } from "@/lib/date-utils";
 import { STORE_SUBSCRIPTION_DELETION_NOTICE } from "@homegohan/shared";
 import { useInNativeWebView } from "@/components/auth/mfa/useInNativeWebView";
 
@@ -203,7 +204,8 @@ export default function SettingsPage() {
         }
         throw new Error(`CSV export failed: ${res.status}`);
       }
-      const today = new Date().toISOString().slice(0, 10);
+      // ファイル名の日付は JST の今日 (toISOString は UTC の暦日で、JST の 0:00〜8:59 は前日になる。#2245 K3)
+      const today = todayLocal();
       await saveResponseAsDownload(res, `homegohan-meals-${today}.csv`, 'text/csv', isNativeApp);
     } catch (err) {
       console.error(err);
