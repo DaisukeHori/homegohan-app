@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useCallback, useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/types/domain";
 import { formatBadgePeriodAwards, type BadgePeriodAwards } from "@homegohan/shared";
-import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 
 // 拡張型定義
 interface BadgeWithStatus extends Badge {
@@ -20,6 +20,8 @@ interface BadgeWithStatus extends Badge {
 // アイコンマッピング（コードベース）
 /** 新しく取ったバッジのお祝いを出しておく時間 (ミリ秒。5 秒で消す) */
 const NEW_BADGE_CELEBRATION_MS = 5000;
+/** バッジの一覧 (と獲得数・お祝い) の置き場所の鍵 (#2206 G1) */
+const KEY_BADGES = "badges";
 
 const ICON_MAP: Record<string, string> = {
   'first_bite': '🥄',
@@ -78,56 +80,55 @@ function BadgesPageInner() {
   const highlightCodes = searchParams.get('highlight')?.split(',').filter(Boolean) ?? [];
 
   const [badges, setBadges] = useState<BadgeWithStatus[]>([]);
-  const [loading, setLoading] = useState(true);
   const [earnedCount, setEarnedCount] = useState(0);
   // #1055 (wave-3b): 「新しいバッジを獲得！」だけでどのバッジか分からなかったため、
   // 直近獲得したバッジ本体を保持し、お祝い表示・カードハイライトの両方に使う
   const [newlyEarnedBadges, setNewlyEarnedBadges] = useState<BadgeWithStatus[]>([]);
   const [selectedBadge, setSelectedBadge] = useState<BadgeWithStatus | null>(null);
-  // AI 相談の提案の実行 (食事の完了・献立の生成など) でバッジの条件が変わったら、下の取得をもう一度走らせる (#2195 V1)。
-  // GET /api/badges はその場で条件を判定して新しく取ったバッジを保存するので、取り直すと取ったバッジとお祝いが出る。
-  // バッジの詳細のモーダル (role="dialog") が出ている間は増えない
-  // 閉じたら止めた通知のぶん 1 回増える (#2201 U2)
-  const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
+  /**
+   * バッジの一覧を読む。開いたときと AI 相談の成功の取り直しで呼ぶ (#2206 G1)。応答は read.place の中で置く
+   * (順序・番兵・読み込み中の印の判断は hook。前の回の応答が後から届いても置かない)。失敗では今の表示を残す (これまでどおり)
+   */
+  const fetchBadges = useCallback(async (read: AiConsultationRead) => {
+    try {
+      const res = await fetch('/api/badges');
+      if (!res.ok) throw new Error('Failed');
+      const data = await res.json();
 
-  useEffect(() => {
-    // 前の回の応答が後から届いても置かない (取り直しが続いたとき。#2201 U1)。失敗では今の表示を残す (これまでどおり)
-    let cancelled = false;
-    const fetchBadges = async () => {
-      try {
-        const res = await fetch('/api/badges');
-        if (!res.ok) throw new Error('Failed');
-        const data = await res.json();
-        if (cancelled) return;
-        
-        const mappedBadges = data.badges.map((b: any) => ({
-          ...b,
-          icon: ICON_MAP[b.code] || '🏅'
-        }));
+      const mappedBadges = data.badges.map((b: any) => ({
+        ...b,
+        icon: ICON_MAP[b.code] || '🏅'
+      }));
 
+      // #1055 (wave-3b): どのバッジを新規獲得したか (code) を使ってお祝い表示・
+      // カードハイライトの対象を特定する
+      const newCodes: string[] = data.newEarnedBadgeCodes ?? [];
+      const newlyEarned = mappedBadges.filter((b: BadgeWithStatus) => newCodes.includes(b.code));
+      read.place(KEY_BADGES, () => {
         setBadges(mappedBadges);
         setEarnedCount(mappedBadges.filter((b: any) => b.earned).length);
-
-        // #1055 (wave-3b): どのバッジを新規獲得したか (code) を使ってお祝い表示・
-        // カードハイライトの対象を特定する
-        const newCodes: string[] = data.newEarnedBadgeCodes ?? [];
-        const newlyEarned = mappedBadges.filter((b: BadgeWithStatus) => newCodes.includes(b.code));
         // 新しく取ったバッジが無いときも置く (取り直しで前のお祝いを残さない。読み込み直したときと同じ。#2195 V1)
         setNewlyEarnedBadges(newlyEarned);
         if (newlyEarned.length > 0) {
           setTimeout(() => setNewlyEarnedBadges([]), NEW_BADGE_CELEBRATION_MS);
         }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-    fetchBadges();
-    return () => {
-      cancelled = true;
-    };
-  }, [aiConsultationRefetchKey]);
+      });
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  // AI 相談の提案の実行 (食事の完了・献立の生成など) でバッジの条件が変わったら取り直す (#2195 V1)。
+  // GET /api/badges はその場で条件を判定して新しく取ったバッジを保存するので、取り直すと取ったバッジとお祝いが出る。
+  // バッジの詳細のモーダル (role="dialog") が出ている間は取り直さず、閉じたら止めた通知のぶん 1 回取り直す (#2201 U2。判断は hook)。
+  // 最初の描画から読み込み中 (今までの loading の初期値 true)
+  const receiver = useAiConsultationReceiver(fetchBadges, { initialLoadingKeys: [KEY_BADGES] });
+  const loading = receiver.isLoading(KEY_BADGES);
+
+  // receiver の参照は一生同じなので、この effect は開いたときの 1 回だけ走る
+  useEffect(() => {
+    void receiver.read({ loadingKeys: [KEY_BADGES] }, fetchBadges);
+  }, [receiver, fetchBadges]);
 
   // #210: Escape キーでバッジ詳細モーダルを閉じる
   useEffect(() => {

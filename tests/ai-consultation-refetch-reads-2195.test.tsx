@@ -771,8 +771,25 @@ const caseOf = (page: string): PageCase => {
  */
 const RECEIVER_MIGRATED_PAGES: ReadonlySet<string> = new Set<string>([
   // 段 B
+  '/comparison',
+  '/pantry',
+  '/health/goals',
+  '/health/graphs',
+  '/health/streaks',
+  '/badges',
+  '/meals/[id]',
+  '/profile',
+  '/profile/nutrition-targets',
+  '/health/blood-tests',
+  '/health/checkups/[id]',
 
   // 段 C
+  '/family/dashboard',
+  '/family/members',
+  '/family/members/[id]',
+  '/family/transfer-accept/[proposal_id]',
+  '/org/transfer-accept/[proposal_id]',
+  '/health',
 ]);
 
 describe('移行済みの受け手の集合 (#2206 G1)', () => {
@@ -1326,33 +1343,36 @@ const REFETCH_FAILURES = ['http', 'network'] as const;
 const refetchFailureLabel = (failure: (typeof REFETCH_FAILURES)[number]) =>
   failure === 'http' ? '500・Supabase の error' : '通信の失敗 (fetch の reject)';
 
-// 移す前のページの期待 (取り直しが開いたときの読み込みの役を引き継ぐ)。新しい受け手の hook へ移したページは下の #2206 G1 の describe
-describe('開いたときの読み込みの最中に届いた成功の取り直しが失敗したら、開いたときに失敗したのと同じ画面を出す (失敗を隠さない。#2201 U1)', () => {
-  const FAILURES = REFETCH_FAILURES;
-  // 開いたときの読み込みのうち取り直さないものがあるページは、開いたときの失敗と同じ画面にならない (取り直さない読み込みは読める)
-  for (const c of CASES.filter((x) => x.mountReadsNotRefetched === undefined && !RECEIVER_MIGRATED_PAGES.has(x.page))) {
-    for (const failure of FAILURES) {
-      it(`${c.page}: ${refetchFailureLabel(failure)}`, async () => {
-        setServer(c.full);
-        await renderOnly(c);
-        const opened = screenSignature(container);
-        await freshRoot();
-        server.failure = failure;
-        await renderOnly(c);
-        server.failure = null;
-        const failedOpen = screenSignature(container);
-        expect(failedOpen, `${c.page} の開いたときの失敗の画面が、読めたときと同じ (検査が空振りしている)`).not.toBe(opened);
-        await freshRoot();
+// 移す前のページの期待 (取り直しが開いたときの読み込みの役を引き継ぐ)。新しい受け手の hook へ移したページは下の #2206 G1 の describe。移す前のページが無くなったら describe を置かない (空の describe は vitest が失敗にする)
+// 開いたときの読み込みのうち取り直さないものがあるページは、開いたときの失敗と同じ画面にならない (取り直さない読み込みは読める)
+const LEGACY_CASES = CASES.filter((x) => x.mountReadsNotRefetched === undefined && !RECEIVER_MIGRATED_PAGES.has(x.page));
+if (LEGACY_CASES.length > 0) {
+  describe('開いたときの読み込みの最中に届いた成功の取り直しが失敗したら、開いたときに失敗したのと同じ画面を出す (失敗を隠さない。#2201 U1)', () => {
+    const FAILURES = REFETCH_FAILURES;
+    for (const c of LEGACY_CASES) {
+      for (const failure of FAILURES) {
+        it(`${c.page}: ${refetchFailureLabel(failure)}`, async () => {
+          setServer(c.full);
+          await renderOnly(c);
+          const opened = screenSignature(container);
+          await freshRoot();
+          server.failure = failure;
+          await renderOnly(c);
+          server.failure = null;
+          const failedOpen = screenSignature(container);
+          expect(failedOpen, `${c.page} の開いたときの失敗の画面が、読めたときと同じ (検査が空振りしている)`).not.toBe(opened);
+          await freshRoot();
 
-        const releaseMount = await openWhileAiConsultationSucceeds(c, failure);
-        expect(screenSignature(container), `${c.page} の取り直しの失敗を隠した (開いたときに失敗したのと違う画面)`).toBe(failedOpen);
-        // 先に始めた開いたときの読み込みの応答 (読めた) が後から届いても置かない (最後に始めた取得の応答だけを置く)
-        await releaseMount();
-        expect(screenSignature(container)).toBe(failedOpen);
-      });
+          const releaseMount = await openWhileAiConsultationSucceeds(c, failure);
+          expect(screenSignature(container), `${c.page} の取り直しの失敗を隠した (開いたときに失敗したのと違う画面)`).toBe(failedOpen);
+          // 先に始めた開いたときの読み込みの応答 (読めた) が後から届いても置かない (最後に始めた取得の応答だけを置く)
+          await releaseMount();
+          expect(screenSignature(container)).toBe(failedOpen);
+        });
+      }
     }
-  }
-});
+  });
+}
 
 // 新しい受け手の hook へ移したページの期待 (#2206 G1 S-2。取り直しは開いたときの読み込みの役を引き継がず、失敗では何も置かない。
 // 開いたときの読み込みは、取り直しに追い越されても自分の応答を置く)。移したページが無い間は describe を置かない
@@ -1402,6 +1422,111 @@ describe('名前の API だけを読めなかった取り直しは、出てい�
     await mount(c);
     expect(container.textContent).toContain(NO_NAME);
   });
+});
+
+// ─── #2206 G1 段 C: 家族の画面の移動と、開いたときの読み込みの最中の取り直し ───────────────────────────────
+
+/** 家族に入っていない自分 (family_id が空) の表。家族の画面は家族の作成の画面 (/family/setup) へ移す */
+const NOT_IN_FAMILY_TABLES = { ...FAMILY_TABLES, user_profiles: [{ id: SELF_USER_ID, family_id: null }] };
+/** 家族に入っていないときに家族の画面が移る先 */
+const FAMILY_SETUP_PATH = '/family/setup';
+/** 家族に入っていないと家族の作成の画面へ移す家族の画面 (§9 #3〜#5) */
+const FAMILY_SETUP_REDIRECT_PAGES = ['/family/dashboard', '/family/members', '/family/members/[id]'] as const;
+/** 家族の画面が読み込み中に出す文 */
+const FAMILY_LOADING_TEXT = '読み込み中';
+
+describe('家族の画面: 古い応答 (family_id 無し) が後から届いても /family/setup へ移らない (#2206 G1 S-13)', () => {
+  for (const page of FAMILY_SETUP_REDIRECT_PAGES) {
+    it(page, async () => {
+      const c = caseOf(page);
+      const replace = vi.spyOn(navigation.router, 'replace');
+      // 見分けの空振りを防ぐ: 家族に入っていない応答で開けば、家族の作成の画面へ移す
+      setServer({ ...c.full, tables: NOT_IN_FAMILY_TABLES });
+      await renderOnly(c);
+      expect(replace, `${page} が家族に入っていない応答で移らない (検査が空振りしている)`).toHaveBeenCalledWith(FAMILY_SETUP_PATH);
+      await freshRoot();
+      replace.mockClear();
+
+      // 開いたときの読み込みは、家族を抜けていたとき (family_id 無し) の答えを読み、応答が遅れる
+      const staleMount = deferred();
+      server.holdAll = staleMount.promise;
+      await act(async () => {
+        root.render(c.render());
+      });
+      await settle();
+      server.holdAll = null;
+      // 家族に入り直したあとの読み取り (AI 相談の成功の取り直し) が先に置く
+      setServer(c.full);
+      await notifyAiConsultationSucceeded();
+      expect(container.textContent, `${page} があとの読み取りの応答を置いていない`).toContain(SELF_NAME);
+
+      // 古い応答 (family_id 無し) が後から届く: 置かない (移らない・あとの読み取りの表示のまま)
+      staleMount.resolve();
+      await settle();
+      expect(replace, `${page} が古い応答で家族の作成の画面へ移した`).not.toHaveBeenCalledWith(FAMILY_SETUP_PATH);
+      expect(container.textContent).toContain(SELF_NAME);
+    });
+  }
+});
+
+describe('家族の画面: 取り直しが家族に入っていない応答を読んだら、今の画面のまま /family/setup へ移す (読み込み中の表示に替えない。#2206 G1 S-24)', () => {
+  for (const page of FAMILY_SETUP_REDIRECT_PAGES) {
+    it(page, async () => {
+      const c = caseOf(page);
+      const replace = vi.spyOn(navigation.router, 'replace');
+      setServer(c.full);
+      await mount(c);
+      const shown = screenSignature(container);
+      expect(container.textContent).toContain(SELF_NAME);
+      expect(replace).not.toHaveBeenCalledWith(FAMILY_SETUP_PATH);
+
+      // AI 相談のあと、家族を抜けていた (取り直しが family_id 無しを読む)
+      setServer({ ...c.full, tables: NOT_IN_FAMILY_TABLES });
+      await notifyAiConsultationSucceeded();
+      expect(replace, `${page} の取り直しが家族の作成の画面へ移さない`).toHaveBeenCalledWith(FAMILY_SETUP_PATH);
+      // 取り直しは読み込み中の表示を出していないので、移るまで今の画面のまま
+      expect(container.textContent, `${page} の取り直しの移動が読み込み中の表示に替えた`).not.toContain(FAMILY_LOADING_TEXT);
+      expect(screenSignature(container)).toBe(shown);
+    });
+  }
+});
+
+describe('家族の画面: 開いたときの応答待ちに来た取り直しが名前の API を読めなくても、開いたときの応答 (名前つき) を置いて読み込み中の表示を下ろす (#2206 G1 S-30)', () => {
+  for (const page of ['/family/members', '/family/dashboard', '/family/members/[id]'] as const) {
+    it(page, async () => {
+      const c = caseOf(page);
+      setServer(c.full);
+      await renderOnly(c);
+      const opened = screenSignature(container);
+      expect(container.textContent).toContain(SELF_NAME);
+      await freshRoot();
+
+      // 開いたときの読み込みの応答を止める
+      const mountHold = deferred();
+      server.holdAll = mountHold.promise;
+      await act(async () => {
+        root.render(c.render());
+      });
+      await settle();
+      server.holdAll = null;
+
+      // その間に来た取り直しは、名前の API だけを読めない (ログイン・プロフィール・群・一覧は読める)
+      server.failedRequests.add(`GET ${FAMILY_NAMES_API}`);
+      server.requests = [];
+      await notifyAiConsultationSucceeded();
+      expect(server.requests, `${page} の取り直しが名前の API を読んでいない (検査が空振りしている)`).toContain(`GET ${FAMILY_NAMES_API}`);
+      // 取り直しは何も置かない (途中の段の値も置かず、開いたときの読み込みの応答を待つ読み込み中の表示のまま)
+      expect(container.textContent, `${page} の取り直しが、名前を読めないまま画面を置いた`).toContain(FAMILY_LOADING_TEXT);
+      expect(container.textContent).not.toContain(NO_NAME);
+
+      // 開いたときの読み込みの応答 (名前の API も読める) が後から届いたら、それを置いて読み込み中の表示を下ろす
+      server.failedRequests.delete(`GET ${FAMILY_NAMES_API}`);
+      mountHold.resolve();
+      await settle();
+      expect(container.textContent, `${page} が開いたときの応答を置かない (読み込み中のまま残る)`).not.toContain(FAMILY_LOADING_TEXT);
+      expect(screenSignature(container)).toBe(opened);
+    });
+  }
 });
 
 interface DeferredWriteCase {
@@ -1801,6 +1926,289 @@ describe('/profile: 開いたときの読み込みの最中に開いた編集の
       openBasic()!.click();
     });
     expect(nicknameInput()?.value, '開き直した編集の入力欄に保存した値が無い').toBe(PROFILE_ROW.nickname);
+  });
+});
+
+// ─── #2206 G1 段 B (新しい受け手の hook へ移した受け手。§13.1 の RT-2〜RT-6・RT-8) ───────────────
+
+describe('/meals/[id]: 削除したあとの取り直しの 404 で『見つかりませんでした』を出さない (#2206 G1 S-14)', () => {
+  /** 食事が無いときの画面の文 */
+  const MEAL_NOT_FOUND_TEXT = '食事データが見つかりませんでした';
+  const MEAL_DISH_NAME = '取り直しの検査の料理';
+  const MEAL_READ = `GET /api/meals/${MEAL_ID}`;
+  const MEAL_DELETE = `DELETE /api/meals/${MEAL_ID}`;
+
+  /** 右上のメニュー → 「削除する」で削除の確認を開く */
+  async function openDeleteConfirm() {
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('div.relative > button')!.click();
+    });
+    await act(async () => {
+      buttonByText('削除する').click();
+    });
+    expect(container.textContent, '削除の確認が開かない (検査が空振りしている)').toContain('この献立を削除しますか？');
+  }
+
+  it('/meals/[id]: 削除から献立表へ移るまでに来た成功で『見つかりませんでした』を出さない', async () => {
+    vi.stubGlobal('alert', vi.fn());
+    // 献立表への移動は止めておく (移るまでの間に来た成功を見る)
+    const push = vi.spyOn(navigation.router, 'push').mockImplementation(() => undefined);
+    const c = caseOf('/meals/[id]');
+    setServer(c.full);
+    await mount(c);
+    expect(container.textContent).toContain(MEAL_DISH_NAME);
+
+    await openDeleteConfirm();
+    await act(async () => {
+      buttonByText('削除する').click();
+    });
+    await settle();
+    expect(server.requests, '削除を送っていない (検査が空振りしている)').toContain(MEAL_DELETE);
+    expect(container.textContent, '削除の確認が閉じない').not.toContain('この献立を削除しますか？');
+
+    // 削除のあと (移る前) に AI 相談の成功が来る。サーバーにはもう食事が無い (取り直しの GET は 404)
+    delete server.fetchBodies[`/api/meals/${MEAL_ID}`];
+    server.requests = [];
+    await notifyAiConsultationSucceeded();
+    expect(server.requests, '取り直しが食事を読んでいない (検査が空振りしている)').toContain(MEAL_READ);
+    expect(container.textContent, '削除した食事の取り直しの 404 で『見つかりませんでした』を出した').not.toContain(MEAL_NOT_FOUND_TEXT);
+    expect(container.textContent).toContain(MEAL_DISH_NAME);
+    push.mockRestore();
+  });
+
+  it('/meals/[id]: 削除の応答待ちに来た成功の取り直しが削除のあとに流れても『見つかりませんでした』を出さない', async () => {
+    vi.stubGlobal('alert', vi.fn());
+    const push = vi.spyOn(navigation.router, 'push').mockImplementation(() => undefined);
+    const c = caseOf('/meals/[id]');
+    setServer(c.full);
+    await mount(c);
+    await openDeleteConfirm();
+
+    // 削除の応答を止める (応答は止めた時点の答え = 削除は成功)
+    const deleteHold = deferred();
+    server.holdAll = deleteHold.promise;
+    server.requests = [];
+    await act(async () => {
+      buttonByText('削除する').click();
+    });
+    server.holdAll = null;
+    expect(server.requests, '削除を送っていない (検査が空振りしている)').toContain(MEAL_DELETE);
+
+    // 削除の応答を待つあいだに AI 相談の成功が来る (書き込みの窓の中なので取り直さない)。サーバーからは食事が消える
+    delete server.fetchBodies[`/api/meals/${MEAL_ID}`];
+    await notifyAiConsultationSucceeded();
+    expect(server.requests, '削除の応答を待つあいだに取り直した').not.toContain(MEAL_READ);
+
+    // 削除が終わると、止めた成功のぶん 1 回取り直す (GET は 404)。削除した食事なので『見つかりませんでした』にしない
+    deleteHold.resolve();
+    await settle();
+    expect(server.requests, '削除のあとに止めた成功を取り直していない (検査が空振りしている)').toContain(MEAL_READ);
+    expect(container.textContent, '削除のあとに流れた取り直しの 404 で『見つかりませんでした』を出した').not.toContain(MEAL_NOT_FOUND_TEXT);
+    expect(container.textContent).toContain(MEAL_DISH_NAME);
+    push.mockRestore();
+  });
+});
+
+describe('/profile: 保存の応答待ちに来た取り直しの応答を置かず、保存が終わったら 1 回取り直す (#2206 G1 S-17)', () => {
+  it('/profile: 保存の応答待ちに来た取り直しの応答を置かず、保存が終わったら 1 回取り直す', async () => {
+    vi.stubGlobal('alert', vi.fn());
+    const SAVED_NICKNAME = 'ほり (保存した名前)';
+    const PROFILE_PUT = 'PUT /api/profile';
+    /** 取り直しの読み取りの目印 (プロフィールを読んだあとに称号の数を読む) */
+    const REFETCH_MARKER_READ = 'GET /api/badges';
+    const c = caseOf('/profile');
+    setServer(c.full);
+    await mount(c);
+
+    // 編集を開いて名前を打ち、保存する (保存の応答は止める)
+    const editBasic = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('基本情報'));
+    if (!editBasic) throw new Error('「基本情報」のボタンが無い');
+    await act(async () => {
+      editBasic.click();
+    });
+    const nicknameInput = () => container.querySelector<HTMLInputElement>('input[placeholder="例: たろう"]');
+    await act(async () => {
+      typeInto(nicknameInput()!, SAVED_NICKNAME);
+    });
+    server.fetchBodies['/api/profile'] = { ...PROFILE_ROW, nickname: SAVED_NICKNAME };
+    const save = deferred();
+    server.fetchHolds.set(PROFILE_PUT, save.promise);
+    server.requests = [];
+    const saveButton = [...container.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) =>
+      b.textContent?.includes('変更を保存'),
+    );
+    if (!saveButton) throw new Error('「変更を保存」のボタンが無い');
+    await act(async () => {
+      saveButton.click();
+    });
+    await settle();
+    expect(server.requests, '保存を送っていない (検査が空振りしている)').toContain(PROFILE_PUT);
+    // 保存の応答を待つあいだは書き込みの窓の中 (モバイルの読み込み直しも止める印が付く)
+    expect(document.documentElement.hasAttribute('data-ai-consultation-writes'), '保存の応答を待つあいだに書き込みの印が無い').toBe(true);
+
+    // 保存の応答を待つあいだに AI 相談の成功が来ても取り直さない (サーバーの答えは保存の前の名前)
+    server.tables.user_profiles = [PROFILE_ROW];
+    await notifyAiConsultationSucceeded();
+    expect(server.requests.filter((r) => r === REFETCH_MARKER_READ), '保存の応答を待つあいだに取り直した').toHaveLength(0);
+
+    // 保存が終わると (サーバーも保存した名前になる)、止めた成功のぶん 1 回だけ取り直す
+    server.tables.user_profiles = [{ ...PROFILE_ROW, nickname: SAVED_NICKNAME }];
+    save.resolve();
+    server.fetchHolds.delete(PROFILE_PUT);
+    await settle();
+    expect(document.documentElement.hasAttribute('data-ai-consultation-writes'), '保存が終わっても書き込みの印が残った').toBe(false);
+    expect(server.requests.filter((r) => r === REFETCH_MARKER_READ), '保存が終わったあとの取り直しが 1 回でない').toHaveLength(1);
+    expect(container.textContent).toContain(SAVED_NICKNAME);
+  });
+});
+
+describe('/pantry: 最初の描画は読み込み中の表示 (#2206 G1 S-19)', () => {
+  it('/pantry: 最初の描画は読み込み中の表示で、『食材がありません』を出さない。開いたときの GET は 1 回', async () => {
+    const EMPTY_TEXT = '食材がありません';
+    const PANTRY_READ = 'GET /api/pantry';
+    const c = caseOf('/pantry');
+    setServer(c.full);
+    // 描画のたびの画面 (最初の描画を含む) に『食材がありません』が一度でも出たかを見張る
+    let shownEmpty = false;
+    const observer = new MutationObserver(() => {
+      if (container.textContent?.includes(EMPTY_TEXT)) shownEmpty = true;
+    });
+    observer.observe(container, { childList: true, subtree: true, characterData: true });
+    const read = deferred();
+    server.fetchHolds.set(PANTRY_READ, read.promise);
+    try {
+      await act(async () => {
+        root.render(c.render());
+      });
+      await settle();
+      expect(server.requests, '開いたときに食材の一覧を読んでいない (検査が空振りしている)').toContain(PANTRY_READ);
+      expect(container.textContent, '開いたときの読み込みの応答を待つあいだに『食材がありません』を出した').not.toContain(EMPTY_TEXT);
+      read.resolve();
+      server.fetchHolds.delete(PANTRY_READ);
+      await settle();
+    } finally {
+      observer.disconnect();
+    }
+    expect(shownEmpty, '最初の描画 (読み込みの前) に『食材がありません』を出した').toBe(false);
+    expect(container.textContent).toContain('にんじん');
+    // 読み込み中の印が立って下りても、開いたときの読み込みは繰り返さない
+    expect(server.requests.filter((r) => r === PANTRY_READ), '開いたときの GET が 1 回でない').toHaveLength(1);
+  });
+});
+
+describe('/comparison: 取り直しの応答待ちに期間を切り替えたら、前の期間の順位を出さない (#2206 G1 S-20)', () => {
+  const RANKINGS_READ = 'GET /api/comparison/rankings';
+  const LOADING_TEXT = '読み込み中...';
+  const rankingsBody = (periodType: 'weekly' | 'monthly', message: string) => ({
+    rankings: [],
+    highlights: [{ type: 'streak', message, metric: 'streak', icon: '🔥' }],
+    userMetrics: [],
+    periodType,
+    periodStart: '2026-11-01',
+    periodEnd: '2026-11-30',
+  });
+  const WEEKLY_BEFORE = '週間の取り直しの前のハイライト';
+  const WEEKLY_AFTER = '週間の取り直しのハイライト';
+  const MONTHLY = '月間のハイライト';
+
+  /** 週間で開き、週間の取り直しの応答を止めたまま月間へ切り替える (月間の応答も止める)。2 つの応答を解く関数を返す */
+  async function switchToMonthlyWhileRefetching() {
+    setServer({
+      fetchBodies: {
+        '/api/comparison/rankings?periodType=weekly': rankingsBody('weekly', WEEKLY_BEFORE),
+        '/api/comparison/rankings?periodType=monthly': rankingsBody('monthly', MONTHLY),
+      },
+    });
+    await mount(caseOf('/comparison'));
+    expect(container.textContent).toContain(WEEKLY_BEFORE);
+
+    // 週間の取り直しを始めて応答を止める (応答は止めた時点の答え = AI 相談のあとの週間)
+    server.fetchBodies['/api/comparison/rankings?periodType=weekly'] = rankingsBody('weekly', WEEKLY_AFTER);
+    const refetch = deferred();
+    server.holdAll = refetch.promise;
+    server.requests = [];
+    await act(async () => {
+      dispatchAiConsultationSucceeded();
+    });
+    await settle();
+    expect(server.requests, '取り直しが順位を読んでいない (検査が空振りしている)').toContain(RANKINGS_READ);
+
+    // 応答を待つあいだに月間へ切り替える (月間の応答も止める)
+    const monthly = deferred();
+    server.holdAll = monthly.promise;
+    await act(async () => {
+      buttonByText('月間').click();
+    });
+    await settle();
+    server.holdAll = null;
+    expect(container.textContent, '月間へ切り替えたのに読み込み中の表示が無い').toContain(LOADING_TEXT);
+    return { refetch, monthly };
+  }
+
+  it('/comparison: 週間の取り直しの応答待ちに月間へ切り替えたら、週間の順位を出さず、月間の応答まで読み込み中', async () => {
+    const { refetch, monthly } = await switchToMonthlyWhileRefetching();
+
+    // 週間の取り直しの応答が先に届いても、月間の応答まで読み込み中のまま (週間の順位を出さない)
+    refetch.resolve();
+    await settle();
+    expect(container.textContent, '月間を出しているのに週間の取り直しの順位を出した').not.toContain(WEEKLY_AFTER);
+    expect(container.textContent, '週間の取り直しの応答で、月間の読み込み中の表示を下ろした').toContain(LOADING_TEXT);
+
+    monthly.resolve();
+    await settle();
+    expect(container.textContent).toContain(MONTHLY);
+    expect(container.textContent).not.toContain(LOADING_TEXT);
+    expect(container.textContent).not.toContain(WEEKLY_AFTER);
+  });
+
+  it('/comparison: 月間の応答のあとに週間の取り直しの応答が届いても、月間の順位を週間で上書きしない', async () => {
+    const { refetch, monthly } = await switchToMonthlyWhileRefetching();
+
+    monthly.resolve();
+    await settle();
+    expect(container.textContent).toContain(MONTHLY);
+
+    refetch.resolve();
+    await settle();
+    expect(container.textContent, '月間を出しているのに、あとから届いた週間の取り直しの順位で上書きした').not.toContain(WEEKLY_AFTER);
+    expect(container.textContent).toContain(MONTHLY);
+  });
+});
+
+describe('/health/graphs: 開いたときの応答待ちに来た取り直しが記録を読めなくても、開いたときの記録の線を置く (#2206 G1 S-29)', () => {
+  it('/health/graphs: 開いたときの応答待ちに来た取り直しが記録を読めず目標だけ読めても、開いたときの記録の線を置く (目標の線は取り直しの値)', async () => {
+    const NO_DATA_TEXT = 'データがありません';
+    const TARGET_WEIGHT_AFTER_AI = 58;
+    const RECORDS_READ = 'GET /api/health/records';
+    const c = caseOf('/health/graphs');
+    setServer(c.full);
+
+    // 開いたときの読み込み (記録・健診・目標) の応答を止める (応答は止めた時点の答え = 記録あり・目標 60kg)
+    const mountHold = deferred();
+    server.holdAll = mountHold.promise;
+    await act(async () => {
+      root.render(c.render());
+    });
+    await settle();
+    server.holdAll = null;
+
+    // その間に来た取り直しは、記録を読めず (500)、目標だけ読める (AI 相談が目標を 58kg に変えた)
+    server.failedRequests.add(RECORDS_READ);
+    server.fetchBodies['/api/health/goals'] = { goals: [{ ...WEIGHT_GOAL, target_value: TARGET_WEIGHT_AFTER_AI }] };
+    server.requests = [];
+    await notifyAiConsultationSucceeded();
+    expect(server.requests, '取り直しが記録を読んでいない (検査が空振りしている)').toContain(RECORDS_READ);
+    server.failedRequests.delete(RECORDS_READ);
+
+    // 開いたときの読み込みの応答が届く: 記録の線を置き (取り直しは記録の鍵に置いていない)、目標の線は取り直しの値のまま
+    mountHold.resolve();
+    await settle();
+    expect(container.textContent, '取り直しが記録を読めなかったあとに届いた、開いたときの記録の線を置かない (空のまま残る)').not.toContain(
+      NO_DATA_TEXT,
+    );
+    expect(container.textContent, '取り直しが読んだ目標の線を、先に始めた開いたときの古い目標で戻した').toContain(
+      `目標体重: ${TARGET_WEIGHT_AFTER_AI}kg`,
+    );
   });
 });
 

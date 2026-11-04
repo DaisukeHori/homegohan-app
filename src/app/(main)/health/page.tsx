@@ -4,12 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
-import {
-  useAiConsultationDataRefetch,
-  useAiConsultationFetchStream,
-  useAiConsultationLoading,
-  type AiConsultationFetchTicket,
-} from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 import {
   Scale, Heart, Moon, Droplets, Activity, TrendingUp, TrendingDown,
   Target, Flame, Calendar, ChevronRight, Plus, Camera, Sparkles,
@@ -71,13 +66,19 @@ interface HealthGoal {
   status: string;
 }
 
-/** 開いたときの読み込み (読み込み中の表示を出す) か、AI 相談の成功の取り直し (出さない・失敗では今の表示を残す) か */
-type HealthFetchMode = 'mount' | 'refetch';
+/**
+ * 読み込みの置き場所の鍵 (#2206 G1 §9 #12)。今日と昨日の記録 (と記録の欄の体重)・連続記録と週の記録・目標は、それぞれ別の読み取りの
+ * 応答なので別の鍵に置く (1 つが読めなくても、読めたものを置く。これまでどおり)
+ */
+const KEY_TODAY = 'today';
+const KEY_STREAK = 'streak';
+const KEY_GOALS = 'goals';
+/** 開いたとき・記録の保存のあとの読み込みが立てる鍵 (どれかが立っている間は画面全体の読み込み中の表示) */
+const HEALTH_PAGE_LOADING_KEYS: readonly string[] = [KEY_TODAY, KEY_STREAK, KEY_GOALS];
+/** 選んだ日のパネルの記録の鍵 (日ごとに順序を持つ。A→B→A と選び直しても、A の応答は A の鍵で置く) */
+const selectedDateKey = (date: string) => `selectedDate:${date}`;
 
 export default function HealthDashboardPage() {
-  // 開いたときの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
-  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
-  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [todayRecord, setTodayRecord] = useState<HealthRecord | null>(null);
   const [yesterdayRecord, setYesterdayRecord] = useState<HealthRecord | null>(null);
   const [streak, setStreak] = useState<HealthStreak | null>(null);
@@ -93,22 +94,17 @@ export default function HealthDashboardPage() {
   const [quickSaveError, setQuickSaveError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedDateRecord, setSelectedDateRecord] = useState<HealthRecord | null>(null);
-  const [loadingSelectedDate, setLoadingSelectedDate] = useState(false);
 
   const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
 
   /**
    * 開いたときに読むもの (今日の記録・連続記録・目標) を読む。
-   * mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示 (画面全体のスピナー) を出さずに読み直し、
-   * 失敗 (通信の失敗・非 2xx) では今の表示を残す。どちらの経路でも、応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ。
-   * 通信の失敗で読み込み中の表示のまま止まらないよう、最後に始めた取得が終わったら必ず loading を下ろす (以前は try / finally が無かった)。
-   * 取り直しでは応答を待つあいだも「今日の記録をつける」が押せるので、その間に記録の欄 (role="dialog") を開いていたら応答を置かない
-   * (打ちかけの体重を取得した体重で上書きしない。ticket.deferIfHeld。閉じたあとに 1 回取り直す)
+   * read.mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示 (画面全体のスピナー) を出さずに読み直し、
+   * 失敗 (通信の失敗・非 2xx) では今の表示を残す。順序 (同じ鍵にもっと新しい読み取りが置いたあとの応答を置かない) と、取り直しの
+   * 応答を待つあいだに記録の欄 (role="dialog") を開いていたら置かない (打ちかけの体重を取得した体重で上書きしない。閉じたあとに
+   * 1 回取り直す) のは read.place の中 (#2206 G1)。読み込み中の表示は、開いたときの読み込みが鍵を立て、置いたとき・終わったときに下りる
    */
-  const fetchData = useCallback(async (ticket: AiConsultationFetchTicket, mode: HealthFetchMode) => {
-    if (mode === 'mount') setLoading(true);
-    /** この応答を置かないか (あとから別の取得を始めた・取り直しの応答を待つあいだに記録の欄を開いた) */
-    const skipPlacing = () => !ticket.isLatest() || (mode === 'refetch' && ticket.deferIfHeld());
+  const fetchData = useCallback(async (read: AiConsultationRead) => {
     try {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
@@ -119,85 +115,89 @@ export default function HealthDashboardPage() {
       const recordRes = await fetch(`/api/health/records/${today}`);
       if (recordRes.ok) {
         const data = await recordRes.json();
-        if (skipPlacing()) return;
-        setTodayRecord(data.record);
-        setYesterdayRecord(data.previous);
-        // 記録の欄の体重は今日の記録の体重から作る。無ければ空にする (取り直しで前の体重を残さない。読み込み直したときと同じ。#2195 V1)
-        setQuickWeight(data.record?.weight ? data.record.weight.toString() : '');
+        read.place(KEY_TODAY, () => {
+          setTodayRecord(data.record);
+          setYesterdayRecord(data.previous);
+          // 記録の欄の体重は今日の記録の体重から作る。無ければ空にする (取り直しで前の体重を残さない。読み込み直したときと同じ。#2195 V1)
+          setQuickWeight(data.record?.weight ? data.record.weight.toString() : '');
+        });
       }
 
       // 連続記録を取得
       const streakRes = await fetch('/api/health/streaks');
       if (streakRes.ok) {
         const data = await streakRes.json();
-        if (skipPlacing()) return;
-        setStreak(data.streak);
-        setWeeklyRecords(data.weeklyRecords || []);
+        read.place(KEY_STREAK, () => {
+          setStreak(data.streak);
+          setWeeklyRecords(data.weeklyRecords || []);
+        });
       }
 
       // 目標を取得
       const goalsRes = await fetch('/api/health/goals?status=active');
       if (goalsRes.ok) {
         const data = await goalsRes.json();
-        if (skipPlacing()) return;
-        setGoals(data.goals || []);
+        read.place(KEY_GOALS, () => setGoals(data.goals || []));
       }
     } catch (error) {
       // 通信の失敗: 読めたものはそのまま (取り直しなら今の表示を残す)
       console.warn('[health] fetch failed:', error);
-    } finally {
-      settleLoading(ticket);
     }
-  }, [today, setLoading, settleLoading]);
+  }, [today]);
 
   // 選んだ日のパネルを出している日 (取り直しの応答が、別の日を選び直したあとに届いても置かないため)
   const selectedDateRef = useRef<string | null>(null);
-  // 選んだ日のパネルの記録の読み取りの流れ (#2201 U1)。日を選んだときの読み取り (handleDaySelect) と取り直しの読み直し
-  // (refetchAfterAiConsultation の reloadSelectedDate) は同じ流れで、日を鍵にして始め、その日の中で置いたどの応答よりあとに始めた
-  // 読み取りの応答だけを置く (日を選んだ直後に来た取り直しの応答が先に届いたら、先に始めた日を選んだときの古い応答でパネルを戻さない。
-  // あとの読み取りが失敗した・まだ届いていないときは、先に始めた読み取りの応答を置く)。
-  // 日を鍵にするのは、別の日の応答の順序で、この日の応答を捨てないため (A→B→A と選び直して、B の応答を置いたあとに A の最初の応答が
-  // 届いても、A の記録として置く)。
-  // パネルの読み込み中の印は、選んだ日の記録を置いたとき (place の apply の中) にだけ下ろす: 置かなかった ('superseded') のは、
-  // その日のもっと新しい記録をもう置いたからで、置いた側が印を下ろしている。日を選び直す前の回に置いた記録なら、パネルはそのあとに
-  // 別の日の記録を出したかもしれないので、下ろすと見出しの日と違う日の記録を出す
-  const selectedDateFetchStream = useAiConsultationFetchStream('newerThanPlaced');
+
+  /**
+   * 選んだ日のパネルの記録を読む。日を選んだとき (read.mode 'mount') と、取り直し (出している日のパネル) の両方が使う (#2201 U1)。
+   * 鍵は日ごと (selectedDateKey): その日の中で置いたどの応答よりあとに始めた読み取りの応答だけを置く (日を選んだ直後に来た取り直しの
+   * 応答が先に届いたら、先に始めた日を選んだときの古い応答でパネルを戻さない。あとの読み取りが失敗した・まだ届いていないときは、
+   * 先に始めた読み取りの応答を置く)。日を鍵にするのは、別の日の応答の順序で、この日の応答を捨てないため (A→B→A と選び直して、
+   * B の応答を置いたあとに A の最初の応答が届いても、A の記録として置く)。
+   * 別の日を選び直していたら、apply の中で何も置かない (見出しの日と違う日の記録を出さない)。
+   * 日を選んだときの読み取りの失敗は「記録なし」を置き、取り直しの失敗は何も置かない (今の表示を残す)。
+   * パネルの読み込み中の表示は鍵ごと (その日の記録を置いたとき・その日を最後に立てた読み取りが終わったときに下りる)
+   */
+  const readSelectedDateRecord = useCallback(async (read: AiConsultationRead, date: string) => {
+    const placeRecord = (record: HealthRecord | null) => {
+      read.place(selectedDateKey(date), () => {
+        if (selectedDateRef.current !== date) return;
+        setSelectedDateRecord(record);
+      });
+    };
+    try {
+      const res = await fetch(`/api/health/records/${date}`);
+      if (!res.ok) {
+        if (read.mode === 'mount') placeRecord(null);
+        return;
+      }
+      const data = await res.json();
+      placeRecord(data.record ?? null);
+    } catch {
+      if (read.mode === 'mount') placeRecord(null);
+    }
+  }, []);
 
   /**
    * AI 相談の提案の実行のあとの取り直し (#2195 V1)。開いたときに読むもの (fetchData) と、出している選んだ日のパネルの記録を読み直す。
    * AI 相談の add_health_record / update_health_record は過去の日の記録も書くので、パネルを開いたままだと
    * カレンダーの印だけが変わってパネルが古い値のまま残る。取り直しの失敗では今の表示を消さない (fetchData と同じ)
    */
-  const refetchAfterAiConsultation = useCallback(async (ticket: AiConsultationFetchTicket) => {
+  const refetchAfterAiConsultation = useCallback(async (read: AiConsultationRead) => {
     const date = selectedDateRef.current;
-    const reloadSelectedDate = async () => {
-      if (date === null) return;
-      const order = selectedDateFetchStream.begin(null, date);
-      try {
-        const res = await fetch(`/api/health/records/${date}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        // 別の日を選び直していたら置かない。あとに始めた読み取り (日を選んだとき・別の取り直し) の応答をもう置いていても置かない
-        // (#2201 U1)。置いたら、その日を選んだときの読み取りの途中でも読み込み中の印を下ろす (この日の新しい記録が届いた)
-        if (selectedDateRef.current !== date) return;
-        order.place(() => {
-          setSelectedDateRecord(data.record ?? null);
-          setLoadingSelectedDate(false);
-        });
-      } catch {
-        // 取り直しの失敗では今の表示を残す
-      }
-    };
-    // 開いたときの読み込み中に始まった取り直しは、その読み込みの役を引き継ぐ (refetchReadMode)
-    await Promise.all([fetchData(ticket, refetchReadMode()), reloadSelectedDate()]);
-  }, [fetchData, refetchReadMode, selectedDateFetchStream]);
+    await Promise.all([fetchData(read), date === null ? undefined : readSelectedDateRecord(read, date)]);
+  }, [fetchData, readSelectedDateRecord]);
   // 記録の欄 (体重などの入力の部品) が開いている間は取り直さない (打ちかけの体重を取得した値で上書きしないため)。
-  // 閉じたら止めた通知のぶん 1 回取り直す (#2201 U2)。取り直しの応答を待つあいだに開いたときも同じ (fetchData の skipPlacing)
-  const { beginFetch } = useAiConsultationDataRefetch(refetchAfterAiConsultation);
+  // 閉じたら止めた通知のぶん 1 回取り直す (#2201 U2)。取り直しの応答を待つあいだに開いたときも同じ (read.place が見る。#2206 G1)。
+  // 最初の描画から画面全体の読み込み中の表示を出す (initialLoadingKeys)
+  const receiver = useAiConsultationReceiver(refetchAfterAiConsultation, { initialLoadingKeys: HEALTH_PAGE_LOADING_KEYS });
+  const loading = HEALTH_PAGE_LOADING_KEYS.some((key) => receiver.isLoading(key));
+  // 選んだ日のパネルの読み込み中の表示
+  const loadingSelectedDate = selectedDate !== null && receiver.isLoading(selectedDateKey(selectedDate));
 
   useEffect(() => {
-    void fetchData(beginFetch(), 'mount');
-  }, [fetchData, beginFetch]);
+    void receiver.read({ loadingKeys: HEALTH_PAGE_LOADING_KEYS }, fetchData);
+  }, [receiver, fetchData]);
 
   const handleDaySelect = async (date: string) => {
     // 今日のセル、または既に選択中の日をクリック → パネルを閉じる
@@ -205,33 +205,13 @@ export default function HealthDashboardPage() {
       selectedDateRef.current = null;
       setSelectedDate(null);
       setSelectedDateRecord(null);
-      setLoadingSelectedDate(false);
       return;
     }
     selectedDateRef.current = date;
     setSelectedDate(date);
     // 前に選んだ日の記録をパネルに残さない (読み込み中も、見出しの日と違う日の記録で「詳細を編集」を出さない。#2201 U1)
     setSelectedDateRecord(null);
-    setLoadingSelectedDate(true);
-    const order = selectedDateFetchStream.begin(null, date);
-    // 応答を待つあいだに別の日を選び直したら、この日の応答は置かない (#2201 U1。取り直しの側と同じ形)
-    let record: HealthRecord | null = null;
-    try {
-      const res = await fetch(`/api/health/records/${date}`);
-      if (res.ok) {
-        const data = await res.json();
-        record = data.record ?? null;
-      }
-    } catch {
-      record = null;
-    }
-    if (selectedDateRef.current !== date) return;
-    // この日のもっと新しい記録 (この読み取りよりあとに始めた取り直しの読み直しなど) をもう置いていれば、この古い応答は置かない。
-    // 読み込み中の印は置いたときだけ下ろす (置かなかったときは、新しい記録を置いた側が下ろした。#2201 U1)
-    order.place(() => {
-      setSelectedDateRecord(record);
-      setLoadingSelectedDate(false);
-    });
+    await receiver.read({ loadingKeys: [selectedDateKey(date)] }, (read) => readSelectedDateRecord(read, date));
   };
 
   const handleQuickSave = async () => {
@@ -241,6 +221,8 @@ export default function HealthDashboardPage() {
 
     setSaving(true);
     setQuickSaveError(null);
+    // 書き込みの窓 (保存の送信の間)。窓の間は AI 相談の成功の取り直しを止め、終わったら 1 回取り直す (#2206 G1)
+    const endWrite = receiver.beginWrite();
     try {
       const res = await fetch('/api/health/records/quick', {
         method: 'POST',
@@ -258,7 +240,7 @@ export default function HealthDashboardPage() {
         setTodayRecord(data.record);
         setMessage(data.message);
         setShowQuickRecord(false);
-        void fetchData(beginFetch(), 'mount'); // 再取得
+        void receiver.read({ loadingKeys: HEALTH_PAGE_LOADING_KEYS }, fetchData); // 再取得
 
         // メッセージを3秒後に消す
         setTimeout(() => setMessage(null), 5000);
@@ -272,6 +254,8 @@ export default function HealthDashboardPage() {
     } catch (error) {
       console.error('Failed to save:', error);
       setQuickSaveError('記録に失敗しました。もう一度お試しください。');
+    } finally {
+      endWrite();
     }
     setSaving(false);
   };

@@ -114,12 +114,7 @@ const SOURCE_FILE = /\.(ts|tsx)$/;
  * 取り直しそのものが真偽の ref の印を立て、印が立っている間は書き込みを始めないページ (取り直しの応答を待つあいだに書き込みが始まらない
  * ので、応答を置く時点で書き込みを見分けなくてよい。印は書き込みと取り直しの両方を止める鍵で、数える印に置き換えると鍵でなくなる)
  */
-const SELF_HELD_RECEIVERS: ReadonlyArray<{ file: string; marker: string }> = [
-  { file: 'src/app/(main)/family/members/page.tsx', marker: 'writeInFlightRef' },
-  { file: 'src/app/(main)/family/members/[id]/page.tsx', marker: 'busyRef' },
-  { file: 'src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx', marker: 'busyRef' },
-  { file: 'src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx', marker: 'busyRef' },
-];
+const SELF_HELD_RECEIVERS: ReadonlyArray<{ file: string; marker: string }> = [];
 
 /** 取り直しの関数と書き込みの印を別の hook が作る受け手 (その hook のファイルで数える) */
 const DELEGATED_RECEIVERS: ReadonlyArray<{ file: string; marker: string; refetch: string; definedIn: string }> = [];

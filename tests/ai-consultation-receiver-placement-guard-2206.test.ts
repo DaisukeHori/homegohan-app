@@ -131,8 +131,27 @@ const RECEIVER_EXPECTATIONS: Readonly<Record<string, { readonly minPlaceCalls: n
   // 段 B の例: 'src/app/(main)/pantry/page.tsx': { minPlaceCalls: 1, writes: 4 },
 
   // 段 B
+  'src/app/(main)/badges/page.tsx': { minPlaceCalls: 1, writes: 0 },
+  'src/app/(main)/comparison/page.tsx': { minPlaceCalls: 1, writes: 0 },
+  'src/app/(main)/health/blood-tests/page.tsx': { minPlaceCalls: 1, writes: 0 },
+  'src/app/(main)/health/checkups/[id]/CheckupDetailClient.tsx': { minPlaceCalls: 1, writes: 1 },
+  'src/app/(main)/health/goals/page.tsx': { minPlaceCalls: 1, writes: 3 },
+  'src/app/(main)/health/graphs/page.tsx': { minPlaceCalls: 2, writes: 0 },
+  'src/app/(main)/health/streaks/page.tsx': { minPlaceCalls: 1, writes: 0 },
+  'src/app/(main)/meals/[id]/page.tsx': { minPlaceCalls: 2, writes: 2 },
+  'src/app/(main)/pantry/page.tsx': { minPlaceCalls: 1, writes: 4 },
+  'src/app/(main)/profile/page.tsx': { minPlaceCalls: 3, writes: 1 },
+  'src/app/(main)/profile/nutrition-targets/page.tsx': { minPlaceCalls: 1, writes: 0 },
+  'src/components/ProfileReminderBanner.tsx': { minPlaceCalls: 1, writes: 0 },
+  'src/components/nutrition/nutrition-target-planner.tsx': { minPlaceCalls: 1, writes: 3 },
 
   // 段 C
+  'src/app/(main)/family/dashboard/page.tsx': { minPlaceCalls: 1, writes: 0 },
+  'src/app/(main)/family/members/page.tsx': { minPlaceCalls: 1, writes: 2 },
+  'src/app/(main)/family/members/[id]/page.tsx': { minPlaceCalls: 1, writes: 2 },
+  'src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx': { minPlaceCalls: 1, writes: 2 },
+  'src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx': { minPlaceCalls: 1, writes: 2 },
+  'src/app/(main)/health/page.tsx': { minPlaceCalls: 4, writes: 1 },
 
   // 段 D
   'src/hooks/useHomeData.ts': { minPlaceCalls: 18, writes: 5 },
