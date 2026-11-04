@@ -2786,30 +2786,30 @@ export default function WeeklyMenuPage() {
    * 献立を置いたとき (releaseWeekLoadingIfShown) か、この読み取りの終わりで下りる (控えに当たったときは同期で置いて下ろす。S-18)
    */
   const fetchPlan = useCallback(async () => {
-    const weekStartKey = weekStartKeyRef.current;
+    const targetDateStr = weekStartKeyRef.current;
     await receiver.read({ loadingKeys: [KEY_WEEK_LOADING] }, async (read) => {
-      const cached = weekDataCache.current.get(weekStartKey);
+      const cached = weekDataCache.current.get(targetDateStr);
       if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
         // キャッシュヒット - 即座に反映 (控えは、この週で最後に書き込み口を取った読み取り・書き込みのもの: あとから書き込み口を
         // 取ったら、そのときに控えを捨てている。createWeekDataCache)
-        const placed = read.place(planKey(weekStartKey), () => {
-          if (weekStartKeyRef.current !== weekStartKey) return;
+        const placed = read.place(planKey(targetDateStr), () => {
+          if (weekStartKeyRef.current !== targetDateStr) return;
           setCurrentPlan(cached.plan);
           // 買い物リストは控えから置かない (#2206 G1 R2。控えの買い物リストは先読み・読み込みの時点の写しで、そのあとの
           // 追加・チェック・削除は控えに書かないので、置くと今の一覧を古い一覧で戻す。置くのは GET の応答 (applyWeekResponse) と
           // 書き込みの関数だけ。S-23)
           if (cached.plan) autoExpandNextMealRef.current(cached.plan, weekDatesRef.current);
         });
-        releaseWeekLoadingIfShown(read, weekStartKey, placed);
+        releaseWeekLoadingIfShown(read, targetDateStr, placed);
       } else {
         // キャッシュミス - APIから取得。読めなければ (非 ok・通信の失敗) この週の献立を空にする (開いたとき・週を移ったとき)
-        if ((await readDisplayedWeek(read, WEEK_PLACEMENT_WEEK_READ)) === null) placeWeekReadFailure(read, weekStartKey);
+        if ((await readDisplayedWeek(read, WEEK_PLACEMENT_WEEK_READ)) === null) placeWeekReadFailure(read, targetDateStr);
         // 応答を待つあいだに週を移った: 前の週の生成中の行を確かめず、先読みもしない (前と同じ。移った先の週の読み込みが受け持つ)
-        if (weekStartKeyRef.current !== weekStartKey) return;
+        if (weekStartKeyRef.current !== targetDateStr) return;
         // DBで生成中のリクエストがあるか確認 (入り直しの経路 2 つの 1 つ。#1629。checkPendingRequests は呼ばない)。
         // resumePendingGeneration・subscribeToRequestStatus は生成の監視の入口なので place に通さない (§6.6。番兵 P1 の境 B-2・B-3)
         try {
-          const pendingRes = await fetch(`/api/ai/menu/weekly/pending?date=${weekStartKey}`);
+          const pendingRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDateStr}`);
           if (pendingRes.ok) {
             const { hasPending, requestId, ultimateMode: pendingUltimateMode } = await pendingRes.json();
             if (hasPending && requestId) {
@@ -2819,7 +2819,7 @@ export default function WeeklyMenuPage() {
               // 生成中にし、最初の進捗が届くまでの間も段 (究極 / 通常) を合わせる (#1609。進捗が null だとカードが一瞬通常の段になる)。
               // すでに進捗があるとき (生成中のリロード・キャッシュが切れたあとに同じ週へ戻ったとき) は上書きしない (#1629)
               resumePendingGeneration(pendingIsUltimateMode);
-              subscribeToRequestStatus(weekStartKey, requestId, pendingIsUltimateMode);
+              subscribeToRequestStatus(targetDateStr, requestId, pendingIsUltimateMode);
             }
           }
         } catch (e) {
@@ -2827,7 +2827,7 @@ export default function WeeklyMenuPage() {
         }
       }
       // バックグラウンドで前後の週をプリフェッチ (先読みは fetchWeekData が null を返したら控えに書かない)
-      prefetchAdjacentWeeks(weekStartKey);
+      prefetchAdjacentWeeks(targetDateStr);
     });
   }, [receiver, readDisplayedWeek, placeWeekReadFailure, releaseWeekLoadingIfShown, prefetchAdjacentWeeks, resumePendingGeneration, subscribeToRequestStatus, setCurrentPlan]);
   // Fetch Plan & Check for pending generation requests

@@ -1644,13 +1644,15 @@ describe('受け手の配線 (#2195 V1)', () => {
   ];
 
   // 段 E
+  /** 新しい hook (src/hooks/useAiConsultationReceiver.ts) の import (#2206 G1 §17 G-5) */
+  const RECEIVER_HOOK_IMPORT = /from "@\/hooks\/useAiConsultationReceiver";/;
   const WIRING_STAGE_E: readonly WiringRow[] = [
     {
-      page: '献立表 (/menus/weekly): 表示中の週・冷蔵庫・人数の設定・家族の一覧と名前を取り直し、週のキャッシュ (捨てる前に読み始めた応答も書かない discard。#2201 U1) と取得済みの範囲を捨ててから回数を増やす (どれにも取り直しの札を渡す。#2201 U2)',
+      page: '献立表 (/menus/weekly): 週のキャッシュ (捨てる前に読み始めた応答も書かない discard。#2201 U1) と取得済みの月を捨て、生成中の依頼を確かめ、表示中の週・冷蔵庫・人数の設定・家族の一覧と名前・月のカレンダーの印を同じ取り直しの読み取りで読む (#2206 G1)',
       file: 'src/app/(main)/menus/weekly/page.tsx',
-      hookImport: HOOK_IMPORT,
+      hookImport: RECEIVER_HOOK_IMPORT,
       wiring:
-        /const refetchAfterAiConsultation = useCallback\(\(ticket: AiConsultationFetchTicket\) => \{\s*weekDataCache\.current\.discard\(\);\s*fetchedRangesRef\.current\.clear\(\);\s*aiConsultationRefetchTicketRef\.current = ticket;\s*void refreshMealPlan\(ticket\);\s*void fetchPantry\(ticket\);\s*void fetchUserSettings\(ticket\);\s*void loadFamilyData\('refetch', ticket\);\s*setAiConsultationRefetchRound\(\(round\) => round \+ 1\);\s*\}, \[refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData\]\);\s*useAiConsultationDataRefetch\(refetchAfterAiConsultation, \{ writeInFlightRef: pendingWrites \}\);/,
+        /const refetchAfterAiConsultation = useCallback\(async \(read: AiConsultationRead\) => \{\s*weekDataCache\.current\.discard\(\);\s*fetchedMonthsRef\.current\.clear\(\);[\s\S]*?void checkPendingRequests\(weekStartKeyRef\.current\);\s*await Promise\.all\(\[\s*readDisplayedWeek\(read, WEEK_PLACEMENT_REREAD\),\s*fetchPantry\(read\),\s*fetchUserSettings\(read\),\s*loadFamilyData\(read\),\s*fetchAndCacheMealDates\(read, \.\.\.weekWindowOf\(weekStartRef\.current\)\),\s*fetchAndCacheMealDates\(read, \.\.\.monthWindowOf\(displayMonthRef\.current\)\),\s*\]\);\s*\}, \[readDisplayedWeek, fetchPantry, fetchUserSettings, loadFamilyData, fetchAndCacheMealDates, checkPendingRequests\]\);[\s\S]*?const receiver = useAiConsultationReceiver\(refetchAfterAiConsultation, \{ initialLoadingKeys: \[KEY_WEEK_LOADING\] \}\);/,
     },
   ];
 
@@ -1663,16 +1665,16 @@ describe('受け手の配線 (#2195 V1)', () => {
 
   it('献立表の pantry・人数の設定の取得は、初めの取得と取り直しで同じ関数', () => {
     const source = readRepoFile('src/app/(main)/menus/weekly/page.tsx');
-    // 取り直しのときだけ札を渡す (#2201 U2。初めの取得は札なし)。初めの取得と取り直しは同じ取得の流れで始める (#2201 U1。
-    // 初めの取得の応答が取り直しの応答より後に届いても、古い答えで上書きしない)
+    // 読み取りの関数は read (#2206 G1。開いたときは receiver.read が渡す 'mount'、取り直しは hook が渡す 'refetch') を受け取り、
+    // 応答は read.place で置く (古い応答・取り直しの番兵の判断は place の中)。開いたときの effect は receiver.read で始める
     expect(source).toMatch(
-      /const fetchPantry = useCallback\(async \(refetchTicket: AiConsultationFetchTicket \| null = null\) => \{\s*const order = pantryFetchStream\.begin\(refetchTicket\);\s*try \{\s*const res = await fetch\('\/api\/pantry'\);/,
+      /const fetchPantry = useCallback\(async \(read: AiConsultationRead\) => \{\s*try \{\s*const res = await fetch\('\/api\/pantry'\);/,
     );
-    expect(source).toMatch(/useEffect\(\(\) => \{\s*void fetchPantry\(\);\s*\}, \[fetchPantry\]\);/);
+    expect(source).toMatch(/useEffect\(\(\) => \{\s*void receiver\.read\(\{\}, fetchPantry\);\s*\}, \[receiver, fetchPantry\]\);/);
     expect(source).toMatch(
-      /const fetchUserSettings = useCallback\(async \(refetchTicket: AiConsultationFetchTicket \| null = null\) => \{\s*const order = settingsFetchStream\.begin\(refetchTicket\);[\s\S]*?const res = await fetch\('\/api\/profile'\);/,
+      /const fetchUserSettings = useCallback\(async \(read: AiConsultationRead\) => \{[\s\S]*?const res = await fetch\('\/api\/profile'\);/,
     );
-    expect(source).toMatch(/useEffect\(\(\) => \{\s*void fetchUserSettings\(\);\s*\}, \[fetchUserSettings\]\);/);
+    expect(source).toMatch(/useEffect\(\(\) => \{\s*void receiver\.read\(\{ loadingKeys: \[KEY_SETTINGS\] \}, fetchUserSettings\);\s*\}, \[receiver, fetchUserSettings\]\);/);
   });
 });
 
@@ -1710,7 +1712,7 @@ describe('受け手のページのモーダルは role="dialog" を持つ (#2195
 
   it.each(RECEIVER_PAGES)('$file', ({ file, overlays }) => {
     const source = readRepoFile(file);
-    expect(source, '受け手のページではない').toMatch(/useAiConsultation(DataRefetch|RefetchKey)\(/);
+    expect(source, '受け手のページではない').toMatch(/useAiConsultation(DataRefetch|RefetchKey|Receiver)\(/);
     let checked = 0;
     for (let at = source.indexOf(OVERLAY); at !== -1; at = source.indexOf(OVERLAY, at + OVERLAY.length)) {
       const start = source.lastIndexOf(OPEN_PRESENCE, at);

@@ -289,7 +289,7 @@ export const AI_CONSULTATION_REFETCH_PAGES: Readonly<Record<string, AiConsultati
     kind: 'receiver',
     mountReadsNotRefetched: {
       adjacentWeekPrefetch:
-        '前後の週の献立の先読み (週の切り替えを速くする控え weekDataCache。画面には出さない)。取り直しは控えを捨てるので、その週へ移ったときに読み直す',
+        '前後の週の献立の先読み (週の切り替えを速くする控え weekDataCache。画面には出さない。読めなかった (非 ok) 週は控えに書かない)。取り直しは控えを捨てるので、その週へ移ったときに読み直す',
       weekStartDay:
         '週の始まりの日 (user_profiles.week_start_day)。AI 相談が書かない列 (AI_CONSULTATION_WRITTEN_COLUMNS に無い) で、設定の画面で変える',
       familyMenu:

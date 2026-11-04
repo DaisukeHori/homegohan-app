@@ -55,10 +55,11 @@ describe('写真から入力: 解析が終わってから献立を読み直す (
   it('200 のあとは waitForMealPhotoResult で結果を待ってから、献立を画面とキャッシュに置く', () => {
     const waitAt = okBranch.indexOf('await waitForMealPhotoResult(');
     expect(waitAt).toBeGreaterThanOrEqual(0);
-    expect(okBranch.indexOf('setCurrentPlan(newPlan)')).toBeGreaterThan(waitAt);
+    // 画面とキャッシュへは applyWeekResponse で置く (#2206 G1。週の応答を置く経路は 1 つ)
+    expect(okBranch.indexOf('applyWeekResponse(')).toBeGreaterThan(waitAt);
     // キャッシュには、待ち終えたときの応答 (outcome.week) を、その応答の読み取りを始める前に取った書き込み口で書く
     // (#2201 U1。待つあいだに AI 相談の取り直しが週のキャッシュを捨てた・その週をあとから読み始めたときは書かない)
-    expect(okBranch.indexOf('weekCacheWriters.get(outcome.week)?.(')).toBeGreaterThan(waitAt);
+    expect(okBranch.indexOf('weekCacheWriters.get(week)')).toBeGreaterThan(waitAt);
     const fetchTargetWeekCode = stripLineComments(blockAfter(analyzeBody, 'const fetchTargetWeek = async ('));
     const beginWriteAt = fetchTargetWeekCode.indexOf('weekDataCache.current.beginWrite(targetDate)');
     expect(beginWriteAt).toBeGreaterThanOrEqual(0);
@@ -94,11 +95,22 @@ describe('写真から入力: 解析が終わってから献立を読み直す (
   });
 
   it('待っているあいだに週が変わっていたら、解析を頼んだ週の献立を画面に置かない', () => {
-    const guardAt = okBranch.indexOf('if (formatLocalDate(displayedWeekStartRef.current) === targetDate) {');
-    expect(guardAt).toBeGreaterThanOrEqual(0);
-    const guarded = blockAfter(okBranch.slice(guardAt), 'if (');
-    expect(guarded).toContain('setCurrentPlan(newPlan)');
-    expect(guarded).toContain('updateCalendarMealDatesFromDailyMeals(dailyMeals)');
+    // 写真の結果は解析を頼んだ週 (targetDate) の鍵で applyWeekResponse に渡し、画面に置くかは applyWeekResponse の中で今の週と比べる (#2206 G1)
+    expect(okBranch).toContain('applyWeekResponse(read, targetDate, week, writeWeekCache, WEEK_PLACEMENT_COMPLETION);');
+    const applyBody = stripLineComments(blockAfter(pageSource, 'const applyWeekResponse = useCallback('));
+    const weekGuardAt = applyBody.indexOf('if (weekStartKeyRef.current !== weekStartKey) return;');
+    expect(weekGuardAt).toBeGreaterThanOrEqual(0);
+    expect(applyBody.indexOf('setCurrentPlan(plan);')).toBeGreaterThan(weekGuardAt);
+  });
+
+  it('待ち (await waitForMealPhotoResult) が明けてから receiver.read を始め、その中で applyWeekResponse を呼ぶ (待ちを読み取りに含めない。#2206 G1 S-27)', () => {
+    const waitAt = okBranch.indexOf('await waitForMealPhotoResult(');
+    const readAt = okBranch.indexOf('receiver.read(', waitAt);
+    expect(waitAt).toBeGreaterThanOrEqual(0);
+    expect(readAt).toBeGreaterThan(waitAt);
+    expect(okBranch.indexOf('applyWeekResponse(', readAt)).toBeGreaterThan(readAt);
+    // 待つ前に読み取りを始めない (待ちの間の取り直しに追い越されて結果を置けなくなる)
+    expect(okBranch.slice(0, waitAt)).not.toContain('receiver.read(');
   });
 });
 
@@ -115,7 +127,7 @@ describe('写真の解析の結果を待つ監視の印 (#2047。#1657 の印と
     expect(okBranch).toContain('isActive: () => photoResultWatch.active');
     const guardAt = okBranch.indexOf("if (outcome.status === 'cancelled' || !photoResultWatch.active) return;");
     expect(guardAt).toBeGreaterThan(waitAt);
-    expect(okBranch.indexOf('setCurrentPlan(newPlan)')).toBeGreaterThan(guardAt);
+    expect(okBranch.indexOf('applyWeekResponse(')).toBeGreaterThan(guardAt);
   });
 
   it('アンマウントで印を下ろす', () => {
