@@ -5,9 +5,21 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const logs = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }));
+const logs = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn(), userWarn: vi.fn() }));
+// withUser(userId).warn は logs.warn にも流し、logs.userWarn に利用者を添えて残す (app_logs の user_id 列に入る形か。#2245 K5)
 vi.mock('@/lib/db-logger', () => ({
-  createLogger: () => ({ debug: vi.fn(), info: logs.info, warn: logs.warn, error: logs.error }),
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: logs.info,
+    warn: logs.warn,
+    error: logs.error,
+    withUser: (userId: string) => ({
+      warn: (message: string, metadata?: Record<string, unknown>) => {
+        logs.userWarn(userId, message, metadata);
+        logs.warn(message, metadata);
+      },
+    }),
+  }),
   generateRequestId: () => 'req-test',
 }));
 
@@ -170,6 +182,7 @@ beforeEach(() => {
   logs.warn.mockReset();
   logs.error.mockReset();
   logs.info.mockReset();
+  logs.userWarn.mockReset();
 });
 
 describe('billing/04 §8.3 reconcileStoreSubscriptions', () => {
@@ -285,6 +298,11 @@ describe('billing/04 §8.3 reconcileStoreSubscriptions', () => {
     expect(logs.warn).toHaveBeenCalledTimes(2);
     expect(logs.warn).toHaveBeenCalledWith('ストアの購読の取り直しを写せませんでした (運営の処置が要ります)', { user_id: conflict, code: 'BILL_LIVE_ROW_CONFLICT' });
     expect(logs.warn).toHaveBeenCalledWith('ストアの購読の取り直しを写せませんでした (運営の処置が要ります)', { user_id: unknownProduct, code: 'BILL_IAP_UNKNOWN_PRODUCT' });
+    // 利用者ごとの warn は withUser で出す (app_logs の user_id 列に入る。#2245 K5)
+    expect(logs.userWarn.mock.calls.map(([userId, message]) => [userId, message])).toEqual([
+      [conflict, 'ストアの購読の取り直しを写せませんでした (運営の処置が要ります)'],
+      [unknownProduct, 'ストアの購読の取り直しを写せませんでした (運営の処置が要ります)'],
+    ]);
     // 飛ばした利用者にも印を書く (候補に残るが、次の回は後ろに回る)
     expect(harness.markCalls).toEqual([{ userIds: [conflict, unknownProduct, fine], attemptedAt: new Date(START_MS) }]);
   });
@@ -312,6 +330,7 @@ describe('billing/04 §8.3 reconcileStoreSubscriptions', () => {
     ];
     for (const { status, kind } of cases) {
       logs.warn.mockReset();
+      logs.userWarn.mockReset();
       const harness = makeHarness({
         candidates: [candidate(1), candidate(2), candidate(3)],
         gatewayError: (userId) => (userId === uid(1) ? new RevenueCatApiError({ status }) : null),
@@ -325,6 +344,7 @@ describe('billing/04 §8.3 reconcileStoreSubscriptions', () => {
       expect(harness.fetched, String(status)).toEqual([uid(1)]);
       expect(harness.markCalls, String(status)).toEqual([{ userIds: [uid(1)], attemptedAt: new Date(START_MS) }]);
       expect(logs.warn, String(status)).toHaveBeenCalledWith('ストアの購読を取り直せませんでした', expect.objectContaining({ user_id: uid(1), kind, scope: 'run' }));
+      expect(logs.userWarn, String(status)).toHaveBeenCalledWith(uid(1), 'ストアの購読を取り直せませんでした', expect.objectContaining({ user_id: uid(1), kind }));
     }
   });
 
@@ -346,6 +366,7 @@ describe('billing/04 §8.3 reconcileStoreSubscriptions', () => {
     ];
     for (const item of cases) {
       logs.warn.mockReset();
+      logs.userWarn.mockReset();
       const harness = makeHarness({
         candidates: [candidate(1), candidate(2), candidate(3)],
         gatewayError: (userId) => (userId === uid(1) ? (item.gatewayError ?? null) : null),
@@ -365,6 +386,7 @@ describe('billing/04 §8.3 reconcileStoreSubscriptions', () => {
         'ストアの購読を取り直せませんでした',
         { user_id: uid(1), kind: item.kind, scope: 'user', error_name: item.errorName, error_code: item.errorCode },
       );
+      expect(logs.userWarn, item.label).toHaveBeenCalledWith(uid(1), 'ストアの購読を取り直せませんでした', expect.objectContaining({ user_id: uid(1), kind: item.kind }));
     }
   });
 

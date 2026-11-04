@@ -141,6 +141,11 @@ function makeHarness(input: HarnessInput = {}) {
   const getReceipts = vi.fn(input.getReceipts ?? (async () => ({ ok: true as const, receipts: {} })));
   const info = vi.fn();
   const warn = vi.fn();
+  // 利用者の行のログ (withUser(user_id).warn。#2245 K5)。h.warn にも流す (ログの中身を見るテストは h.warn だけを見る)
+  const userWarn = vi.fn((userId: string, message: string, meta?: Record<string, unknown>) => warn(message, meta));
+  const withUser = vi.fn((userId: string) => ({
+    warn: (message: string, meta?: Record<string, unknown>) => userWarn(userId, message, meta),
+  }));
   const kinds: Record<string, PushKindPolicy | undefined> = {
     ...PUSH_NOTIFICATION_KIND_SPECS,
     [DEFER_KIND]: { path: '/home', quietHours: 'defer', ttlSeconds: 3600, priority: 'default' },
@@ -152,9 +157,9 @@ function makeHarness(input: HarnessInput = {}) {
     render: (kind, payload, routePath) =>
       kind === DEFER_KIND ? { title: 'テスト', body: 'テスト', data: { kind, path: routePath } } : renderPushMessage(kind, payload, routePath),
     now: () => clock.now,
-    log: { info, warn },
+    log: { info, warn, withUser },
   };
-  return { deps, store, send, getReceipts, info, warn, clock };
+  return { deps, store, send, getReceipts, info, warn, userWarn, withUser, clock };
 }
 
 type Harness = ReturnType<typeof makeHarness>;
@@ -663,6 +668,36 @@ describe('定数の突き合わせ・ログ・設定 (#1136)', () => {
     }
     expect(logged).not.toContain('"title"');
     expect(logged).not.toContain('"body"');
+  });
+
+  it('利用者の行の warn (dead・端末の行の削除・receipt の error) は withUser(行の user_id) で出す (app_logs の user_id 列に入る。#2245 K5)', async () => {
+    const receiptUserId = uuidOf(900_002);
+    const h = makeHarness({
+      rows: makeRows(2),
+      receiptRows: [makeReceiptRow(4, { user_id: receiptUserId })],
+      send: async (messages) => ({
+        ok: true,
+        tickets: messages.map((message, index) =>
+          index === 0
+            ? { status: 'error', message: 'not registered', details: { error: EXPO_DEVICE_NOT_REGISTERED } }
+            : { status: 'ok', id: `ticket-${message.to}` },
+        ),
+      }),
+      getReceipts: async () => ({ ok: true, receipts: { 'receipt-4': { status: 'error', details: { error: 'MessageTooBig' } } } }),
+    });
+
+    await processPushOutbox(h.deps, OPTIONS);
+
+    expect(h.userWarn.mock.calls.map(([userId, message]) => [userId, message])).toEqual([
+      [USER_ID, 'Push 通知を届けられませんでした'],
+      [USER_ID, '端末の行を消しました (DeviceNotRegistered)'],
+      [receiptUserId, 'Push 通知の receipt がエラーでした'],
+    ]);
+    // meta の user_id も今までどおり残す (meta で絞る運営の見方を変えない)
+    for (const [userId, , meta] of h.userWarn.mock.calls) expect(meta).toMatchObject({ user_id: userId });
+    // user_id を持つ warn は、すべて withUser を通っている (user_id を meta にだけ渡す warn が無い)
+    const warnsWithUserId = h.warn.mock.calls.filter(([, meta]) => typeof meta === 'object' && meta !== null && 'user_id' in meta);
+    expect(warnsWithUserId).toHaveLength(h.userWarn.mock.calls.length);
   });
 
   it('resolvePushOutboxSettings: 範囲外は既定に戻し ignored に名前', () => {

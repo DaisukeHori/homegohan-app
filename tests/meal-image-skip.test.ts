@@ -25,7 +25,11 @@ vi.mock('@/lib/plan/entitlements', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/plan/entitlements')>()),
   refundAiUsage: m.refundAiUsage,
 }));
-vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }) }));
+vi.mock('@/lib/db-logger', () => {
+  const logger = { warn: vi.fn(), error: vi.fn(), info: vi.fn() };
+  // 積み込みのログは利用者つき (withUser) で出す (#2245 K5)
+  return { createLogger: () => ({ ...logger, withUser: () => logger }) };
+});
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {

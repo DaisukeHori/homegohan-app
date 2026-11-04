@@ -382,7 +382,7 @@ function validationFailureResult(
     }
   }
   if (rawNonJapanese.length > 0) {
-    createLogger(ACTION_EXECUTOR_LOG_NAME).warn('AI 相談のアクションの値が検証を通りませんでした', {
+    createLogger(ACTION_EXECUTOR_LOG_NAME).withUser(user.id).warn('AI 相談のアクションの値が検証を通りませんでした', {
       userId: user.id,
       action_id: action.id,
       action_type: action.action_type,
@@ -1009,7 +1009,7 @@ export async function runConsultationAction(
             }
           }
         } catch (rlError) {
-          createLogger('api/ai/consultation/actions/execute').warn(
+          createLogger('api/ai/consultation/actions/execute').withUser(user.id).warn(
             'Image rate-limit check failed; skipping image generation',
             {
               userId: user.id,

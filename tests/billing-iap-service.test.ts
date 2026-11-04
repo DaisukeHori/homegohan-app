@@ -4,9 +4,21 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const logs = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn() }));
+const logs = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), userWarn: vi.fn() }));
+// withUser(userId).warn は logs.warn にも流し、logs.userWarn に利用者を添えて残す (app_logs の user_id 列に入る形か。#2245 K5)
 vi.mock('@/lib/db-logger', () => ({
-  createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: logs.warn, error: logs.error }),
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: logs.warn,
+    error: logs.error,
+    withUser: (userId: string) => ({
+      warn: (message: string, metadata?: Record<string, unknown>) => {
+        logs.userWarn(userId, message, metadata);
+        logs.warn(message, metadata);
+      },
+    }),
+  }),
   generateRequestId: () => 'req-test',
 }));
 
@@ -102,6 +114,7 @@ function event(overrides: Partial<RevenueCatEvent> = {}): RevenueCatEvent {
 beforeEach(() => {
   logs.warn.mockReset();
   logs.error.mockReset();
+  logs.userWarn.mockReset();
 });
 
 describe('billing/03 §8.4 syncStoreSubscriber', () => {
@@ -298,6 +311,7 @@ describe('billing/03 §8.4 lazyResyncStoreSubscription', () => {
     // 失敗 (RevenueCat・写像の衝突・対応の行が無い) は飲み込み、コードだけを warn に残す
     for (const error of [new BillingRpcError('BILL_LIVE_ROW_CONFLICT', null), new IapError('BILL_IAP_UNKNOWN_PRODUCT'), new Error('network')]) {
       logs.warn.mockReset();
+      logs.userWarn.mockReset();
       const failing = makeRepository({ applyStoreSubscription: vi.fn(async () => Promise.reject(error)) });
       await expect(
         lazyResyncStoreSubscription(deps(gateway, failing.repository), USER, { iap_store: 'play_store', current_period_end: PAST, iap_synced_at: null }),
@@ -305,6 +319,8 @@ describe('billing/03 §8.4 lazyResyncStoreSubscription', () => {
       expect(logs.warn).toHaveBeenCalledTimes(1);
       const expectedCode = error instanceof BillingRpcError || error instanceof IapError ? error.code : 'unknown';
       expect(logs.warn.mock.calls[0][1]).toEqual({ user_id: USER, code: expectedCode });
+      // withUser で出す (app_logs の user_id 列に入る。#2245 K5)
+      expect(logs.userWarn).toHaveBeenCalledWith(USER, 'ストアの契約の遅延の再同期に失敗しました', { user_id: USER, code: expectedCode });
     }
   });
 });
