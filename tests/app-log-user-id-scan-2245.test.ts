@@ -4,24 +4,29 @@
  *
  * 問題:
  *   app_logs の user_id 列は、createLogger(...).withUser(userId) で作ったロガーだけが埋める (src/lib/db-logger.ts・
- *   supabase/functions/_shared/db-logger.ts)。createLogger(...).warn / .error に `{ userId }` / `{ user_id }` を metadata で
+ *   supabase/functions/_shared/db-logger.ts)。createLogger(...).warn / .error に利用者の id
+ *   (`{ userId }` / `{ user_id }`・ジョブの持ち主の `{ ownerId }`・操作した運営者の `{ actor_id }` など) を metadata で
  *   渡すだけだと、user_id 列は空のまま残り、運営が user_id 列で絞ったときにそのログだけが出てこない。
- *   lib/meal-image-jobs.ts の後始末のログ (K5 の本体) と、同じ型が次の 16 か所にあった (直す前の origin/main で 17 件):
+ *   lib/meal-image-jobs.ts の後始末のログ (K5 の本体) と、同じ型が次の 20 か所にあった (直す前の origin/main で 21 件):
  *     - 料理画像の上限の判定の失敗の warn (/api/meals・/api/meals/[id]・/api/meal-plans/meals・/api/meal-plans/meals/[id]・
  *       AI 相談の献立の更新のアクション)
  *     - AI 相談のアクションの値の検証の失敗の warn・家族の招待の招待者のプロフィールの読み取りの失敗の error
  *     - アプリ内課金の同期を止めた warn・ストアの購読の取り直し (定期・遅延) の warn
  *     - Push 通知の送信待ちの dead・端末の行の削除・receipt の error の warn
- *   直し方は「利用者が分かるログは .withUser(userId) を通して出す」(metadata の userId / user_id はそのまま残してよい)。
+ *     - 料理画像のジョブのプランの門を読めなかった warn (Edge Function process-meal-image-jobs の 2 か所。metadata は ownerId)
+ *     - 運営の操作の監査ログ (admin_audit_logs) に書けなかった error (src/lib/admin/audit.ts の logAuditFailure と、
+ *       /api/comparison/trigger の本人の権限の client を作れなかったとき。metadata は actor_id)
+ *   直し方は「利用者が分かるログは .withUser(userId) を通して出す」(metadata の userId / user_id などはそのまま残してよい)。
  *
  * 何を違反として数えるか (TypeScript の構文木で解析するので、コメントや文字列の中は見ない):
  *   `<受け手>.error(...)` / `.warn(...)` / `.info(...)` / `.debug(...)` の呼び出しで、引数のどれかが
- *   `userId` / `user_id` のプロパティを持つオブジェクトリテラル (同じファイルで宣言した、そういうオブジェクトの変数を含む) で、
+ *   USER_ID_KEYS (下) のプロパティを持つオブジェクトリテラル (同じファイルで宣言した、そういうオブジェクトの変数を含む) で、
  *   受け手の式に `withUser(` が無いもの。受け手が識別子なら、その宣言の初期化の式に `withUser(` があれば数えない。
  *   受け手が `console` なら数えない (console は app_logs に書かない)。
  *
  * 見ないもの (検出できない書き方。レビューで見る):
- *   ほかの名前のキー (`target_user_id` は別の利用者 (操作の対象) なので、利用者の列ではなく metadata に置くのが正しい) /
+ *   USER_ID_KEYS に無い名前のキー (`target_user_id`・`member_id` は別の利用者 (操作の対象・家族の一員) なので、利用者の列では
+ *   なく metadata に置くのが正しい) /
  *   スプレッドや関数の戻り値で渡す metadata / 別のファイルで作った metadata。
  */
 import fs from 'node:fs';
@@ -38,8 +43,12 @@ const SKIPPED_DIRECTORIES = new Set(['node_modules', '__tests__', '__mocks__']);
 const SKIPPED_FILE = /\.(?:test|spec)\.tsx?$|\.d\.ts$/;
 /** ログに書く呼び出しのメソッド名 */
 const LOG_METHODS = new Set(['error', 'warn', 'info', 'debug']);
-/** 利用者の id を表すキー (app_logs の user_id 列に入れるべき値) */
-const USER_ID_KEYS = new Set(['userId', 'user_id']);
+/**
+ * 利用者の id を表すキー (app_logs の user_id 列に入れるべき値): ログイン中の利用者 (userId / user_id)・
+ * ジョブの持ち主 (ownerId / owner_id)・操作した運営者 (actorId / actor_id・operatorId / operator_id。
+ * 運営の操作のログは操作者を withUser に入れる: src/app/api/operator/membership/family/[id]/transfer/route.ts の logger.withUser(operatorId))
+ */
+const USER_ID_KEYS = new Set(['userId', 'user_id', 'ownerId', 'owner_id', 'actorId', 'actor_id', 'operatorId', 'operator_id']);
 /** 利用者つきのロガーを作る呼び出し (createLogger(...).withUser(userId)) */
 const WITH_USER_CALL = 'withUser(';
 
@@ -106,7 +115,7 @@ function listSourceFiles(directory: string): string[] {
 }
 
 describe('利用者の id を metadata にだけ渡すログが無い (app_logs の user_id 列に入る。#2245 K5)', () => {
-  it('検出の規則: metadata の userId / user_id を withUser を通さずに出すものだけを数える', () => {
+  it('検出の規則: metadata の利用者の id (userId / user_id / ownerId / actor_id など) を withUser を通さずに出すものだけを数える', () => {
     const source = `
       const logger = createLogger('x');
       const userLogger = createLogger('x').withUser(id);
@@ -115,6 +124,11 @@ describe('利用者の id を metadata にだけ渡すログが無い (app_logs 
       logger.error('b', err, { user_id: id });
       logger.error('c', err, context);
       deps.log.warn('d', { user_id: row.user_id });
+      logger.warn('e', { ownerId: job.user_id });
+      createLogger('x').error('f', err, { actor_id: actorId });
+      logger.withUser(ownerId).warn('ok', { ownerId });
+      createLogger('x').withUser(actorId).error('ok', err, { actor_id: actorId });
+      logger.warn('ok', { member_id: id });
       createLogger('x').withUser(id).warn('ok', { userId: id });
       userLogger.error('ok', err, { userId: id });
       (id ? logger.withUser(id) : logger).warn('ok', { user_id: id });
@@ -127,6 +141,8 @@ describe('利用者の id を metadata にだけ渡すログが無い (app_logs 
       'logger',
       'logger',
       'deps.log',
+      'logger',
+      "createLogger('x')",
     ]);
   });
 

@@ -6,17 +6,25 @@
  *  - ip_address は inet 列のため、x-forwarded-for の先頭 1 IP だけを検証して渡す
  *    (複数 IP・不正値をそのまま渡すと INSERT が失敗して監査行ごと失われる)
  *  - INSERT が error を返しても / 例外を投げても、例外は投げず (fail-open)、
- *    db-logger (createLogger().error) に残す
+ *    db-logger (createLogger().withUser(actorId).error。操作した運営者を app_logs の user_id 列に入れる。#2245 K5) に残す
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockLoggerError = vi.fn();
-const mockCreateLogger = vi.fn((..._args: unknown[]) => ({
+/** mockLoggerError の各呼び出しを出したロガーの利用者 (withUser(…) の引数。withUser を通さないものは null。#2245 K5) */
+const loggerErrorUsers: Array<string | null> = [];
+const makeLogger = (userId: string | null) => ({
   debug: vi.fn(),
   info: vi.fn(),
   warn: vi.fn(),
-  error: (...args: unknown[]) => mockLoggerError(...args),
-  withUser: vi.fn(),
+  error: (...args: unknown[]) => {
+    loggerErrorUsers.push(userId);
+    return mockLoggerError(...args);
+  },
+});
+const mockCreateLogger = vi.fn((..._args: unknown[]) => ({
+  ...makeLogger(null),
+  withUser: (userId: string) => makeLogger(userId),
 }));
 
 vi.mock('@/lib/db-logger', () => ({
@@ -44,6 +52,7 @@ function requestWith(headers: Record<string, string>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  loggerErrorUsers.length = 0;
 });
 
 describe('recordAdminAudit: INSERT する内容', () => {
@@ -185,7 +194,7 @@ describe('extractClientIp: inet 列に入れられる IP だけを返す', () =>
 });
 
 describe('recordAdminAudit: 失敗しても例外を投げず (fail-open)、db-logger に残す', () => {
-  it('INSERT が error を返したら { ok: false } を返し、createLogger().error で記録する', async () => {
+  it('INSERT が error を返したら { ok: false } を返し、createLogger().withUser(actorId).error で記録する', async () => {
     const { supabase } = makeSupabase({
       error: { message: 'new row violates row-level security policy', code: '42501' },
     });
@@ -213,6 +222,8 @@ describe('recordAdminAudit: 失敗しても例外を投げず (fail-open)、db-l
       target_type: 'user',
       error_code: '42501',
     });
+    // 操作した運営者を app_logs の user_id 列に入れる (metadata の actor_id にだけ渡すと user_id 列が空のまま残る。#2245 K5)
+    expect(loggerErrorUsers).toEqual([ACTOR_ID]);
   });
 
   it('INSERT が例外を投げても { ok: false } を返し、記録する (例外を呼び出し元へ伝えない)', async () => {
@@ -227,6 +238,7 @@ describe('recordAdminAudit: 失敗しても例外を投げず (fail-open)、db-l
     expect(result).toEqual({ ok: false, error: 'network down' });
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
     expect(mockLoggerError.mock.calls[0][1]).toBeInstanceOf(Error);
+    expect(loggerErrorUsers).toEqual([ACTOR_ID]);
   });
 
   it('supabase.from() 自体が例外を投げても { ok: false } を返す', async () => {

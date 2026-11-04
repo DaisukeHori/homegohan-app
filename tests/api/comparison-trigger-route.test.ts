@@ -41,6 +41,8 @@ import {
 const mocks = vi.hoisted(() => ({
   requireRole: vi.fn(),
   loggerError: vi.fn(),
+  /** loggerError の各呼び出しを出したロガーの利用者 (withUser(…) の引数。withUser を通さないものは null。#2245 K5) */
+  loggerErrorUsers: [] as Array<string | null>,
   createClient: vi.fn(),
 }));
 
@@ -54,14 +56,18 @@ vi.mock('@/lib/supabase/server', () => ({
 }));
 
 // internalError() の構造化ログ (app_logs への書き込み) を差し替える
+// withUser(userId) のロガーの error は、その userId を loggerErrorUsers に残す (app_logs の user_id 列に入るか。#2245 K5)
 vi.mock('@/lib/db-logger', () => {
-  const logger = {
-    error: mocks.loggerError,
+  const makeLogger = (userId: string | null) => ({
+    error: (...args: unknown[]) => {
+      mocks.loggerErrorUsers.push(userId);
+      return mocks.loggerError(...args);
+    },
     warn: vi.fn(),
     info: vi.fn(),
     debug: vi.fn(),
-    withUser: () => logger,
-  };
+  });
+  const logger = { ...makeLogger(null), withUser: (userId: string) => makeLogger(userId) };
   return {
     createLogger: () => logger,
     generateRequestId: () => 'req_test',
@@ -128,6 +134,7 @@ function expectGenericInternalError(json: unknown) {
 beforeEach(() => {
   mocks.requireRole.mockReset();
   mocks.loggerError.mockReset();
+  mocks.loggerErrorUsers.length = 0;
   mocks.createClient.mockReset();
   mocks.createClient.mockImplementation(async () => makeAuditClient());
   auditInserts = [];
@@ -481,6 +488,8 @@ describe('POST /api/comparison/trigger: 監査ログ (super_admin.cron.run_now) 
     expect(auditInserts).toHaveLength(1);
     expect(mocks.loggerError).toHaveBeenCalledTimes(1);
     expect(mocks.loggerError.mock.calls[0][0]).toBe('監査ログ (admin_audit_logs) への記録に失敗しました');
+    // 操作した運営者を app_logs の user_id 列に入れる (recordAdminAudit の logAuditFailure が withUser を通す。#2245 K5)
+    expect(mocks.loggerErrorUsers).toEqual([SUPER_ADMIN.id]);
   });
 
   it('本人の権限の client を作れなくても応答は変えない (fail-open)。失敗は構造化ログに残る', async () => {
@@ -496,5 +505,7 @@ describe('POST /api/comparison/trigger: 監査ログ (super_admin.cron.run_now) 
     const [message, , metadata] = mocks.loggerError.mock.calls[0] as [string, unknown, Record<string, unknown>];
     expect(message).toBe('監査ログ (admin_audit_logs) への記録に失敗しました');
     expect(metadata).toMatchObject({ action_type: 'super_admin.cron.run_now', actor_id: SUPER_ADMIN.id, stage: 'client' });
+    // 操作した運営者を app_logs の user_id 列に入れる (metadata の actor_id にだけ渡すと user_id 列が空のまま残る。#2245 K5)
+    expect(mocks.loggerErrorUsers).toEqual([SUPER_ADMIN.id]);
   });
 });

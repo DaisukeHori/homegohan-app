@@ -63,7 +63,8 @@ const h = vi.hoisted(() => ({
   removeError: null as { message: string } | null,
   generateCalls: 0,
   generateError: null as Error | null,
-  logs: [] as Array<{ level: string; message: string; error?: unknown; metadata?: Record<string, unknown> }>,
+  /** userId = withUser(…) で作ったロガーが出したときの利用者 (app_logs の user_id 列。#2245 K5)。withUser を通さないログは null */
+  logs: [] as Array<{ level: string; message: string; error?: unknown; metadata?: Record<string, unknown>; userId: string | null }>,
   /** billing/03: ai_plan_feature_daily_cap の答え (既定 null = 行なし = 止めない) */
   planCap: null as number | null,
   planCapError: null as { code: string; message: string } | null,
@@ -196,19 +197,23 @@ vi.mock('../supabase/functions/_shared/ai-consent-guard.ts', () => ({
 }));
 
 // ロガーは app_logs へ書き込むので差し替え、呼ばれた内容を残す
+// withUser(userId) のロガーが出したログには、その userId を残す (app_logs の user_id 列に入るか。#2245 K5)
 vi.mock('../supabase/functions/_shared/db-logger.ts', () => {
-  const record = (level: string) => (message: string, metadata?: Record<string, unknown>) => {
-    h.logs.push({ level, message, metadata });
-  };
-  return {
-    createLogger: () => ({
+  const makeLogger = (userId: string | null) => {
+    const record = (level: string) => (message: string, metadata?: Record<string, unknown>) => {
+      h.logs.push({ level, message, metadata, userId });
+    };
+    return {
       debug: record('debug'),
       info: record('info'),
       warn: record('warn'),
       error: (message: string, error?: unknown, metadata?: Record<string, unknown>) => {
-        h.logs.push({ level: 'error', message, error, metadata });
+        h.logs.push({ level: 'error', message, error, metadata, userId });
       },
-    }),
+    };
+  };
+  return {
+    createLogger: () => ({ ...makeLogger(null), withUser: (userId: string) => makeLogger(userId) }),
     generateRequestId: () => 'req_test',
   };
 });
@@ -556,7 +561,7 @@ describe('(4) プランの門 (billing/03 §8.8)', () => {
     expect(h.rpcCalls).toEqual([{ name: 'ai_plan_feature_daily_cap', args: { p_user_id: USER_ID, p_feature: 'meal_image_auto' } }]);
   });
 
-  it.each(['error', 'throws'] as const)('billing/03: ai_plan_feature_daily_cap の RPC が %s のときも止めずに画像を作り (completed)、warn を 1 つ残す', async (mode) => {
+  it.each(['error', 'throws'] as const)('billing/03: ai_plan_feature_daily_cap の RPC が %s のときも止めずに画像を作り (completed)、ジョブの持ち主を user_id 列に入れた warn を 1 つ残す (#2245 K5)', async (mode) => {
     if (mode === 'error') h.planCapError = { code: 'XX000', message: 'db unavailable' };
     else h.planCapThrows = new TypeError('fetch failed');
     const [outcome] = await runWorker();
@@ -565,6 +570,8 @@ describe('(4) プランの門 (billing/03 §8.8)', () => {
     const warns = h.logs.filter((log) => log.level === 'warn');
     expect(warns).toHaveLength(1);
     expect(warns[0].metadata).toMatchObject({ ownerId: USER_ID });
+    // withUser(ownerId) を通す (metadata にだけ渡すと app_logs の user_id 列が空のまま残る。#2245 K5)
+    expect(warns[0].userId).toBe(USER_ID);
   });
 });
 
