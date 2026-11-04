@@ -1281,6 +1281,25 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
       const stream = new ReadableStream({
         async start(controller) {
           let aiContent = '';
+          // AI の返答を保存できたか (保存したあとの例外では、失敗の行を足さない。#2206 G2)。catch で見るので try の外で持つ
+          let aiReplySaved = false;
+          // クライアントへの送出が失敗した (クライアントが切断した・流れが cancel された) か。
+          // 一度失敗したら以後は送らない。送出の失敗は AI の失敗ではないので、返答の保存と自動実行は続ける (#2206 G2)
+          let clientGone = false;
+          /**
+           * SSE の 1 件をクライアントへ送る。送出の失敗 (時間切れで画面が切断した後の閉じた流れへの enqueue など) は投げずに
+           * clientGone に印すだけにする。以前は例外が下の catch に入り、返答を保存して自動実行まで済ませた後でも
+           * 『再度お試しください』の失敗の行を assistant として足していた (開き直すと実行済みの返答の後ろに頼み直しを勧める文が出て、
+           * 献立を二重に作りうる。#2206 G2)
+           */
+          const sendEvent = (payload: unknown): void => {
+            if (clientGone) return;
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+            } catch {
+              clientGone = true;
+            }
+          };
 
           try {
             // knowledge-gptをストリーミングで呼び出し（25秒タイムアウト）
@@ -1326,10 +1345,8 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
                     const content = parsed.choices?.[0]?.delta?.content;
                     if (content) {
                       aiContent += content;
-                      // クライアントに転送（フロントエンドが期待する形式）
-                      controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-                        choices: [{ delta: { content } }]
-                      })}\n\n`));
+                      // クライアントに転送（フロントエンドが期待する形式）。切断していても返答は最後まで受け取って保存する (#2206 G2)
+                      sendEvent({ choices: [{ delta: { content } }] });
                     }
                   } catch {
                     // JSON parse error, skip
@@ -1392,6 +1409,7 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
               })
               .select()
               .single();
+            aiReplySaved = !!savedAiMessage;
 
             // アクション自動実行（#1047 F2-21: self-fetch をやめ直接関数呼び出し）
             let autoAction: AutoActionOutcome | null = null;
@@ -1427,12 +1445,17 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
               actionExecuted: actionResult?.success || false,
               actionResult,
             };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalData)}\n\n`));
+            // 送出の失敗 (クライアントの切断) は AI の失敗として扱わない (sendEvent。#2206 G2)
+            sendEvent(finalData);
 
           } catch (error: any) {
             createLogger('POST /api/ai/consultation/sessions/[sessionId]/messages', generateRequestId())
               .withUser(user.id)
               .error('相談の応答の生成中にエラーが発生しました', error, { session_id: params.sessionId });
+            // 返答を保存した後の例外では、失敗の行を足さない (#2206 G2)。足すと、開き直したときに保存済みの返答 (自動実行が済んで
+            // いることがある) の後ろに『再度お試しください』が並び、頼み直すと献立を二重に作りうる。画面は finalData を受け取れないので
+            // 会話を取り直し、保存済みの返答と提案の記録の状態を出す (src/components/AIChatBubble.tsx の resolveIncompleteReply)
+            if (aiReplySaved) return;
             // エラー時でも必ずassistantメッセージをDBに書き込んでユーザーに通知する
             const errorContent = 'すみません、応答の生成中にエラーが発生しました。しばらく待ってから再度お試しください。';
             try {
@@ -1445,7 +1468,7 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
                 })
                 .select()
                 .single();
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+              sendEvent({
                 userMessage: {
                   id: savedUserMessage.id,
                   content: savedUserMessage.content,
@@ -1463,15 +1486,18 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
                 // 本文 (SSE) に生のエラー文を出さない (#1172)。画面は error の有無だけを見る。詳細は上のログに残す
                 error: INTERNAL_ERROR_MESSAGE,
                 code: INTERNAL_ERROR_CODE,
-              })}\n\n`));
+              });
             } catch (dbError) {
               console.error('Failed to write error message to DB:', dbError);
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE })}\n\n`),
-              );
+              sendEvent({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
             }
           } finally {
-            controller.close();
+            // クライアントが切断して流れが cancel されていると close も投げる (閉じる相手がもう無いだけなので無視する。#2206 G2)
+            try {
+              controller.close();
+            } catch {
+              /* 流れはもう閉じている */
+            }
           }
         },
       });

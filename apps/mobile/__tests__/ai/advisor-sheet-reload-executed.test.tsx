@@ -7,10 +7,13 @@
  * 取り直した会話の GET は、実行できた提案も提案の無い返答も同じ形 (proposedActions が null) で返すので、送った文への
  * 返答の提案の記録 (ai_action_logs) の状態で見分ける。ここでは次を確かめる。
  *   1. 時間切れの後の「最新の会話を読み込む」で返答が出たとき、返答の提案の記録に実行できた行があれば、返答のすぐ後に
- *      『前の依頼は実行されました』を出し、読み込み直しを 1 回知らせる。無い・読めないときは何も足さない
+ *      『前の依頼は実行されました』を出し、読み込み直しを 1 回知らせる。無い・読めないときはその場では何も足さない
+ *      (読めないときは少し待って 1 回だけ読み直す。#2206 G2。advisor-sheet-reload-running.test.tsx)
  *   2. 返答がまだ無い (届いているが返答の作成中) ときは記録を読まない
  *   3. 応答の本文を読めなかった (接続が切れた など) ときの取り直しでも同じ
  *   4. 流し読みで finalData を処理した後に読み取りが失敗しても、送信の失敗の Alert を出さない
+ *   5. 実行を待つ・失敗した行だけなら『前の依頼は実行できませんでした』を出す / finalData の前に読み取りが失敗しても、
+ *      Alert を出さずに会話を取り直す (#2206 G2)
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
@@ -48,7 +51,7 @@ jest.mock('expo-linear-gradient', () => ({
 
 import React from 'react';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
-import { PREVIOUS_REQUEST_EXECUTED_MESSAGE } from '../../src/lib/ai-chat-timeout';
+import { PREVIOUS_REQUEST_EXECUTED_MESSAGE, PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE } from '../../src/lib/ai-chat-timeout';
 import {
   resetAiConsultationDataChangedListenersForTests,
   subscribeAiConsultationDataChanged,
@@ -184,10 +187,9 @@ describe('AIAdvisorSheet — 時間切れの後の取り直しで、自動実行
 
   it.each([
     ['行が無い (提案が無い返答)', { data: [], error: null }],
-    ['実行を待っている・失敗した行だけ', { data: [{ status: 'pending' }, { status: 'failed' }], error: null }],
     ['読み取りが失敗を返した', { data: null, error: { message: 'permission denied' } }],
     ['読み取りが例外を投げた', new Error('Network request failed')],
-  ])('%s なら何も足さず、読み込み直しも知らせない', async (_label, result) => {
+  ])('%s なら、その場では何も足さず、読み込み直しも知らせない', async (_label, result) => {
     actionLogsRead(result);
     await openSheet();
     await sendTimeOutAndReload(SAVED_MESSAGES);
@@ -195,8 +197,21 @@ describe('AIAdvisorSheet — 時間切れの後の取り直しで、自動実行
     await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
     expectReadActionLogsOfReply();
     expect(screen.queryByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeNull();
+    expect(screen.queryByText(PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE)).toBeNull();
     expect(dataChanged).not.toHaveBeenCalled();
     expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
+  });
+
+  it('実行を待っている・失敗した行だけなら、返答のすぐ後に『実行できませんでした』を出し、読み込み直しは知らせない (#2206 G2)', async () => {
+    actionLogsRead({ data: [{ status: 'pending' }, { status: 'failed' }], error: null });
+    await openSheet();
+    await sendTimeOutAndReload(SAVED_MESSAGES);
+
+    await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE)).toBeTruthy());
+    const texts = renderedTexts();
+    expect(texts.indexOf(PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE)).toBe(texts.indexOf(SAVED_REPLY) + 1);
+    expect(screen.queryByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeNull();
+    expect(dataChanged).not.toHaveBeenCalled();
   });
 
   it('届いているが返答がまだ無いときは、記録を読まず何も足さない (導線を残す)', async () => {
@@ -237,12 +252,13 @@ describe('AIAdvisorSheet — 応答の本文を読めなかったときの取り
     expect(alertSpy).not.toHaveBeenCalled();
   });
 
-  it('実行できた行が無ければ、取り直した会話だけを出し、読み込み直しを知らせない', async () => {
+  it('実行できた行が無ければ (実行を待つ行)、取り直した会話と実行できなかった一文を出し、読み込み直しを知らせない (#2206 G2)', async () => {
     actionLogsRead({ data: [{ status: 'pending' }], error: null });
     await openSheet();
     await sendWithUnreadableBody(SAVED_MESSAGES);
 
     expectReadActionLogsOfReply();
+    await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE)).toBeTruthy());
     expect(screen.queryByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeNull();
     expect(dataChanged).not.toHaveBeenCalled();
     expect(alertSpy).not.toHaveBeenCalled();
@@ -288,7 +304,8 @@ describe('AIAdvisorSheet — 会話を確定させた後の読み取りの失敗
     expect(dataChanged).toHaveBeenCalledTimes(1);
   });
 
-  it('finalData の前に読み取りが失敗したときは、これまでどおり失敗の Alert を出す', async () => {
+  it('finalData の前に読み取りが失敗したときは、失敗の Alert を出さずに会話を取り直す (#2206 G2。以前は Alert を出して送った文を消した)', async () => {
+    actionLogsRead({ data: [{ status: 'executed' }], error: null });
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -302,12 +319,18 @@ describe('AIAdvisorSheet — 会話を確定させた後の読み取りの失敗
       text: async () => '',
     });
     await openSheet();
+    // 開いた後にサーバーで送った文と返答が保存された (開いたときの会話には無い)
+    serverMessages = SAVED_MESSAGES;
     fireEvent.changeText(screen.getByTestId('ai-input'), SENT_TEXT);
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-send-btn'));
     });
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledTimes(1));
-    expect(alertSpy.mock.calls[0][0]).toBe('エラー');
+    await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
+    const texts = renderedTexts();
+    expect(texts.indexOf(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBe(texts.indexOf(SAVED_REPLY) + 1);
+    expect(screen.getByText(SENT_TEXT)).toBeTruthy();
+    expect(dataChanged).toHaveBeenCalledTimes(1);
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 });

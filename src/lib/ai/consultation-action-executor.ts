@@ -414,6 +414,8 @@ export interface ConsultationActionExecutionResult {
    * やり直しても直らない失敗 (#2195 V2): 権限が無い・対象が無い (他人の行・消えた行)・値が検査に落ちた・入力が空。
    * 何度実行しても同じ失敗が返るので、やり直せる種類でも行を failed にし、画面は「実行する」を出さずに案内を出す
    * (src/lib/ai/consultation-action-lifecycle.ts の aiActionLogStatusAfterRun)。DB の読み書きの失敗 (一時的なことがある) には付けない。
+   * ただし AI が作った値の誤り (id の形の崩れ 22P02・日付の形 22007・存在しない日付 22008・存在しない行への参照 23503。
+   * isMalformedValueError) で読み書きが失敗したときは、同じ値では何度でも同じ失敗になるので付ける (#2201 U4・#2206 G2)。
    * 失敗 (success が偽) のときだけ付く
    */
   notRetryable?: true;
@@ -431,18 +433,31 @@ function isNoRowsError(error: unknown): boolean {
 }
 
 /**
- * PostgreSQL の invalid_text_representation (SQLSTATE 22P02)。uuid の列を AI が作り出した形の崩れた id (UUID の形でない文字列・
- * 数・undefined の文字) で引いた・書いたときに返る。同じ id では何度実行しても同じ失敗になる (#2201 U4)
+ * AI が作った値の誤りで、同じ値では何度実行しても同じ失敗になる PostgreSQL の失敗 (SQLSTATE)。種類 → 理由。
+ * どれも値を直さない限り失敗が繰り返されるだけ (データは壊れない) なので、やり直させない (#2201 U4・#2206 G2)
  */
-const POSTGRES_INVALID_TEXT_REPRESENTATION_CODE = '22P02';
+const POSTGRES_AI_VALUE_ERROR_CODES: ReadonlyMap<string, string> = new Map([
+  // invalid_text_representation: uuid の列を形の崩れた id (UUID の形でない文字列・数・undefined の文字) で引いた・書いた (#2201 U4)
+  ['22P02', 'id の形が崩れている'],
+  // invalid_datetime_format: date・timestamp の列に日付の形でない文字 (例 'abc') を渡した (#2206 G2)
+  ['22007', '日付の形が崩れている'],
+  // datetime_field_value_out_of_range: 形は日付だが存在しない日付 (例 2026-13-45) を渡した (#2206 G2。22007 と同じ型の誤り)
+  ['22008', '存在しない日付'],
+  // foreign_key_violation: 形は正しいが存在しない行 (例 存在しないレシピの id) を指した (#2206 G2)
+  ['23503', '存在しない行を指している'],
+]);
 
-/** 読み書きの失敗が、値の形が崩れていて (id が UUID の形でないなど) やり直しても同じになるものか */
+/**
+ * 読み書きの失敗が、AI が作った値の誤り (id の形の崩れ・日付の形の崩れ・存在しない行への参照) で、やり直しても同じになるものか
+ * (POSTGRES_AI_VALUE_ERROR_CODES)
+ */
 function isMalformedValueError(error: unknown): boolean {
-  return errorCodeOf(error) === POSTGRES_INVALID_TEXT_REPRESENTATION_CODE;
+  const code = errorCodeOf(error);
+  return code !== undefined && POSTGRES_AI_VALUE_ERROR_CODES.has(code);
 }
 
 /**
- * 対象の行の読み取りの失敗が、やり直しても直らないものか: 行が無い (PGRST116) か、id の形が崩れている (22P02)。
+ * 対象の行の読み取りの失敗が、やり直しても直らないものか: 行が無い (PGRST116) か、AI が作った値の誤り (22P02 など。isMalformedValueError)。
  * どちらでもない DB の読み取りの失敗は一時的なことがあるので、やり直せる (notRetryable を付けない)
  */
 function isNotRetryableReadError(error: unknown): boolean {
@@ -900,7 +915,7 @@ export async function runConsultationAction(
       if (mealFetchError) {
         logActionDbFailure(user, action, 'planned_meals.select', mealFetchError);
         result = { error: '食事の取得に失敗しました' };
-        // id の形が崩れている (22P02) と、何度実行しても同じ失敗になる (#2201 U4)。ほかの読み取りの失敗はやり直せる
+        // AI が作った値の誤り (id の形の崩れ 22P02 など。isMalformedValueError) は、何度実行しても同じ失敗になる (#2201 U4・#2206 G2)。ほかの読み取りの失敗はやり直せる
         if (isMalformedValueError(mealFetchError)) notRetryable = true;
         break;
       }
@@ -1029,6 +1044,8 @@ export async function runConsultationAction(
 
       if (updateError) {
         logActionDbFailure(user, action, 'planned_meals.update', updateError);
+        // 書き込みの失敗が AI が作った値の誤り (POSTGRES_AI_VALUE_ERROR_CODES の表。isMalformedValueError) なら、何度実行しても同じ失敗になる (#2206 G2)。ほかの書き込みの失敗はやり直せる
+        if (isMalformedValueError(updateError)) notRetryable = true;
         // 料理画像の 1 回を数えたあと、献立を更新できなかった (AI へは何も送っていない) ので数え戻す (#1149 の数え戻し)
         if (imageUsage?.allowed) await refundAiUsage(user.id, 'meal_image_auto', imageUsage);
         result = { error: '食事の更新に失敗しました' };
@@ -1080,7 +1097,7 @@ export async function runConsultationAction(
 
       if (!meal) {
         result = { error: '権限がありません' };
-        // 読めて 0 行 (他人の献立・消えた献立) と、id の形が崩れている (22P02。#2201 U4) は、やり直しても直らない。
+        // 読めて 0 行 (他人の献立・消えた献立) と、AI が作った値の誤り (22P02 など。#2201 U4・#2206 G2) は、やり直しても直らない。
         // ほかの読み取りの失敗はやり直せる
         if (!mealFetchError || isMalformedValueError(mealFetchError)) notRetryable = true;
         break;
@@ -1220,6 +1237,8 @@ export async function runConsultationAction(
         .update(safeShoppingItemUpdates)
         .eq('id', itemId);
       success = !updateError;
+      // 書き込みの失敗が AI が作った値の誤り (POSTGRES_AI_VALUE_ERROR_CODES の表。isMalformedValueError) なら、何度実行しても同じ失敗になる (#2206 G2)。ほかの書き込みの失敗はやり直せる
+      if (isMalformedValueError(updateError)) notRetryable = true;
       result = { itemId, updated: success };
       break;
     }
@@ -1320,6 +1339,9 @@ export async function runConsultationAction(
       if (insertError) {
         logActionDbFailure(user, action, 'pantry_items.insert', insertError);
         result = { error: '冷蔵庫の食材の追加に失敗しました' };
+        // 賞味期限 (expiration_date は date の列) に AI が日付でない文字・存在しない日付を渡すと 22007・22008 になり、
+        // 何度実行しても同じ失敗になる (#2206 G2。isMalformedValueError)。ほかの書き込みの失敗はやり直せる
+        if (isMalformedValueError(insertError)) notRetryable = true;
       }
       break;
     }
@@ -1366,6 +1388,9 @@ export async function runConsultationAction(
       if (updateError) {
         logActionDbFailure(user, action, 'pantry_items.update', updateError);
         result = { error: '冷蔵庫の食材の更新に失敗しました' };
+        // 賞味期限 (expiration_date は date の列) に AI が日付でない文字・存在しない日付を渡すと 22007・22008 になり、
+        // 何度実行しても同じ失敗になる (#2206 G2。isMalformedValueError)。ほかの書き込みの失敗はやり直せる
+        if (isMalformedValueError(updateError)) notRetryable = true;
       }
       break;
     }
@@ -1446,7 +1471,7 @@ export async function runConsultationAction(
           .insert({ recipe_id: recipeId, user_id: user.id });
         success = !insertError;
         result = { liked: success };
-        // レシピの id の形が崩れている (22P02) と、何度実行しても同じ失敗になる (#2201 U4)
+        // レシピの id の形が崩れている (22P02)・存在しないレシピの id (23503) だと、何度実行しても同じ失敗になる (#2201 U4・#2206 G2)
         if (isMalformedValueError(insertError)) notRetryable = true;
       }
       break;
@@ -1516,7 +1541,7 @@ export async function runConsultationAction(
         if (appendError) {
           logActionDbFailure(user, action, 'recipe_collections.append_recipe_rpc', appendError);
           result = { error: AI_COLLECTION_APPEND_FAILED_MESSAGE };
-          // レシピの id の形が崩れている (22P02) と、何度実行しても同じ失敗になる (#2201 U4)
+          // レシピの id の形が崩れている (22P02)・存在しないレシピの id (23503) だと、何度実行しても同じ失敗になる (#2201 U4・#2206 G2)
           if (isMalformedValueError(appendError)) notRetryable = true;
           break;
         }
@@ -1576,6 +1601,8 @@ export async function runConsultationAction(
           user_id: user.id,
         }, { onConflict: 'user_id' });
       success = !updateError;
+      // 書き込みの失敗が AI が作った値の誤り (POSTGRES_AI_VALUE_ERROR_CODES の表。isMalformedValueError) なら、何度実行しても同じ失敗になる (#2206 G2)。ほかの書き込みの失敗はやり直せる
+      if (isMalformedValueError(updateError)) notRetryable = true;
       result = { updated: success };
       break;
     }
@@ -1616,6 +1643,8 @@ export async function runConsultationAction(
       success = !insertError;
       if (insertError) {
         logActionDbFailure(user, action, 'health_goals.insert', insertError);
+        // 書き込みの失敗が AI が作った値の誤り (POSTGRES_AI_VALUE_ERROR_CODES の表。isMalformedValueError) なら、何度実行しても同じ失敗になる (#2206 G2)。ほかの書き込みの失敗はやり直せる
+        if (isMalformedValueError(insertError)) notRetryable = true;
         result = { error: '健康目標の保存に失敗しました' };
       } else {
         result = { goalId: newGoal?.id, created: success };
@@ -1669,6 +1698,8 @@ export async function runConsultationAction(
         .update(safeUpdates)
         .eq('id', goalId);
       success = !updateError;
+      // 書き込みの失敗が AI が作った値の誤り (POSTGRES_AI_VALUE_ERROR_CODES の表。isMalformedValueError) なら、何度実行しても同じ失敗になる (#2206 G2)。ほかの書き込みの失敗はやり直せる
+      if (isMalformedValueError(updateError)) notRetryable = true;
       result = { goalId, updated: success };
       break;
     }
@@ -1756,6 +1787,8 @@ export async function runConsultationAction(
       success = !upsertError;
       if (upsertError) {
         logActionDbFailure(user, action, 'health_records.upsert', upsertError);
+        // 書き込みの失敗が AI が作った値の誤り (POSTGRES_AI_VALUE_ERROR_CODES の表。isMalformedValueError) なら、何度実行しても同じ失敗になる (#2206 G2)。ほかの書き込みの失敗はやり直せる
+        if (isMalformedValueError(upsertError)) notRetryable = true;
         result = { error: '健康記録の保存に失敗しました' };
       } else {
         // #1048 F2-08: update_health_record 同様、streak・user_profiles も同期する
@@ -1807,6 +1840,8 @@ export async function runConsultationAction(
         .eq('user_id', user.id)
         .eq('record_date', date);
       success = !updateError;
+      // 書き込みの失敗が AI が作った値の誤り (POSTGRES_AI_VALUE_ERROR_CODES の表。isMalformedValueError) なら、何度実行しても同じ失敗になる (#2206 G2)。ほかの書き込みの失敗はやり直せる
+      if (isMalformedValueError(updateError)) notRetryable = true;
       result = { date, updated: success };
       break;
     }
@@ -1836,6 +1871,8 @@ export async function runConsultationAction(
         .update(safeUpdates)
         .eq('id', user.id);
       success = !updateError;
+      // 書き込みの失敗が AI が作った値の誤り (POSTGRES_AI_VALUE_ERROR_CODES の表。isMalformedValueError) なら、何度実行しても同じ失敗になる (#2206 G2)。ほかの書き込みの失敗はやり直せる
+      if (isMalformedValueError(updateError)) notRetryable = true;
       result = { updated: success, fields: Object.keys(safeUpdates) };
       // 書いた後の行からプロフィールの完成度 (profile_completeness) を計算し直す (#2201 U4。PUT /api/profile と同じ計算)。
       // 書かないと、身長・体重などを入れても「プロフィール完成度 X%」と帯が古いまま残る

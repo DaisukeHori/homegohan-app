@@ -13,11 +13,21 @@
  *   - 取り直した会話から、送った文 (送る前には無かった id の user のメッセージで、本文が送った文と同じもの) のすぐ後ろの
  *     AI の返答 (replyToSentMessageOf) を探し、その返答の提案の記録の状態を読む (previousRequestActionStateOf)
  *   - 実行できた行 (executed) があれば、短い一文 (PREVIOUS_REQUEST_EXECUTED_MESSAGE) を足し、データを出す画面に知らせる
- *   - 実行中の印 (approved) の行だけなら、まだ実行している最中か、実行のあとに状態を書き戻せなかったかのどちらか。
- *     実行したとも、していないとも言い切れないので、頼み直しを勧めない一文 (PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE) を足し、
- *     PREVIOUS_REQUEST_RECHECK_DELAY_MS だけ待ってから 1 回だけ記録を読み直す。実行できた行になっていれば、一文を
- *     PREVIOUS_REQUEST_EXECUTED_MESSAGE に置き換えて、データを出す画面に知らせる (#2201 U3。以前は何も出さなかった)
- *   - それ以外 (行が無い・実行を待つ・失敗・断った・記録を読めない) は何も足さない (実行したと言い切れない)
+ *   - 実行中の印 (approved) の行だけなら、まだ実行している最中か、実行のあとに状態を書き戻せなかったかのどちらか
+ *     (失敗・今日の上限で実行しなかった場合もある)。実行したとも、していないとも言い切れないので、結果をまだ確かめられないと
+ *     伝える一文 (PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE。提案のカードの『確かめられませんでした』と同じ考え。頼み直しは勧めない)
+ *     を足し、PREVIOUS_REQUEST_RECHECK_DELAY_MS だけ待ってから 1 回だけ記録を読み直す。実行できた行になっていれば一文を
+ *     PREVIOUS_REQUEST_EXECUTED_MESSAGE に置き換えて、データを出す画面に知らせる (#2201 U3)。実行を待つ・失敗した行になって
+ *     いれば、一文を PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE に置き換える (#2206 G2。以前は『実行中か実行済み』のまま残った)
+ *   - 実行を待つ (pending)・失敗した (failed) 行だけなら、実行していない一文 (PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE) を足す
+ *     (#2206 G2。読み直しで分かったときと同じ文)
+ *   - 行がまだ無い・記録を読めないのに返答に提案がある (GET が提案を返した) ときは、実行中の印と同じく扱う (#2206 G2。
+ *     サーバーは返答を保存してから行を作るので、その間に取り直しが当たると行がまだ無い)
+ *   - それ以外 (行が無い・断った・記録を読めない) は何も足さない (実行したと言い切れない)。記録を読めなかったときは、
+ *     少し待って 1 回だけ読み直す (#2206 G2。実行できていれば一文を足して知らせる)
+ *   - この決まりは previousRequestNotePlanOf (取り直したとき) と previousRequestRecheckPlanOf・
+ *     messagesAfterPreviousRequestRecheck (読み直したとき) の 1 か所で決め、Web とモバイルの画面はその結果を描くだけにする
+ *     (#2206 G2。以前は画面ごとに判定を写していて、Web にだけ足した決まりがモバイルに無かった)
  *
  * このファイルは Web のブラウザとモバイルで読み込む (サーバー・DOM・React Native の依存を import しない)。
  */
@@ -31,16 +41,29 @@ export const PREVIOUS_REQUEST_ACTION_LOG_STATUS = {
   executed: 'executed',
   /** 実行中の印 (実行している最中か、実行のあとに状態を書き戻せなかった) */
   running: 'approved',
+  /** 実行を待つ (自動実行がやり直せる失敗をした・今日の上限や同意で止めた。実行していない) */
+  pending: 'pending',
+  /** 失敗し、やり直せない (実行していない) */
+  failed: 'failed',
 } as const;
 
 /** 応答を受け取れずに取り直した会話で、送った文への返答の提案が実行されていたときに足す一文 */
 export const PREVIOUS_REQUEST_EXECUTED_MESSAGE = '前の依頼は実行されました';
 
 /**
- * 応答を受け取れずに取り直した会話で、送った文への返答の提案の記録が実行中の印のままのときに足す一文。
- * 実行したとも、していないとも言い切れないので、頼み直しを勧めない (頼み直すと献立を二重に作りうる)
+ * 応答を受け取れずに取り直した会話で、送った文への返答の提案の記録が実行中の印のままのときに足す一文 (#2206 G2)。
+ * 実行中の印には、実行している最中・書き戻せなかった成功のほか、失敗・今日の上限で実行しなかった場合もあるので、
+ * 実行したとも、していないとも言い切らない (提案のカードの『実行できたかを確かめられませんでした…開き直してください』と同じ考え)。
+ * 頼み直しは勧めない (頼み直すと献立を二重に作りうる)。以前の『前の依頼は実行中か実行済みです』は、書き戻せなかった失敗でも
+ * 『実行済み』と読めた
  */
-export const PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE = '前の依頼は実行中か実行済みです';
+export const PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE = '前の依頼の結果をまだ確かめられません。しばらくしてから相談を開き直してください。';
+
+/**
+ * 応答を受け取れずに取り直した会話で、送った文への返答の提案の記録が実行を待つ (pending)・失敗した (failed) 行だけのときに
+ * 足す一文 (#2206 G2)。実行していないことは確か。頼み直しは勧めない (実行を待つ提案はカードの「実行する」から実行できる)
+ */
+export const PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE = '前の依頼は実行できませんでした';
 
 /**
  * 記録が実行中の印のままだったときに、記録を 1 回だけ読み直すまでの待ち (ミリ秒)。
@@ -52,11 +75,18 @@ export const PREVIOUS_REQUEST_RECHECK_DELAY_MS = 10_000;
 
 /**
  * 送った文への返答の提案の記録の状態。
- * executed = 実行できた行がある / running = 実行中の印の行だけがある (実行できた行は無い) / none = それ以外・読めない
+ * executed = 実行できた行がある / running = 実行中の印の行がある (実行できた行は無い) /
+ * notExecuted = 実行を待つ・失敗した行だけがある (#2206 G2) / none = それ以外 (行が無い・断った)・読めない
  */
-export type PreviousRequestActionState = 'executed' | 'running' | 'none';
+export type PreviousRequestActionState = 'executed' | 'running' | 'notExecuted' | 'none';
 
-/** 提案の記録の行 (status を持つもの) から、前の依頼の状態を決める。配列でない・status が無い行は数えない */
+/** 一文を足す状態 (none のときは足さない) */
+export type PreviousRequestNoteState = Exclude<PreviousRequestActionState, 'none'>;
+
+/**
+ * 提案の記録の行 (status を持つもの) から、前の依頼の状態を決める。配列でない・status が無い行は数えない。
+ * 実行できた > 実行中の印 > 実行を待つ・失敗 の順 (どれかが実行できていれば、頼み直すと二重になる)
+ */
 export function previousRequestActionStateOf(rows: unknown): PreviousRequestActionState {
   if (!Array.isArray(rows)) return 'none';
   const statuses = rows.map((row: unknown) =>
@@ -64,6 +94,12 @@ export function previousRequestActionStateOf(rows: unknown): PreviousRequestActi
   );
   if (statuses.includes(PREVIOUS_REQUEST_ACTION_LOG_STATUS.executed)) return 'executed';
   if (statuses.includes(PREVIOUS_REQUEST_ACTION_LOG_STATUS.running)) return 'running';
+  if (
+    statuses.includes(PREVIOUS_REQUEST_ACTION_LOG_STATUS.pending) ||
+    statuses.includes(PREVIOUS_REQUEST_ACTION_LOG_STATUS.failed)
+  ) {
+    return 'notExecuted';
+  }
   return 'none';
 }
 
@@ -80,13 +116,18 @@ export type SentText = {
 
 /**
  * 取り直した会話の中の、送った文の位置 (無ければ -1)。
- * 送った文 = 送る前には無かった id の user のメッセージで、本文が送った文と同じもの
+ * 送った文 = 送る前には無かった id の user のメッセージで、本文が送った文と同じもののうち、いちばん後ろのもの。
+ * 前の送信が時間切れで確かめられず (画面には保存された id が無い)、同じ文を送り直したときは、前の送信の保存行も
+ * 「送る前には無かった id」に入る。先頭から探すと前の送信を今回の送信と取り違え、前の返答の結果を出していた (#2206 G2)。
+ * サーバーは作成順に返すので、今回の送信はいちばん後ろにある
  */
 export function sentMessageIndexOf(sent: SentText, loaded: readonly ReloadedMessage[]): number {
   const known = new Set(sent.knownMessageIds);
-  return loaded.findIndex(
-    (message) => message.role === 'user' && !known.has(message.id) && message.content.trim() === sent.text,
-  );
+  for (let index = loaded.length - 1; index >= 0; index -= 1) {
+    const message = loaded[index];
+    if (message.role === 'user' && !known.has(message.id) && message.content.trim() === sent.text) return index;
+  }
+  return -1;
 }
 
 /**
@@ -95,21 +136,168 @@ export function sentMessageIndexOf(sent: SentText, loaded: readonly ReloadedMess
  * (別の依頼への返答を「前の依頼」として扱わない)
  */
 export function replyToSentMessageOf<T extends ReloadedMessage>(sent: SentText, loaded: readonly T[]): T | null {
-  const sentIndex = sentMessageIndexOf(sent, loaded);
-  if (sentIndex < 0) return null;
-  for (const message of loaded.slice(sentIndex + 1)) {
+  return replyAfterUserMessageAt(sentMessageIndexOf(sent, loaded), loaded);
+}
+
+/**
+ * 取り直した会話の中の、id が userMessageId の user のメッセージへの AI の返答 (すぐ後ろの assistant のメッセージ。
+ * 返答の前に別の user のメッセージがあれば null)。その user のメッセージが無い・返答がまだ無いときも null。
+ * 送った文の保存行の id が分かったあと (一度取り直して、届いているが返答がまだ無いと分かったあとの読み直し) は、本文の一致
+ * (replyToSentMessageOf) で探さずにこの id で探す。本文で探すと、待つ間に同じ文を送り直したとき、後の送信 (いちばん後ろの一致) と
+ * その返答を前の送信の返答と取り違える (#2206 G2)
+ */
+export function replyToUserMessageIdOf<T extends ReloadedMessage>(userMessageId: string, loaded: readonly T[]): T | null {
+  return replyAfterUserMessageAt(
+    loaded.findIndex((message) => message.role === 'user' && message.id === userMessageId),
+    loaded,
+  );
+}
+
+/** loaded の index の user のメッセージのすぐ後ろの assistant のメッセージ (index が負・返答の前に別の user のメッセージ・返答が無い → null) */
+function replyAfterUserMessageAt<T extends ReloadedMessage>(index: number, loaded: readonly T[]): T | null {
+  if (index < 0) return null;
+  for (const message of loaded.slice(index + 1)) {
     if (message.role === 'assistant') return message;
     if (message.role === 'user') return null;
   }
   return null;
 }
 
-/** 前の依頼の結果の一文の id (同じ返答の結果は 1 つ。実行中の一文は、実行できたと分かったらこの id の一文に置き換える) */
-export function previousRequestNoteIdOf(state: Exclude<PreviousRequestActionState, 'none'>, replyId: string): string {
-  return state === 'executed' ? `action-result-${replyId}` : `action-running-${replyId}`;
+/**
+ * 取り直した会話から、送った文が届いていたか・返答があるかを決める (Web とモバイルの取り直しで共有する。#2206 G2)。
+ * replied = 送った文への返答 (replyToSentMessageOf) がある / delivered-no-reply = 送った文はあるが返答がまだ無い /
+ * not-delivered = 送った文が無い
+ */
+export type SentMessageReloadOutcome = 'replied' | 'delivered-no-reply' | 'not-delivered';
+
+export function sentMessageReloadOutcomeOf(sent: SentText, loaded: readonly ReloadedMessage[]): SentMessageReloadOutcome {
+  if (sentMessageIndexOf(sent, loaded) < 0) return 'not-delivered';
+  return replyToSentMessageOf(sent, loaded) ? 'replied' : 'delivered-no-reply';
+}
+
+/**
+ * 前の依頼の結果の一文の id (同じ返答の結果は 1 つ。実行中の一文は、読み直して分かったらこの id の一文に置き換える)。
+ * 実行できた・実行していないの id は、自動実行の結果の一文 (action-result-・action-failed-) と同じ形
+ */
+export function previousRequestNoteIdOf(state: PreviousRequestNoteState, replyId: string): string {
+  if (state === 'executed') return `action-result-${replyId}`;
+  if (state === 'notExecuted') return `action-failed-${replyId}`;
+  return `action-running-${replyId}`;
 }
 
 /** 前の依頼の状態から、足す一文 (none のときは足さないので、ここには渡さない) */
-export function previousRequestNoteTextOf(state: Exclude<PreviousRequestActionState, 'none'>): string {
-  return state === 'executed' ? PREVIOUS_REQUEST_EXECUTED_MESSAGE : PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE;
+export function previousRequestNoteTextOf(state: PreviousRequestNoteState): string {
+  if (state === 'executed') return PREVIOUS_REQUEST_EXECUTED_MESSAGE;
+  if (state === 'notExecuted') return PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE;
+  return PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE;
+}
+
+/**
+ * 取り直した会話の返答に、提案があるか (会話の GET の proposedActions。#2206 G2)。
+ * GET は実行できた提案・提案の無い返答・断った提案を null で返し、それ以外 (実行を待つ・失敗・実行中の印・行がまだ無い) は
+ * 提案を返す。Web とモバイルで同じ決まりにするため、ここで読む
+ */
+export function replyHasProposalOf(reply: { proposedActions?: unknown }): boolean {
+  return Boolean(reply.proposedActions);
+}
+
+/** 返答の提案の記録を読んだ結果 (Web とモバイルの読み取りが返す。#2206 G2) */
+export type PreviousRequestActionRead = {
+  /** 記録の行から決めた状態 (previousRequestActionStateOf。読めなかったときは none) */
+  state: PreviousRequestActionState;
+  /** 記録を読めなかったか (行が無いのと分ける) */
+  readFailed: boolean;
+};
+
+/** 取り直した返答に、前の依頼の一文をどう出すか (previousRequestNotePlanOf の結果) */
+export type PreviousRequestNotePlan = {
+  /** 返答の提案の状態。記録の行が無い・読めないのに返答に提案があるときは running (Web はこの状態で提案のカードを決める) */
+  state: PreviousRequestActionState;
+  /** 返答のすぐ後に足す一文の状態 (足さないときは null) */
+  noteState: PreviousRequestNoteState | null;
+  /** データを出す画面に知らせるか (実行できたとき) */
+  notifyDataChanged: boolean;
+  /** PREVIOUS_REQUEST_RECHECK_DELAY_MS 待ってから記録を 1 回だけ読み直すか (結果は previousRequestRecheckPlanOf で当てる) */
+  recheck: boolean;
+};
+
+/**
+ * 取り直した返答 (送った文への返答) の提案の記録を読んだ結果から、足す一文・知らせるか・読み直すかを決める
+ * (Web の AIChatBubble とモバイルの AIAdvisorSheet が共有する。画面はこの結果を描くだけにする。#2206 G2)。
+ *   - 記録の行が無い・読めないのに返答に提案がある (replyHasProposal): 実行中の印 (running) と同じく扱う。
+ *     サーバー (messages の route) は返答を保存してから提案の記録の行を作るので、その間 (数十 ms) に取り直しが当たると行がまだ無い。
+ *     ここで何も出さないと、あとで自動実行 (献立の生成など) が済んでも一文もデータの取り直しも出ない
+ *   - 実行中の印 (running): 結果をまだ確かめられない一文を足し、1 回だけ読み直す
+ *   - 実行できた (executed): 実行できた一文を足し、データを出す画面に知らせる
+ *   - 実行を待つ・失敗 (notExecuted): 実行していない一文を足す
+ *   - 行が無い・断った (none) で提案も無い: 何も足さない。ただし記録を読めなかった (readFailed) ときは、一文を足さずに
+ *     1 回だけ読み直す (GET は実行できた提案を出さないので、読めないと実行できたかが分からない)
+ */
+export function previousRequestNotePlanOf(input: {
+  actionState: PreviousRequestActionState;
+  readFailed: boolean;
+  replyHasProposal: boolean;
+}): PreviousRequestNotePlan {
+  const state: PreviousRequestActionState =
+    input.actionState === 'none' && input.replyHasProposal ? 'running' : input.actionState;
+  if (state === 'none') return { state, noteState: null, notifyDataChanged: false, recheck: input.readFailed };
+  return { state, noteState: state, notifyDataChanged: state === 'executed', recheck: state === 'running' };
+}
+
+/** 読み直しで実行中の一文を置き換える状態 (実行中の印のままなら置き換えない) */
+export type PreviousRequestSettledNoteState = Exclude<PreviousRequestNoteState, 'running'>;
+
+/** 1 回の読み直しの結果をどう当てるか (previousRequestRecheckPlanOf の結果) */
+export type PreviousRequestRecheckPlan = {
+  /** 実行中の一文を置き換える一文の状態 (何もしないときは null) */
+  noteState: PreviousRequestSettledNoteState | null;
+  /** 実行中の一文が無いとき (記録を読めずに一文を出さなかったとき)、返答のすぐ後に一文を足すか */
+  addNoteIfMissing: boolean;
+  /** データを出す画面に知らせるか */
+  notifyDataChanged: boolean;
+};
+
+/**
+ * 前の依頼の記録を 1 回読み直した状態から、一文をどうするかを決める (Web とモバイルで共有する。#2201 U3・#2206 G2)。
+ *   - 実行できた: 実行中の一文を『前の依頼は実行されました』に置き換える。一文が無ければ (記録を読めずに一文を出さなかった)
+ *     返答のすぐ後に足す。データを出す画面に知らせる
+ *   - 実行を待つ・失敗: 実行中の一文を『前の依頼は実行できませんでした』に置き換える (一文が無ければ足さない)
+ *   - まだ実行中の印のまま・行が無い・読めない: 何もしない (一文はそのまま。頼み直しを勧めない。読み直しは 1 回だけ)
+ */
+export function previousRequestRecheckPlanOf(state: PreviousRequestActionState): PreviousRequestRecheckPlan {
+  if (state === 'executed') return { noteState: 'executed', addNoteIfMissing: true, notifyDataChanged: true };
+  if (state === 'notExecuted') return { noteState: 'notExecuted', addNoteIfMissing: false, notifyDataChanged: false };
+  return { noteState: null, addNoteIfMissing: false, notifyDataChanged: false };
+}
+
+/**
+ * 読み直しの結果 (plan) を、画面のメッセージの一覧に当てる (Web とモバイルで共有する。#2206 G2)。
+ *   - 実行中の一文 (previousRequestNoteIdOf('running', replyId)) があれば、plan.noteState の一文 (noteOf) に置き換える
+ *   - 無ければ、plan.addNoteIfMissing のときだけ返答 (replyId) のすぐ後に足す (同じ一文がすでにあれば足さない)
+ *   - 一文を置き換える・足すときは、返答に updateReply を当てる (Web の提案のカード。モバイルは渡さない)
+ * 何も変えないとき (plan.noteState が null・実行中の一文も足す先の返答も無い) は、渡された一覧をそのまま返す
+ * (別の相談に切り替えていれば、一文も返答も今の会話に無いので触らない)
+ */
+export function messagesAfterPreviousRequestRecheck<T extends { id: string }>(
+  messages: T[],
+  params: {
+    replyId: string;
+    plan: PreviousRequestRecheckPlan;
+    noteOf: (state: PreviousRequestSettledNoteState) => T;
+    updateReply?: (reply: T) => T;
+  },
+): T[] {
+  const { replyId, plan, noteOf, updateReply } = params;
+  if (plan.noteState === null) return messages;
+  const runningNoteId = previousRequestNoteIdOf('running', replyId);
+  const hasRunningNote = messages.some((m) => m.id === runningNoteId);
+  if (!hasRunningNote && !(plan.addNoteIfMissing && messages.some((m) => m.id === replyId))) return messages;
+  const note = noteOf(plan.noteState);
+  const hasNote = hasRunningNote || messages.some((m) => m.id === note.id);
+  return messages.flatMap((m) => {
+    if (m.id === runningNoteId) return [note];
+    if (m.id !== replyId) return [m];
+    const reply = updateReply ? updateReply(m) : m;
+    return hasNote ? [reply] : [reply, note];
+  });
 }
