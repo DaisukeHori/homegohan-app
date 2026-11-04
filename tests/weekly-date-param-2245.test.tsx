@@ -119,7 +119,7 @@ const UNAVAILABLE_WEEK_LABEL = `表示中の週（${SHOPPING_RANGE_CURRENT_WEEK_
 /** 買い物リストを作る依頼の道 */
 const REGENERATE_PATH = '/api/shopping-list/regenerate';
 
-let fetchCalls: { path: string; method: string }[];
+let fetchCalls: { path: string; method: string; range: string | null }[];
 
 function jsonResponse(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -166,7 +166,9 @@ function installFakeServer() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: { method?: string }) => {
     const url = new URL(typeof input === 'string' ? input : input.toString(), PAGE_ORIGIN);
     const method = (init?.method ?? 'GET').toUpperCase();
-    fetchCalls.push({ path: url.pathname, method });
+    const startDate = url.searchParams.get('startDate');
+    const endDate = url.searchParams.get('endDate');
+    fetchCalls.push({ path: url.pathname, method, range: startDate !== null && endDate !== null ? `${startDate}..${endDate}` : null });
     // 祝日の一覧 (外の API) は、この検査では祝日なし
     if (url.origin !== PAGE_ORIGIN) return jsonResponse({});
     switch (url.pathname) {
@@ -279,6 +281,11 @@ function nextButton(modal: HTMLElement): HTMLButtonElement {
 /** 献立表が選んでいる日 (AI 相談の 1 日分の献立の既定の日に渡す、表示中の週の選んだ日の日付) */
 const selectedDay = () => window.__weeklyCurrentDate;
 
+/** 読んだ献立の範囲 (GET /api/meal-plans の startDate..endDate。表示中の週の 7 日の読み込みはこの中にある) */
+const mealPlanRangesRead = () => fetchCalls.filter((call) => call.path === '/api/meal-plans').map((call) => call.range);
+/** 今日の週 (月曜始まり) の 7 日の範囲 */
+const TODAY_WEEK_RANGE = '2026-11-02..2026-11-08';
+
 /** 正しくない ?date= (どれも今日の週のまま開く。直す前は、その日の週へ移るか、範囲を選ぶ欄が落ちた) */
 const REJECTED_DATE_PARAMS: readonly { value: string; why: string }[] = [
   { value: '9999-12-31', why: '暦の計算で扱える最後の日 (直す前は 9999-12-27 の週へ移り、範囲を選ぶ欄が RangeError で落ちた)' },
@@ -292,6 +299,7 @@ describe('/menus/weekly の ?date= は isCalendarDate を通ったときだけ�
     it(`?date=${value} (${why}) は使わず、今日の週を開く。範囲を選ぶ欄も今日の週を出す`, async () => {
       await renderWeeklyPage({ date: value });
       expect(selectedDay()).toBe(TODAY);
+      expect(mealPlanRangesRead()).toContain(TODAY_WEEK_RANGE);
       const modal = await openShoppingRangeModal();
       expect(currentWeekOption(modal).textContent).toBe(TODAY_WEEK_LABEL);
       expect(currentWeekOption(modal).disabled).toBe(false);
@@ -300,7 +308,9 @@ describe('/menus/weekly の ?date= は isCalendarDate を通ったときだけ�
 
   it(`?date=${CALENDAR_DATE_MAX} (CALENDAR_DATE_MAX) は使う。その週の終わりは扱える日付の外なので、範囲を選ぶ欄は「表示中の週」を選べなくする`, async () => {
     await renderWeeklyPage({ date: CALENDAR_DATE_MAX });
-    expect(selectedDay()).toBe(CALENDAR_DATE_MAX);
+    // CALENDAR_DATE_MAX (9998-12-30 (水)) を含む週 (月曜始まり) の 7 日を読む
+    expect(mealPlanRangesRead()).toContain('9998-12-28..9999-01-03');
+    expect(mealPlanRangesRead()).not.toContain(TODAY_WEEK_RANGE);
     const modal = await openShoppingRangeModal();
     expect(currentWeekOption(modal).textContent).toBe(UNAVAILABLE_WEEK_LABEL);
     expect(currentWeekOption(modal).disabled).toBe(true);
@@ -317,7 +327,7 @@ describe('/menus/weekly の ?date= は isCalendarDate を通ったときだけ�
 
   it('正しい ?date= (2026-12-31) はその日の週を開き、範囲を選ぶ欄はその週の 7 日を出す', async () => {
     await renderWeeklyPage({ date: '2026-12-31' });
-    expect(selectedDay()).toBe('2026-12-31');
+    expect(mealPlanRangesRead()).toContain('2026-12-28..2027-01-03');
     const modal = await openShoppingRangeModal();
     expect(currentWeekOption(modal).textContent).toBe('表示中の週（12月28日〜1月3日）');
   });
