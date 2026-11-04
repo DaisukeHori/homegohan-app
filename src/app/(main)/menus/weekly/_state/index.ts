@@ -3,8 +3,10 @@ export { useFormDraftStore } from './formDraftStore';
 export { usePantryStore } from './pantryStore';
 export { useShoppingStore } from './shoppingStore';
 export {
+  SHOPPING_RANGE_CURRENT_WEEK_UNAVAILABLE_LABEL,
   SHOPPING_RANGE_DAYS_MAX,
   SHOPPING_RANGE_DAYS_MIN,
+  SHOPPING_RANGE_UNAVAILABLE_MESSAGE,
   clampShoppingRangeDays,
   shoppingRangeDates,
   shoppingRangeRequest,

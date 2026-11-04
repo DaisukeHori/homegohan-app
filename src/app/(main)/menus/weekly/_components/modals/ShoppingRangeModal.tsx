@@ -11,6 +11,7 @@ import { SERVINGS_MEAL_SHORT_LABELS } from "@/lib/meal-type-visuals";
 import {
   useShoppingStore,
   useServingsConfigStore,
+  SHOPPING_RANGE_CURRENT_WEEK_UNAVAILABLE_LABEL,
   SHOPPING_RANGE_DAYS_MAX,
   SHOPPING_RANGE_DAYS_MIN,
   clampShoppingRangeDays,
@@ -69,7 +70,9 @@ export function ShoppingRangeModal({
   const dayAfterStr = shoppingRangeDates('dayAfterTomorrow', rangeBasis).startDate;
   const daysEndStr = shoppingRangeDates('days', rangeBasis).endDate;
   const weekEndStr = shoppingRangeDates('week', rangeBasis).endDate;
-  const { startDate: currentWeekStartStr, endDate: currentWeekEndStr } = shoppingRangeDates('currentWeek', rangeBasis);
+  // 表示中の週が扱える日付の外 (?date= や週送りで暦の端まで動かした週) なら null。この選択肢は選べなくし、選んであれば次へ進めない (#2245 K4)
+  const currentWeekRange = shoppingRangeDates('currentWeek', rangeBasis);
+  const isSelectedRangeUnavailable = shoppingRange.type === 'currentWeek' && currentWeekRange === null;
 
   // #1052 (体系的 a11y): ステップにより見出しが変わるため aria-labelledby ではなく
   // 動的な aria-label を使う。
@@ -221,7 +224,8 @@ export function ShoppingRangeModal({
             {/* 表示中の週（UX2-09: 今日起点ではなく、カレンダーで開いている週） */}
             <button
               onClick={() => setShoppingRange({ ...shoppingRange, type: 'currentWeek' })}
-              className="w-full p-3 rounded-xl flex items-center justify-between transition-colors"
+              disabled={currentWeekRange === null}
+              className="w-full p-3 rounded-xl flex items-center justify-between transition-colors disabled:opacity-50"
               style={{
                 background: shoppingRange.type === 'currentWeek' ? colors.accent : colors.bg,
                 border: `1px solid ${shoppingRange.type === 'currentWeek' ? colors.accent : colors.border}`
@@ -229,7 +233,9 @@ export function ShoppingRangeModal({
             >
               <span style={{ fontSize: 14, fontWeight: 500, color: shoppingRange.type === 'currentWeek' ? '#fff' : colors.text }}>
                 表示中の週
-                <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>（{formatDateRangeLabel(currentWeekStartStr, currentWeekEndStr)}）</span>
+                <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 6, opacity: 0.8 }}>
+                  （{currentWeekRange === null ? SHOPPING_RANGE_CURRENT_WEEK_UNAVAILABLE_LABEL : formatDateRangeLabel(currentWeekRange.startDate, currentWeekRange.endDate)}）
+                </span>
               </span>
             </button>
 
@@ -285,7 +291,7 @@ export function ShoppingRangeModal({
           {/* 次へボタン */}
           <button
             onClick={() => setShoppingRangeStep('servings')}
-            disabled={shoppingRange.type === 'today' && shoppingRange.todayMeals.length === 0}
+            disabled={(shoppingRange.type === 'today' && shoppingRange.todayMeals.length === 0) || isSelectedRangeUnavailable}
             className="w-full mt-4 p-3.5 rounded-xl font-semibold text-[14px] disabled:opacity-50 flex items-center justify-center gap-2"
             style={{ background: colors.accent, color: '#fff' }}
           >
