@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import type { Tables } from '@homegohan/shared';
 import { internalError } from '@/lib/api/errors';
-import { isCalendarDate } from '@/lib/jst-day-ranges';
+import { isCalendarDate, jstToday } from '@/lib/jst-day-ranges';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages';
 
@@ -126,7 +126,8 @@ export async function GET(request: Request) {
   }
 
   const csv = rows.join('\r\n');
-  const today = new Date().toISOString().slice(0, 10);
+  // ファイル名の日付は JST の今日 (実行環境は UTC なので、toISOString だと JST の 0:00〜8:59 は前日になる。#2245 K3)
+  const today = jstToday();
   const filename = `homegohan-meals-${today}.csv`;
 
   return new Response(csv, {

@@ -11,7 +11,9 @@
 //
 // 本番コード (テストを除く) を TypeScript の構文木で読み (コメントや文字列の中は見ない)、次を検出する:
 //   規則 A: 今の時刻 (`new Date()` / `new Date(Date.now() ...)`) を toISOString して、先頭 10 文字 (slice / substring / substr) か
-//           split('T')[0] で日付にする
+//           split('T')[0] で日付にする。同じファイルで今の時刻を入れた変数 (`const now = new Date()`) と、既定値が今の時刻の引数
+//           (`function f(date: Date = new Date())`) を切り出す形も数える (#2245 K3。書き出しのファイル名の日付。
+//           setDate / setUTCDate などの set で始まるメソッドを当てた変数は、規則 E と UTC の暦の計算に任せて数えない)
 //   規則 B: 今の時刻 (`new Date()`) の月・日・曜日・年をローカル時刻で読む (`new Date().getMonth()` など)
 //   規則 C: supabase/functions の中で、ローカル時刻の Date のメソッド (getDate / setDate / getDay / getMonth など) を使う
 //   規則 D: ローカル時刻の年・月・日から作った Date (`new Date(y, m, d)` のように引数が 2 つ以上) を toISOString する
@@ -183,6 +185,9 @@ const END_OF_DAY_TIME_SUFFIX = 'T23:59:59';
 /** ローカル時刻を動かす Date の setter (規則 E) */
 const LOCAL_TIME_SETTERS = new Set(['setDate', 'setMonth', 'setFullYear', 'setHours']);
 
+/** Date を動かすメソッドの名前の頭 (setDate / setUTCDate / setTime など。規則 A で、今の時刻から動かした変数を除くため) */
+const DATE_SETTER_PREFIX = 'set';
+
 /**
  * node が「toISOString した文字列から日付を取り出す式」なら、toISOString の receiver を返す。
  *   - <receiver>.toISOString().slice(0, 10) / substring(0, 10) / substr(0, 10)
@@ -226,23 +231,42 @@ function isLocalComponentDate(node: ts.Expression): boolean {
 }
 
 /** ファイルの中で、規則 D・E が追う変数の名前を集める */
-function collectTrackedDateNames(sf: ts.SourceFile): { localComponent: Set<string>; locallyMutated: Set<string> } {
+function collectTrackedDateNames(sf: ts.SourceFile): {
+  localComponent: Set<string>;
+  locallyMutated: Set<string>;
+  nowValued: Set<string>;
+  anySetterTarget: Set<string>;
+} {
   const localComponent = new Set<string>();
   const locallyMutated = new Set<string>();
+  const nowValued = new Set<string>();
+  const anySetterTarget = new Set<string>();
   const visit = (node: ts.Node) => {
     // const d = new Date(y, m, d)
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && isLocalComponentDate(node.initializer)) {
       localComponent.add(node.name.text);
     }
-    // d.setDate(...) など
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && LOCAL_TIME_SETTERS.has(node.expression.name.text)) {
+    // const now = new Date() / function f(date: Date = new Date()) (規則 A)
+    if (
+      (ts.isVariableDeclaration(node) || ts.isParameter(node)) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      isNowDate(node.initializer)
+    ) {
+      nowValued.add(node.name.text);
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
       const target = skipParens(node.expression.expression);
-      if (ts.isIdentifier(target)) locallyMutated.add(target.text);
+      const method = node.expression.name.text;
+      // d.setDate(...) など
+      if (LOCAL_TIME_SETTERS.has(method) && ts.isIdentifier(target)) locallyMutated.add(target.text);
+      // d.setUTCDate(...) も含む、set で始まるメソッド (規則 A で、今の時刻から動かした変数を数えないため)
+      if (method.startsWith(DATE_SETTER_PREFIX) && ts.isIdentifier(target)) anySetterTarget.add(target.text);
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
-  return { localComponent, locallyMutated };
+  return { localComponent, locallyMutated, nowValued, anySetterTarget };
 }
 
 /** 名前が timestamptz の列の印になる接尾辞 (規則 G・H)。created_at / sent_at / expires_at など */
@@ -488,8 +512,14 @@ function scanSource(file: string, source: string): Finding[] {
 
   const visit = (node: ts.Node) => {
     // 規則 A: <now>.toISOString().slice(0, 10) / substring(0, 10) / substr(0, 10) / split('T')[0]
+    // (今の時刻を入れた変数・既定値が今の時刻の引数も。set で始まるメソッドで動かしたものは除く)
     const datePartReceiver = datePartOfIsoReceiver(node);
-    if (datePartReceiver && isNowDate(datePartReceiver)) push('A', node);
+    if (datePartReceiver) {
+      const receiver = skipParens(datePartReceiver);
+      const isNowValuedName =
+        ts.isIdentifier(receiver) && tracked.nowValued.has(receiver.text) && !tracked.anySetterTarget.has(receiver.text);
+      if (isNowDate(receiver) || isNowValuedName) push('A', node);
+    }
     // 規則 E: ローカル時刻の setter を当てた変数を toISOString して日付にする
     if (datePartReceiver) {
       const receiver = skipParens(datePartReceiver);
@@ -598,42 +628,8 @@ const LOCAL_TIME_METHODS = new Set([
  * 画面から呼ばれない (期間を送る呼び出し元が無い) API。画面から期間を選べるようにするときは、許可リストから外して直す。
  */
 const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason: string }> = [
-  {
-    file: 'src/app/api/admin/finance/exports/route.ts',
-    rule: 'A',
-    count: 4,
-    reason: 'CSV のダウンロードのファイル名の日付。DB の日付と比べない。ファイル名は他のエクスポートと同じく UTC の日付にそろえている',
-  },
-  {
-    file: 'src/app/api/super-admin/audit-logs/route.ts',
-    rule: 'A',
-    count: 1,
-    reason: 'CSV のダウンロードのファイル名の日付 (UTC の日付にそろえている)',
-  },
-  {
-    file: 'src/app/super-admin/audit-logs/page.tsx',
-    rule: 'A',
-    count: 1,
-    reason: 'CSV のダウンロードのファイル名の日付 (UTC の日付にそろえている)',
-  },
-  {
-    file: 'src/app/api/export/meals/route.ts',
-    rule: 'A',
-    count: 1,
-    reason: '食事の CSV のファイル名の日付。個人データの JSON (buildExportFilename・UTC の日付を tests/account-export.test.ts が固定) とそろえている',
-  },
-  {
-    file: 'src/app/(main)/settings/page.tsx',
-    rule: 'A',
-    count: 1,
-    reason: 'エクスポートのファイル名の日付。API が付けるファイル名 (UTC の日付) とそろえている (JSON の分は src/lib/account-self-service.ts へ移した。#1445)',
-  },
-  {
-    file: 'apps/mobile/app/(tabs)/settings.tsx',
-    rule: 'A',
-    count: 2,
-    reason: 'エクスポートのファイル名の日付。API が付けるファイル名 (UTC の日付) とそろえている',
-  },
+  // (書き出しのファイル名の日付 (finance/exports・監査ログの CSV・献立の CSV・設定の画面の書き出し) は、
+  //  以前は UTC の日付にそろえて規則 A の例外にしていた。#2245 K3 で JST の今日にそろえたので、例外から外した)
   {
     file: 'src/app/(main)/settings/page.tsx',
     rule: 'B',
@@ -750,6 +746,11 @@ describe('走査そのもの', () => {
     ['const t = new Date().toISOString().substring(0, 10);', 'A'],
     ['const t = (new Date()).toISOString().slice(0, 10);', 'A'],
     ['const t = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);', 'A'],
+    // #2245 K3: 今の時刻を入れた変数・既定値が今の時刻の引数 (書き出しのファイル名の buildExportFilename の以前の書き方)
+    ['const now = new Date();\nconst t = now.toISOString().slice(0, 10);', 'A'],
+    ["const now = new Date(Date.now());\nconst t = now.toISOString().split('T')[0];", 'A'],
+    ['function f(date: Date = new Date()): string {\n  return `x-${date.toISOString().slice(0, 10)}.json`;\n}', 'A'],
+    ['const f = (date = new Date()) => date.toISOString().substring(0, 10);', 'A'],
     ['const m = new Date().getMonth() + 1;', 'B'],
     // 規則 D: ローカル時刻の年・月・日から作った Date の toISOString (#1433 の finance/dashboard の書き方。複数行のチェーンでも)
     ['const s = new Date(today.getFullYear(), today.getMonth(), 1)\n  .toISOString()\n  .slice(0, 10);', 'D'],
@@ -824,6 +825,10 @@ describe('走査そのもの', () => {
     'const d = new Date(Date.now()); d.setUTCDate(d.getUTCDate() - 7); const s = d.toISOString().slice(0, 10);', // UTC の setter
     'const d = new Date(); d.setDate(d.getDate() + 30); const at = d.toISOString();', // 時刻 (timestamptz) のまま使う
     "// .lte('created_at', to + 'T23:59:59Z')", // コメントの中の 'T23:59:59' は見ない
+    // #2245 K3: 既定値が今の時刻の引数・今の時刻を入れた変数でも、JST の関数で日付にするなら数えない
+    'function f(date: Date = new Date()): string {\n  return `x-${jstToday(date)}.json`;\n}',
+    'const now = new Date();\nconst at = now.toISOString();', // 時刻 (timestamptz) のまま使う
+    'function f(date: Date = base): string {\n  return date.toISOString().slice(0, 10);\n}', // 既定値が今の時刻ではない
     // 規則 G: JST の暦日から作った時刻で絞る
     "const { fromTimestamp, toTimestampExclusive } = jstOptionalDayRangeTimestamps(from, to); q = q.gte('created_at', fromTimestamp).lt('created_at', toTimestampExclusive);",
     "const { fromTimestamp: start } = jstDayRangeTimestamps(a, b); q = q.gte('created_at', start);", // 分割代入で名前を変えても
@@ -993,7 +998,8 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/api/health/records/history/route.ts': ['jstDayOffset'],
   'src/app/api/health/streaks/route.ts': ['addDaysToDate'],
   'src/lib/health-streaks.ts': ['addDaysToDate'],
-  'src/app/api/export/meals/route.ts': ['isCalendarDate'],
+  // #2245 K3: 献立の CSV のファイル名の日付は JST の今日
+  'src/app/api/export/meals/route.ts': ['isCalendarDate', 'jstToday'],
   'src/app/api/shopping-list/regenerate/route.ts': ['isCalendarDate', 'addDaysToDate'],
   'src/app/api/meal-plans/route.ts': ['mondayWeekRange'],
   'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts': ['addDaysToDate', 'mondayWeekRange'],
@@ -1005,11 +1011,13 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   // (created_at AT TIME ZONE 'Asia/Tokyo')::date。tests/llm-usage-summary-contract.test.ts と実 DB の
   // tests/integration/security/llm-usage-summary.test.ts が確かめる)。route は期間を JST 0 時の時刻に直して渡す
   'src/app/api/super-admin/llm/usage/route.ts': ['llmUsageRange', 'jstDayRangeTimestamps'],
-  'src/app/api/super-admin/audit-logs/route.ts': ['jstOptionalDayRangeTimestamps'],
+  'src/app/api/super-admin/audit-logs/route.ts': ['jstOptionalDayRangeTimestamps', 'jstToday'],
   'src/app/api/operator/membership/audit/route.ts': ['jstOptionalDayRangeTimestamps'],
   'src/app/api/admin/finance/dashboard/route.ts': ['jstMonthBoundaries'],
   'src/app/api/admin/finance/nps/route.ts': ['jstOptionalDayRangeTimestamps', 'jstDayEndInclusiveTimestamp'],
-  'src/app/api/admin/finance/exports/route.ts': ['jstOptionalDayRangeTimestamps'],
+  'src/app/api/admin/finance/exports/route.ts': ['jstOptionalDayRangeTimestamps', 'jstToday'],
+  // #2245 K3: 個人データの JSON の書き出しのファイル名の日付は JST の暦日
+  'src/lib/account-export.ts': ['jstToday'],
   'src/app/api/family/invites/route.ts': ['jstDayOfTimestamp'],
   'src/lib/membership/org-invite.ts': ['jstDayOfTimestamp'],
   'src/app/api/menu-plans/add/route.ts': ['jstDayOffset', 'parseMenuPlanDateOffsetDays'],
@@ -1033,11 +1041,16 @@ const REQUIRED_CALLS: Record<string, string[]> = {
   'src/app/super-admin/coupons/[id]/page.tsx': ['couponValidityDay', 'couponValidUntilPatchValue'],
   'src/app/super-admin/coupons/page.tsx': ['couponValidityDay', 'isCouponExpiredAt'],
   'src/app/onboarding/questions/page.tsx': ['todayLocal'],
+  // #2245 K3: 書き出しのファイル名の日付 (献立の CSV・監査ログの CSV) は JST の今日
+  'src/app/(main)/settings/page.tsx': ['todayLocal'],
+  'src/app/super-admin/audit-logs/page.tsx': ['todayLocal'],
   'src/components/ai-assistant/V4GenerateModal.tsx': ['addDaysToDate'],
   // 画面 (モバイル)
   // (apps/mobile/app/health/graphs.tsx の行は、画面ごと消したので除いた。#1598)
   'apps/mobile/src/components/menu/V4GenerateModal.tsx': ['addDaysToDate'],
   'apps/mobile/src/components/ai/AIDayMenuModal.tsx': ['todayLocal'],
+  // #2245 K3: 書き出し (JSON・献立の CSV) のファイル名の日付は JST の今日
+  'apps/mobile/app/(tabs)/settings.tsx': ['todayLocal'],
 };
 
 /** ファイルの中で呼ばれている関数・メソッドの名前 (構文木で見るので、コメントや文字列の中は数えない) */

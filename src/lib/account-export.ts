@@ -20,6 +20,7 @@ import {
   type ExportRow,
   type ExportTableSpec,
 } from '@/lib/account-export-tables';
+import { jstToday } from '@/lib/jst-day-ranges';
 
 export const EXPORT_FORMAT = 'homegohan-personal-data-export';
 export const EXPORT_FORMAT_VERSION = 1;
@@ -305,7 +306,10 @@ export async function* generateAccountExport(
   return summary;
 }
 
-/** ダウンロードのファイル名 (CSV エクスポートと同じく UTC の日付) */
+/**
+ * ダウンロードのファイル名。日付は JST の暦日 (CSV の書き出しと同じ。toISOString の UTC の暦日だと、
+ * JST の 0:00〜8:59 は前日になる。#2245 K3)
+ */
 export function buildExportFilename(date: Date = new Date()): string {
-  return `homegohan-export-${date.toISOString().slice(0, 10)}.json`;
+  return `homegohan-export-${jstToday(date)}.json`;
 }
