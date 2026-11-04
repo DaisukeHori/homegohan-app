@@ -1265,7 +1265,11 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
         legacyIdentifiersOutsideReceivers([
           { file: RECEIVER_HOOK_FILE, source: 'export function useAiConsultationReceiver() { const writeInFlightRef = null; return writeInFlightRef; }' },
         ]),
-      ).toEqual([expect.stringMatching(/useAiConsultationReceiver\.ts:1: 旧 API の writeInFlightRef/)]);
+      ).toEqual([
+        // 宣言と return の 2 か所
+        expect.stringMatching(/useAiConsultationReceiver\.ts:1: 旧 API の writeInFlightRef/),
+        expect.stringMatching(/useAiConsultationReceiver\.ts:1: 旧 API の writeInFlightRef/),
+      ]);
       // コメントの名前は数えない (識別子だけを見る)・受け手は checkReceivers が見るので、ここでは二重に数えない
       expect(
         legacyIdentifiersOutsideReceivers([
