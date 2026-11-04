@@ -1002,3 +1002,30 @@ describe('#1136 createOutboxStore (段 B)', () => {
     expect(await rowsOf(userId)).toEqual([]);
   });
 });
+
+// H5-PROBE (一時。直す前の形が赤になるかを数えるだけ。次のコミットで消す)
+describe('H5-PROBE', () => {
+  it('H5-PROBE 直す前の形 (上限 = 行の数で戻りの並びを比べる) の食い違いを数える', async () => {
+    const PROBE_ROUNDS = 15;
+    const userId = await newUser('h5-probe');
+    const counts = { disorder: 0, plain: 0 };
+    for (let round = 0; round < PROBE_ROUNDS; round++) {
+      for (const mode of ['disorder', 'plain'] as const) {
+        const ids: string[] = [];
+        for (const n of [1, 2, 3]) {
+          const row = await seedClaimed(userId, `h5-${round}-${mode}-${n}`, 'w-h5');
+          expect((await complete(row.id, 'w-h5', `t-${round}-${mode}-${n}`)).data).toBe(true);
+          ids.push(row.id);
+        }
+        for (const id of ids) await updateRows([id], { sent_at: oldTimestamp() });
+        if (mode === 'disorder') await updateRows([ids[0]], { updated_at: new Date().toISOString() });
+        const claimed = ((await claimReceipts('w-h5', ids.length)).data ?? []) as OutboxRow[];
+        const got = claimed.map((r) => r.id);
+        if (JSON.stringify(got) !== JSON.stringify(ids)) counts[mode] += 1;
+        const { error } = await srAdmin.from('push_outbox').delete().in('id', ids);
+        if (error) throw new Error(error.message);
+      }
+    }
+    console.log(`H5-PROBE-RESULT rounds=${PROBE_ROUNDS} disorder_mismatch=${counts.disorder} plain_mismatch=${counts.plain}`);
+  });
+});
