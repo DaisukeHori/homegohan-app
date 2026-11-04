@@ -137,6 +137,7 @@ const RECEIVER_EXPECTATIONS: Readonly<Record<string, { readonly minPlaceCalls: n
   // 段 D
 
   // 段 E
+  'src/app/(main)/menus/weekly/page.tsx': { minPlaceCalls: 8, writes: 29 },
 };
 
 interface ReceiverSource {
