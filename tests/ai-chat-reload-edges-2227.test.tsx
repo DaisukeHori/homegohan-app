@@ -11,6 +11,8 @@
  *   4. 記録の直読みだけが失敗し、会話の GET は「実行する」を出すとした (pending) 返答を、実行中の印と同じに扱い、カードの「実行する」を
  *      隠した。また、読み直しても記録の行が無い (サーバーが行を作れずに実行しなかった) と『結果をまだ確かめられません』のまま残った
  *   5. 取り直しのあとの提案の記録の直読み (readReplyActionStateOf) に上限が無く、返らないと送信中のまま入力が止まった
+ *   6. (#2235 I1) 相談の開き直し (切り替えて戻る・チャットを閉じて開く) の読み込みが、その GET を待つ間に取り直しが積んだ確かめられ
+ *      なかった送信まで、写しに無いからと忘れた。あとで保存行が見つかっても入力欄の文が消えず、そのまま送ると同じ文が二重に届いた
  */
 
 import { act, createElement } from 'react';
@@ -536,5 +538,116 @@ describe('#2227 H1 取り直しのあとの記録の直読みにも上限', () =
     });
     expect(text()).toContain(SAVED_REPLY);
     expect(inputElement().disabled).toBe(false);
+  });
+});
+
+describe('#2235 I1 開き直しの読み込みが忘れるのは、読み込みを始める前に積んであった送信だけ', () => {
+  /**
+   * 会話の GET (この相談) を、呼ばれた順に止める。返すときは respond(i, messages) で i 番目の GET に会話を返す。
+   * 取り直しの GET は AI_CHAT_RELOAD_TIMEOUT_MS で打ち切られるので、テストはその前に返す
+   */
+  function holdMessagesGets() {
+    const pending: Array<(messages: unknown[]) => void> = [];
+    handlers[MESSAGES_KEY] = () =>
+      new Promise<Response>((resolve) => {
+        pending.push((messages) => resolve(json(200, { messages })));
+      });
+    return {
+      count: () => pending.length,
+      respond: async (index: number, messages: unknown[]) => {
+        await act(async () => {
+          pending[index](messages);
+        });
+      },
+    };
+  }
+
+  /** チャットを閉じて、浮いているボタンから開き直す (開いていた相談の会話を取り直す) */
+  async function closeAndReopenChat() {
+    const close = container.querySelector<HTMLButtonElement>('button[aria-label="AIチャットを閉じる"]');
+    expect(close).not.toBeNull();
+    await act(async () => {
+      close!.click();
+    });
+    const fab = container.querySelector('[data-testid="ai-chat-floating-button"]');
+    expect(fab).not.toBeNull();
+    await act(async () => {
+      fab!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 0, clientY: 0 }));
+      fab!.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: 0, clientY: 0 }));
+    });
+  }
+
+  /** 別の相談へ切り替えてから、元の相談へ戻る (戻った相談の会話を取り直す) */
+  async function switchAwayAndBack() {
+    await switchToSession(OTHER_SESSION_TITLE);
+    await waitFor(() => !text().includes('野菜を足しましょう'));
+    await switchToSession(MAIN_SESSION_TITLE);
+  }
+
+  const REOPEN_ROUTES = [
+    { route: '別の相談へ切り替えて戻る', reopen: switchAwayAndBack },
+    { route: 'チャットを閉じて開き直す', reopen: closeAndReopenChat },
+  ];
+
+  it.each(REOPEN_ROUTES)(
+    '$route: 開き直しの GET を待つ間に取り直しが積んだ送信は、写しに無くても忘れず、あとで保存行が見つかったら入力欄の文を消す',
+    async ({ reopen }) => {
+      await openChat();
+      const gets = holdMessagesGets();
+      // 応答を受ける前に時間切れ。取り直しの GET (0 番目) を止める
+      await sendFromInput(async () => {
+        throw abortError();
+      });
+      await waitFor(() => gets.count() === 1);
+
+      // 取り直しを待つ間に相談を開き直す。開き直しの GET (1 番目) も止める
+      await reopen();
+      await waitFor(() => gets.count() === 2);
+
+      // 取り直しが先に返る: 送った文はまだ無い (届いたかを確かめられない送信として積み、入力欄に戻す)
+      await gets.respond(0, OLD_MESSAGES);
+      await waitFor(() => inputElement().value === SENT_TEXT);
+
+      // 開き直しの GET が返る: 写しは取り直しより前のもので、送った文が無い
+      await gets.respond(1, OLD_MESSAGES);
+      await waitFor(() => text().includes('野菜を足しましょう'));
+      expect(inputElement().value).toBe(SENT_TEXT);
+
+      // 送った文の保存はあとで済んでいた。次に開き直すと見つかるので、入力欄に戻した文を消す (そのまま送ると二重に届く)
+      handlers[MESSAGES_KEY] = async () => json(200, { messages: savedMessages() });
+      await switchToSession(MAIN_SESSION_TITLE);
+      await waitFor(() => text().includes(SAVED_REPLY));
+      await waitFor(() => inputElement().value === '');
+    },
+  );
+
+  it('開き直しの GET を始める前に積んであった送信は、写しに無ければ今までどおり忘れる (同じ文の次の送信の保存行を前の送信に当てない。上の対照)', async () => {
+    const thisUser = { id: 'user-this', role: 'user', content: SENT_TEXT, createdAt: '2026-11-02T00:01:00.000Z' };
+    const thisReply = { id: 'ai-this', role: 'assistant', content: '今回の返答です', proposedActions: null, createdAt: '2026-11-02T00:01:01.000Z' };
+    await openChat();
+    // 1 回目: 時間切れで、会話も取り直せない (確かめられない送信として積む)
+    handlers[MESSAGES_KEY] = async () => json(500, { error: 'サーバーでエラーが発生しました' });
+    await sendFromInput(async () => {
+      throw abortError();
+    });
+    await waitFor(() => text().includes(TIMEOUT_RELOAD_FAILED_TEXT));
+    expect(inputElement().value).toBe(SENT_TEXT);
+
+    // 開き直すと送った文が無い (開き直しの前に積んであったので、届いていないとして忘れる)
+    handlers[MESSAGES_KEY] = async () => json(200, { messages: OLD_MESSAGES });
+    await switchToSession(MAIN_SESSION_TITLE);
+    await waitFor(() => text().includes('野菜を足しましょう'));
+    await waitFor(() => !text().includes(TIMEOUT_RELOAD_FAILED_TEXT));
+
+    // 2 回目: 同じ文を送り、応答を受ける前に時間切れ。サーバーには今回の送信とその返答がある。
+    // 1 回目を忘れていなければ、1 回目がこの保存行を自分のものとして当て、今回は届いたかを確かめられない文になる
+    handlers[MESSAGES_KEY] = async () => json(200, { messages: [...OLD_MESSAGES, thisUser, thisReply] });
+    await sendFromInput(async () => {
+      throw abortError();
+    });
+
+    await waitFor(() => text().includes('今回の返答です'));
+    expect(text()).not.toContain(DELIVERY_UNCONFIRMED_TEXT);
+    expect(logs.reads[0].filters).toEqual([['message_id', 'ai-this']]);
   });
 });
