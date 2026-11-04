@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { motion } from "framer-motion";
@@ -128,12 +128,24 @@ export default function NutritionTargetsExplainPage() {
   // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたときの読み込み中に来た成功の回は、その読み込みの役を引き継ぐ
   // (取り直しの扱いにしない。失敗を隠して何も無い画面を出さない)
   const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, loading);
+  // 栄養目標の再設定 (NutritionTargetPlanner) の保存が済むたびに増える。このページの見出しの目標値・入力値も読み直す (#2206 G5。
+  // 以前は再設定の側だけが読み直し、このページは保存の前の数字のまま残った)
+  const [plannerSavedKey, setPlannerSavedKey] = useState(0);
+  // 下の取得が最後に受け持った plannerSavedKey (増えた回は再設定の保存のあとの読み直し)
+  const handledPlannerSavedKeyRef = useRef(plannerSavedKey);
+  const handlePlannerSaved = useCallback(() => {
+    setPlannerSavedKey((key) => key + 1);
+  }, []);
 
   useEffect(() => {
     // 前の回の応答が後から届いても置かない (取り直しが続いたとき。#2201 U1)
     let cancelled = false;
+    // 再設定の保存のあとの読み直しか (#2206 G5)。画面はもう出ているので、AI 相談の成功の取り直しと同じく失敗では今の表示を残す
+    // (失敗の画面に切り替えると、保存の済んだ再設定ごと隠れる)
+    const isPlannerSavedRun = handledPlannerSavedKeyRef.current !== plannerSavedKey;
+    handledPlannerSavedKeyRef.current = plannerSavedKey;
     // 取り直しの失敗 (ログインの確かめ・読み取りのエラー・通信の失敗) では、失敗の画面に切り替えずに今の表示を残す (#2201 U1)
-    const isRefetch = takeAiConsultationRefetchRun();
+    const isRefetch = takeAiConsultationRefetchRun() || isPlannerSavedRun;
     const fetchData = async () => {
       const supabase = createClient();
       try {
@@ -146,22 +158,29 @@ export default function NutritionTargetsExplainPage() {
           return;
         }
 
-        // プロフィールを取得。取り直し (AI 相談の成功のあと) でも答えをそのまま置く (読み込み直したときと同じ。#2195 V1)
+        // プロフィールと栄養目標を両方読み終えてから置く (#2206 G5。以前はプロフィールを置いてから栄養目標を読み、栄養目標を
+        // 読めなかった取り直しではプロフィールだけが新しくなった)
         const profileRes = await supabase.from('user_profiles').select('*').eq('id', user.id).single();
         if (cancelled) return;
-
-        if (!profileRes.error) {
-          setProfile((profileRes.data as ProfileData | null) ?? null);
-        }
 
         // 栄養目標は /api/nutrition/targets 経由で取得（auto_calculate 時はその場で再計算される）
         // これによりマイページ (/profile) と同一の値が表示される（Bug #17 修正）
         const targetsRes = await fetch('/api/nutrition/targets');
         // 前の回の応答は、栄養目標を読めなかったときも何も置かない (下の失敗の表示を消すのも、最後に走った回だけ。#2201 U1)
         if (cancelled) return;
-        if (targetsRes.ok) {
-          const targetsJson = await targetsRes.json();
-          if (cancelled) return;
+        const targetsJson = targetsRes.ok ? await targetsRes.json() : null;
+        if (cancelled) return;
+
+        const profileRead = !profileRes.error;
+        const targetsRead = targetsJson !== null;
+        // 取り直しで片方でも読めなかった: どちらも置かずに今の表示を残す (片方だけ新しくすると、見出しの目標値と入力値が食い違う)
+        if (isRefetch && !(profileRead && targetsRead)) return;
+
+        if (profileRead) {
+          // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
+          setProfile((profileRes.data as ProfileData | null) ?? null);
+        }
+        if (targetsRead) {
           if (!targetsJson.targets) {
             // 栄養目標が無い: 前の値を残さない (取り直しのとき。#2195 V1)
             setTargets(null);
@@ -199,7 +218,9 @@ export default function NutritionTargetsExplainPage() {
             } as NutritionTargetsData);
           }
         }
-        // 前の取得の失敗の表示を残さない (取り直しで取れたら、失敗の画面から戻す。#2195 V1)
+        // 前の取得の失敗の表示を残さない (取り直しで取れたら、失敗の画面から戻す。#2195 V1)。
+        // 消すのは取り直しで両方を読めたときだけ (#2206 G5。以前は栄養目標を読めなかった取り直しも、開いたときの失敗の文を消して
+        // 中身の無い画面を出した)。開いたときの読み込みは、ここまで来れば失敗の表示を出していない (片方を読めなければ '-' で出す。これまでどおり)
         setError(null);
       } catch (e) {
         console.error('Error fetching data:', e);
@@ -213,7 +234,7 @@ export default function NutritionTargetsExplainPage() {
     return () => {
       cancelled = true;
     };
-  }, [aiConsultationRefetchKey, takeAiConsultationRefetchRun]);
+  }, [aiConsultationRefetchKey, plannerSavedKey, takeAiConsultationRefetchRun]);
 
   if (loading) {
     return (
@@ -306,7 +327,7 @@ export default function NutritionTargetsExplainPage() {
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.05 }}
         >
-          <NutritionTargetPlanner />
+          <NutritionTargetPlanner onSaved={handlePlannerSaved} />
         </motion.div>
 
         {/* 入力値セクション */}

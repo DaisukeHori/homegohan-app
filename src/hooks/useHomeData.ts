@@ -1,5 +1,6 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useState, useEffect, useRef } from "react";
+import type { AuthChangeEvent } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { LIST_ORDERS, orderListBy } from "@/lib/api/list-order";
 import { toAnnouncement, toPlannedMeal } from "@/lib/converter";
@@ -106,9 +107,15 @@ interface HomeFetchOptions {
    * 分析のアドバイス・提案・AI を省いた知らせ (aiSkipped) は前の値を残す (安全弁に達した aiSkipped で帯が消える道も無くなる)。
    * AI つきの読み取りの応答待ちに始めても、その応答の AI の部分は置かれる (栄養の分析の読み取りの流れの鍵を分ける。
    * NUTRITION_ANALYSIS_AI_KEY)。
-   * ただし今日の完了した食事が無くなって分析できない (analysis: null) ときは、読み込み直したときと同じく分析と帯を消す (#2195 V1)。
+   * ただし今日の完了した食事が無くなって分析できない (analysis: null) ときは、読み込み直したときと同じく分析を消し、帯は AI のアドバイスの
+   * ときだけ消す (#2195 V1。活動量・献立の変更の文は分析と関係が無いので残す。#2206 G3)。
+   * 取り直しは AI 相談の成功のあとなので同意済み (提案は同意を確かめたあとにしか作られない): 同意が無くて AI を省いた知らせ
+   * (aiSkipped が consent_required) は消す (上限 daily_limit・同意の状況を読めない check_failed は残す。#2206 G3)。
+   * 開いたときの読み込みの役を引き継いだ取り直し (refetchReadMode が 'mount'。#2201 U1) も、その読み込みがもう AI つきの読み取りを
+   * 始めていれば true (AI つきを 2 回読まない。#2206 G3)。
    * false (初めの読み込み・ログインの状態の変化・献立の変更の実行 executeNutritionSuggestion のあと・開いたときの読み込みの役を
-   * 引き継いだ取り直し (refetchReadMode が 'mount'。#2201 U1)) は、アドバイスと提案も読み、帯に何も出ていないときだけアドバイスを置く
+   * 引き継いだ取り直しのうち、その読み込みがまだ AI つきの読み取りを始めていない回) は、アドバイスと提案も読み、帯に何も出ていない
+   * ときだけアドバイスを置く
    */
   analysisWithoutAi: boolean;
 }
@@ -120,6 +127,27 @@ type HomeFetchMode = 'mount' | 'refetch';
 export const HOME_NUTRITION_ANALYSIS_WITH_AI_URL = '/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true';
 /** 栄養の分析の API の今日の分析。AI を呼ばない (取り直し。点数・課題・栄養素の比べだけ。#2201 U4) */
 export const HOME_NUTRITION_ANALYSIS_WITHOUT_AI_URL = '/api/ai/nutrition-analysis?period=today';
+
+/**
+ * 今日のアドバイスの帯の文の出所 (#2206 G3)。分析できなくなった取り直し (analysis: null) で消すのは AI のアドバイス ('ai_advice') だけ
+ *   - 'ai_advice': 栄養の分析の AI のアドバイス (AI つきの読み取りが、帯に何も出ていないときだけ置く)
+ *   - 'activity': 今日の気分・活動量を押したときの文 (updateActivityLevel)
+ *   - 'menu_change': 献立の変更の実行の進み具合・結果の文 (executeNutritionSuggestion)
+ */
+type SuggestionBandSource = 'ai_advice' | 'activity' | 'menu_change';
+
+/** 今日のアドバイスの帯 (文と出所。#2206 G3) */
+interface SuggestionBand {
+  text: string;
+  source: SuggestionBandSource;
+}
+
+/**
+ * ホームのデータを読み直すログインの状態の変化 (supabase.auth.onAuthStateChange の event。#2206 G3)。
+ * INITIAL_SESSION (購読を始めたときに 1 回。開いたときの読み込みと重なる)・TOKEN_REFRESHED (トークンの更新。ログインしている人は
+ * 変わらない) では読み直さない (読み直すたびに AI つきの栄養の分析を読み、LLM と上限に数えない枠の安全弁 nutrition_advice_auto を使う)
+ */
+const HOME_REFETCH_AUTH_EVENTS: ReadonlySet<AuthChangeEvent> = new Set<AuthChangeEvent>(['SIGNED_IN', 'SIGNED_OUT', 'USER_UPDATED']);
 
 /** 今日の献立の集計の空の値 (開いたときの値。取り直しで今日の献立が無くなったときもこれに戻す。#2195 V1) */
 const EMPTY_DAILY_SUMMARY: DailySummary = {
@@ -157,8 +185,15 @@ export const useHomeData = () => {
   const toggleDebounceTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const [dailySummary, setDailySummary] = useState<DailySummary>(EMPTY_DAILY_SUMMARY);
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
+  // × で閉じたお知らせの id (#2206 G3)。取り直し (AI 相談の成功のたび)・ログインの状態の変化の読み込みで、同じお知らせを置き直さない
+  const dismissedAnnouncementIdsRef = useRef<Set<string>>(new Set());
+  // 今の読み込み (読み込み中の表示を出した取得。開いたとき・ログインの状態の変化など) が、AI つきの栄養の分析を読み始めたか (#2206 G3)。
+  // その読み込みの役を引き継いだ取り直しは、これが true なら AI を付けずに読む (AI つきを 2 回読んで LLM と安全弁を余分に使わない)
+  const aiAnalysisReadInLoadRef = useRef(false);
   const [activityLevel, setActivityLevel] = useState<string | null>(null);
-  const [suggestion, setSuggestion] = useState<string | null>(null);
+  // 今日のアドバイスの帯 (文と出所。#2206 G3)
+  const [suggestionBand, setSuggestionBand] = useState<SuggestionBand | null>(null);
+  const suggestion = suggestionBand?.text ?? null;
   
   // 新規追加
   const [cookingStreak, setCookingStreak] = useState(0);
@@ -295,6 +330,9 @@ export const useHomeData = () => {
   ) => {
     // 取り直しの札は取り直しの扱いの回にだけ渡す (開いたときの読み込みの役を引き継いだ回は、応答を置く時点の番兵を見ずに置く)
     const order = homeFetchStream.begin(mode === 'refetch' ? refetchTicket : null);
+    // 新しい読み込み (AI つきの栄養の分析を読む回) は、AI つきの読み取りをまだ始めていない (#2206 G3)。引き継いだ取り直しのうち AI を
+    // 付けない回は、引き継ぐ読み込みが始めた AI つきの読み取りを数えたまま残す
+    if (mode === 'mount' && !options.analysisWithoutAi) aiAnalysisReadInLoadRef.current = false;
     if (mode === 'mount') setLoading(true);
     try {
       await readHomeData(options, mode, order);
@@ -437,7 +475,9 @@ export const useHomeData = () => {
       if (annRes.ok) {
         const annData = await annRes.json();
         if (annData.announcements && annData.announcements.length > 0 && isLatest()) {
-          setAnnouncement(toAnnouncement(annData.announcements[0]));
+          const nextAnnouncement = toAnnouncement(annData.announcements[0]);
+          // × で閉じたお知らせは置き直さない (#2206 G3。取り直しは AI 相談の成功のたびに来る)
+          if (!dismissedAnnouncementIdsRef.current.has(nextAnnouncement.id)) setAnnouncement(nextAnnouncement);
         }
       }
     } catch (e) {
@@ -818,10 +858,21 @@ export const useHomeData = () => {
     /** この応答に、まだ置ける部分があるか */
     const mayPlace = () => scoreOrder.isLatest() || aiOrder?.isLatest() === true;
     /**
-     * 今の分析を残して、読み込み中の印だけを下ろす (読み取りの失敗・分析の結果を使えないとき)。
-     * 下ろすのは最後に始めた読み取りだけ (古い読み取りの失敗で、あとの読み取りの途中に下ろさない)
+     * 読み取りのあとの aiSkipped。取り直し (AI を付けない) は AI 相談の成功のあとで同意済みなので、同意が無くて AI を省いた知らせ
+     * (consent_required) を消す (#2206 G3。残すと読み込み直すまで「同意すると表示されます」が出たまま)。上限 (daily_limit)・
+     * 同意の状況を読めない (check_failed) は残す (AI を付けない読み取りは確かめ直さない)
      */
-    const settleKeepingAnalysis = () => scoreOrder.place(() => setNutritionAnalysis(prev => ({ ...prev, loading: false })));
+    const aiSkippedAfterRead = (prev: AiSkippedReason | null): AiSkippedReason | null =>
+      analysisWithoutAi && prev === 'consent_required' ? null : prev;
+    /**
+     * 今の分析を残して、読み込み中の印だけを下ろす (読み取りの失敗・分析の結果を使えないとき)。
+     * 下ろすのは最後に始めた読み取りだけ (古い読み取りの失敗で、あとの読み取りの途中に下ろさない)。
+     * 取り直しでは同意が無くて AI を省いた知らせも消す (aiSkippedAfterRead。成功は同意済みで、読み取りの失敗とは関係が無い)
+     */
+    const settleKeepingAnalysis = () =>
+      scoreOrder.place(() => setNutritionAnalysis(prev => ({ ...prev, aiSkipped: aiSkippedAfterRead(prev.aiSkipped), loading: false })));
+    // 今の読み込みが AI つきの読み取りを始めた (引き継いだ取り直しは AI を付けずに読む。#2206 G3)
+    if (!analysisWithoutAi) aiAnalysisReadInLoadRef.current = true;
     try {
       setNutritionAnalysis(prev => ({ ...prev, loading: true }));
       
@@ -842,6 +893,7 @@ export const useHomeData = () => {
             score: data.analysis.score || 0,
             issues: data.analysis.issues || [],
             comparison: data.analysis.comparison || {},
+            aiSkipped: aiSkippedAfterRead(prev.aiSkipped),
             loading: false,
           })),
         );
@@ -854,9 +906,11 @@ export const useHomeData = () => {
             suggestion: data.suggestion || null,
             aiSkipped: aiSkippedReasonOf(data),
           }));
-          // AIアドバイスをsuggestに設定 (帯に何も出ていないときだけ)
-          if (data.advice && !suggestion) {
-            setSuggestion(data.advice);
+          // AIアドバイスをsuggestに設定 (帯に何も出ていないときだけ。置く時点の帯を見る: 開いたときの読み込みの関数は
+          // 描画のたびに作り直されないので、関数を作ったときの帯の値は古い。#2206 G3)
+          if (data.advice) {
+            const advice: string = data.advice;
+            setSuggestionBand(prev => prev ?? { text: advice, source: 'ai_advice' });
           }
         });
       } else if (data.success) {
@@ -865,8 +919,9 @@ export const useHomeData = () => {
         const scorePlaced = scoreOrder.place(() => {
           setNutritionAnalysis(prev => ({ ...prev, ...NO_NUTRITION_ANALYSIS_SCORE_PARTS, loading: false }));
           if (analysisWithoutAi) {
-            // 取り直しでは帯も消す (分析する食事が無いので、読み込み直しても帯は出ない)
-            setSuggestion(null);
+            // 取り直しでは帯の AI のアドバイスも消す (分析する食事が無いので、読み込み直しても AI のアドバイスは出ない)。
+            // 活動量・献立の変更の文は分析と関係が無いので残す (#2206 G3)
+            setSuggestionBand(prev => (prev?.source === 'ai_advice' ? null : prev));
           }
         });
         // AI の部分も消す。最後に始めた読み取りが「分析できない」と答えたときは、それより前に始めた AI つきの読み取りの応答
@@ -1020,7 +1075,7 @@ export const useHomeData = () => {
     const issues = nutritionAnalysis.issues || [];
     
     if (!suggestion && issues.length === 0) {
-      setSuggestion('現在提案できる献立変更はありません。');
+      setSuggestionBand({ text: '現在提案できる献立変更はありません。', source: 'menu_change' });
       return;
     }
     
@@ -1043,7 +1098,7 @@ export const useHomeData = () => {
         prompt = `${issues[0]}。この問題を解決するバランスの良い献立に変更してください。`;
       }
       
-      setSuggestion('献立を変更中...');
+      setSuggestionBand({ text: '献立を変更中...', source: 'menu_change' });
       
       const response = await aiFetch('/api/ai/nutrition-analysis', {
         method: 'POST',
@@ -1057,21 +1112,21 @@ export const useHomeData = () => {
       
       // 同意が必要で止められた (T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内するので、失敗の表示は出さない
       if (await isAiConsentRequiredResponse(response)) {
-        setSuggestion(null);
+        setSuggestionBand(null);
         return;
       }
 
       if (response.ok) {
         // 成功したらデータを再取得
         await fetchHomeData();
-        setSuggestion('🎉 献立を変更しました！');
+        setSuggestionBand({ text: '🎉 献立を変更しました！', source: 'menu_change' });
       } else {
         const errorData = await response.json().catch(() => ({}));
-        setSuggestion(`変更に失敗しました: ${errorData.error || 'エラーが発生しました'}`);
+        setSuggestionBand({ text: `変更に失敗しました: ${errorData.error || 'エラーが発生しました'}`, source: 'menu_change' });
       }
     } catch (e) {
       console.error('Execute nutrition suggestion error:', e);
-      setSuggestion('変更に失敗しました。もう一度お試しください。');
+      setSuggestionBand({ text: '変更に失敗しました。もう一度お試しください。', source: 'menu_change' });
     }
   };
 
@@ -1172,8 +1227,9 @@ export const useHomeData = () => {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
-      void fetchHomeData();
+    } = supabase.auth.onAuthStateChange((event) => {
+      // ログインしている人が変わったときだけ読み直す (INITIAL_SESSION・TOKEN_REFRESHED では読まない。#2206 G3)
+      if (HOME_REFETCH_AUTH_EVENTS.has(event)) void fetchHomeData();
     });
 
     return () => {
@@ -1204,15 +1260,24 @@ export const useHomeData = () => {
 
     // AIサジェスト生成
     if (level === 'rest') {
-      setSuggestion("今日は運動量が少なめです。夕食の炭水化物を半分にして調整しましょう。");
+      setSuggestionBand({ text: "今日は運動量が少なめです。夕食の炭水化物を半分にして調整しましょう。", source: 'activity' });
     } else if (level === 'active') {
-      setSuggestion("ナイスワークアウト！夕食でタンパク質を多めに摂り、筋肉の回復を促しましょう。");
+      setSuggestionBand({ text: "ナイスワークアウト！夕食でタンパク質を多めに摂り、筋肉の回復を促しましょう。", source: 'activity' });
     } else if (level === 'stressed') {
-      setSuggestion("ストレスを感じているときは、ビタミンB群を含む食材がおすすめです。");
+      setSuggestionBand({ text: "ストレスを感じているときは、ビタミンB群を含む食材がおすすめです。", source: 'activity' });
     } else {
-      setSuggestion(null);
+      setSuggestionBand(null);
     }
   };
+
+  // お知らせの × (#2206 G3)。閉じたお知らせの id を覚え、取り直しで置き直さない
+  const dismissAnnouncement = () => {
+    if (announcement) dismissedAnnouncementIdsRef.current.add(announcement.id);
+    setAnnouncement(null);
+  };
+
+  // 今日のアドバイスの帯の ×
+  const dismissSuggestion = () => setSuggestionBand(null);
 
   return {
     user,
@@ -1238,21 +1303,22 @@ export const useHomeData = () => {
     // 関数
     toggleMealCompletion,
     updateActivityLevel,
-    setAnnouncement,
-    setSuggestion,
+    dismissAnnouncement,
+    dismissSuggestion,
     executeNutritionSuggestion,
     submitPerformanceCheckin,
     // 取り直し (AI 相談の成功のあと)。読み込み直したときと同じ表示にする (#2195 V1)。ただし栄養の分析は AI を呼ばずに
     // 点数・課題だけ読み直し、今日のアドバイスの帯は残す (成功のたびの LLM の費用と安全弁の消費をやめる。#2201 U4)。
     // 読み込み中の表示を出さず、読み取りの失敗では今の表示を残す (#2201 U1)。開いたときの読み込み中に始まった取り直しは、
-    // その読み込みの役を引き継ぐ (refetchReadMode が 'mount')。引き継いだ回は栄養の分析も開いたときと同じく AI つきで読む
-    // (開いたときの取得は最後に始めた取得でなくなるので、まだ栄養の分析を読み始めていなければ読み始めない。AI を付けずに読むと
-    // AI つきの読み取りがどこにも無く、アドバイスと帯が出ないまま残る)
+    // その読み込みの役を引き継ぐ (refetchReadMode が 'mount')。引き継いだ回は、その読み込みがまだ AI つきの栄養の分析を読み始めて
+    // いなければ開いたときと同じく AI つきで読む (開いたときの取得は最後に始めた取得でなくなるので、まだ栄養の分析を読み始めていなければ
+    // 読み始めない。AI を付けずに読むと AI つきの読み取りがどこにも無く、アドバイスと帯が出ないまま残る)。もう読み始めていれば AI を
+    // 付けずに読む (AI つきの読み取りの応答の AI の部分は鍵を分けているので置かれる。AI つきを 2 回読まない。#2206 G3)
     // 札 (useAiConsultationDataRefetch が渡す) があれば、応答を待つあいだに始めた完了の切り替え・気分・活動量の保存を、
     // 今日の献立・気分・活動量で上書きしない
     refetch: (ticket?: AiConsultationFetchTicket) => {
       const mode = refetchReadMode();
-      return fetchHomeData({ analysisWithoutAi: mode === 'refetch' }, mode, ticket);
+      return fetchHomeData({ analysisWithoutAi: mode === 'refetch' || aiAnalysisReadInLoadRef.current }, mode, ticket);
     },
     // 食事の完了の切り替え・今日の気分・活動量の保存の間の印 (#2201 U2。ページが useAiConsultationDataRefetch の writeInFlightRef に渡す)
     aiConsultationWrites,
