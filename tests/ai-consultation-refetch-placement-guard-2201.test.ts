@@ -122,9 +122,7 @@ const SELF_HELD_RECEIVERS: ReadonlyArray<{ file: string; marker: string }> = [
 ];
 
 /** 取り直しの関数と書き込みの印を別の hook が作る受け手 (その hook のファイルで数える) */
-const DELEGATED_RECEIVERS: ReadonlyArray<{ file: string; marker: string; refetch: string; definedIn: string }> = [
-  { file: 'src/app/(main)/home/page.tsx', marker: 'aiConsultationWrites', refetch: 'refetch', definedIn: 'src/hooks/useHomeData.ts' },
-];
+const DELEGATED_RECEIVERS: ReadonlyArray<{ file: string; marker: string; refetch: string; definedIn: string }> = [];
 
 /**
  * 検査が何も数えずに緑になるのを防ぐ下限 (2026-11-04 の実数: 数える印を渡す受け手 6 (/pantry・/menus/weekly・/home・/meals/[id]・
@@ -181,15 +179,7 @@ const REF_CURRENT = 'current';
 /**
  * 規則 7 の例外: 取り直しが応答を置く setter を書き込みの前に呼ぶが、それが書き込みが変える値の楽観的な更新でない関数 (理由を書く)
  */
-const OPTIMISTIC_WRITE_EXEMPTIONS: ReadonlyArray<{ file: string; fn: string; reason: string }> = [
-  {
-    file: 'src/hooks/useHomeData.ts',
-    fn: 'executeNutritionSuggestion',
-    reason:
-      '書き込み (献立の変更の POST) の前に置くのは今日のアドバイスの帯の進み具合の文 (「献立を変更中...」) で、書き込みが変える値ではない。' +
-      '書き込みのあとに自分で読み直す (fetchHomeData。書き込みのあとに始めた取得なので、それより前に始めた取り直しの応答より後に置く)',
-  },
-];
+const OPTIMISTIC_WRITE_EXEMPTIONS: ReadonlyArray<{ file: string; fn: string; reason: string }> = [];
 
 /**
  * 規則 7 が見た楽観的な更新 (取り直しが応答を置く setter を呼んでから書き込みを await する関数) の数の下限 (検査が空振りして緑になるのを防ぐ。

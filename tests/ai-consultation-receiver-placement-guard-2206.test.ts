@@ -135,6 +135,7 @@ const RECEIVER_EXPECTATIONS: Readonly<Record<string, { readonly minPlaceCalls: n
   // 段 C
 
   // 段 D
+  'src/hooks/useHomeData.ts': { minPlaceCalls: 18, writes: 5 },
 
   // 段 E
 };

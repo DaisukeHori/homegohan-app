@@ -1636,10 +1636,13 @@ describe('受け手の配線 (#2195 V1)', () => {
   // 段 D
   const WIRING_STAGE_D: readonly WiringRow[] = [
     {
-      page: 'ホーム (/home): useHomeData の refetch',
-      file: 'src/app/(main)/home/page.tsx',
-      hookImport: HOOK_IMPORT,
-      wiring: /refetch,\s*aiConsultationWrites,\s*\} = useHomeData\(\);[\s\S]*?useAiConsultationDataRefetch\(refetch, \{ writeInFlightRef: aiConsultationWrites \}\);/,
+      // 受け手は useHomeData (#2206 G1 段 D。home/page.tsx は hook を呼ばない)。取り直し (refetchHome) は同じ取り直しの読み取りで
+      // 分析を AI を付けずに読み始め、ページの読み取り (fetchHomeData) は全画面の読み込み中の鍵を立てて主のデータを読む
+      page: 'ホーム (/home): useHomeData の refetchHome と fetchHomeData',
+      file: 'src/hooks/useHomeData.ts',
+      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
+      wiring:
+        /const refetchHome = \(read: AiConsultationRead\) =>\s*readHomeData\(read, \(refetchRead, userId\) => \{\s*void fetchNutritionAnalysis\(refetchRead, \{ analysisWithoutAi: true \}\);\s*void fetchPerformanceAnalysis\(userId, refetchRead\);\s*\}\);[\s\S]*?const receiver = useAiConsultationReceiver\(refetchHome, \{ initialLoadingKeys: \[KEY_HOME_LOADING\] \}\);[\s\S]*?const fetchHomeData = \(\) =>\s*receiver\.read\(\{ loadingKeys: \[KEY_HOME_LOADING\] \}, \(read\) =>\s*readHomeData\(read,/,
     },
   ];
 
