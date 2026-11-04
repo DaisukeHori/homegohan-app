@@ -1717,7 +1717,7 @@ const receiver = useAiConsultationReceiver(refetchHome, { initialLoadingKeys: [K
 const loading = receiver.isLoading(KEY_HOME_LOADING);
 
 /**
- * ページの読み取り: 開いたとき・ログインの状態の変化 (HOME_REFETCH_AUTH_EVENTS の 3 つだけ。G3 と同じ。SIGNED_IN は前回読んだ利用者と違うときだけ。#2227 H3 の shouldRefetchHomeOnAuthChange)・完了の切り替えの巻き戻し・献立の変更の実行のあと。
+ * ページの読み取り: 開いたとき・ログインの状態の変化 (HOME_REFETCH_AUTH_EVENTS の 3 つだけ。G3 と同じ。SIGNED_IN は前回読んだ利用者と違うときだけ。#2227 H3 の shouldRefetchHomeOnAuthChange。前回読んだ利用者は主のデータ (今日の献立・集計) を place で置けたときに apply の中で覚え (プロフィールを読めなかったときは覚えない。開いたときの読み込みでログインしていないと分かったときは KEY_USER を置けたときに null を覚える。取り直しでは覚えた値を変えない)、ホームの読み取りが自分で setSession している間の SIGNED_IN は数えない (SIGNED_OUT・USER_UPDATED はその間も読み直す)。#2235 I2)・完了の切り替えの巻き戻し・献立の変更の実行のあと。
  * 分析は分析ごとに別のページの読み取りで始める (AI つき。読み込み中の印は分析の鍵で、分析を置くか分析の読み取りが終わるまで)
  */
 const fetchHomeData = () =>
