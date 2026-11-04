@@ -92,7 +92,7 @@ vi.mock('framer-motion', () => {
 });
 
 const { default: AIChatBubble } = await import('@/components/AIChatBubble');
-const { useAiConsultationDataRefetch } = await import('@/hooks/useAiConsultationDataRefetch');
+const { useAiConsultationReceiver } = await import('@/hooks/useAiConsultationReceiver');
 const { AI_CONSULTATION_CHAT_ROOT_PROPS } = await import('@/lib/ai/consultation-data-refetch');
 const { AI_CONSULTATION_GENERATION_WATCH_INTERVAL_MS, aiConsultationGenerationStatusUrl } = await import(
   '@/lib/ai/consultation-generation-watch'
@@ -758,7 +758,7 @@ describe('#2201 U3 読み直しの予約は部品を外すときに取り消す'
 
 /**
  * 献立の生成 3 種類の記録の行 (サーバーの messages の route が ai_action_logs.result に保存した、生成の受付の結果)。
- * Web の取り直し (useAiConsultationDataRefetch) は、通知の detail.result がこの形のときだけ生成の完了まで見張る (#2202)
+ * Web の取り直し (useAiConsultationReceiver) は、通知の detail.result がこの形のときだけ生成の完了まで見張る (#2202)
  */
 const GENERATION_REQUEST_ID = 'req-1';
 const ACCEPTED_GENERATION_RESULT = { requestId: GENERATION_REQUEST_ID, status: 'processing' };
@@ -802,13 +802,13 @@ describe('#2201 U3 時間切れの経路の通知にも、記録の行の実行�
     expect((mealPlanUpdated.mock.calls[0][0] as CustomEvent).detail).toEqual({ actionType: 'update_meal', result: null });
   });
 
-  describe('Web の取り直し (useAiConsultationDataRefetch) と組み合わせる', () => {
+  describe('Web の取り直し (useAiConsultationReceiver) と組み合わせる', () => {
     let refetch: ReturnType<typeof vi.fn>;
     let statusChecks: number;
 
     /** ページの取り直しの hook を使う部品 (献立表のページの代わり) */
     function RefetchingPage() {
-      useAiConsultationDataRefetch(refetch);
+      useAiConsultationReceiver(refetch);
       return null;
     }
 

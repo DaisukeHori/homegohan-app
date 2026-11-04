@@ -3,14 +3,14 @@
  * #2195 V1 AI 相談の操作 → 変わる表 → 出す Web のページ の閉じた一覧 (src/lib/ai/consultation-refetch-coverage.ts) を、
  * ソースの構文木から組み立てた表と突き合わせる (網羅の機械の検査)。
  *
- * 問題 (直す前): 受け手のページ (useAiConsultationDataRefetch) を手で書いた一覧で選んでいたため、AI が書く表を出すページの抜けが
+ * 問題 (直す前): 受け手のページ (取り直しの hook を使うページ) を手で書いた一覧で選んでいたため、AI が書く表を出すページの抜けが
  * 敵対レビューの周ごとに 1〜2 件ずつ見つかった (/meals/[id]・/health/streaks・/profile/nutrition-targets・/health の選んだ日のパネル)。
  *
  * 確かめること:
  *   1. 実行の各 case (runConsultationAction) が書く表 = AI_CONSULTATION_ACTION_WRITTEN_TABLES
  *      (case からたどれる `.from('<表>')` の書き込み + DB の関数 (rpc) + Edge Function の書き込み)
  *   2. src/app/(main) のページのうち AI が書く表を読むもの = AI_CONSULTATION_REFETCH_PAGES のキー (受け手か除外)。
- *      各ページの読む AI が書く表は表の aiTables と一致し、受け手は useAiConsultationDataRefetch / useAiConsultationRefetchKey か、新しい useAiConsultationReceiver (#2206 G1。段 F で新だけ) を使う。
+ *      各ページの読む AI が書く表は表の aiTables と一致し、受け手は useAiConsultationReceiver (#2206 G1) を使う。
  *      受け手は、開いたとき・パネルが読むもの全部を取り直すことを描画のテスト (tests/helpers/ai-refetch-read-recorder.ts の
  *      expectRefetchReadsCoverMount) で確かめ、空の応答の取り直しが空の応答で開いたときと同じこと (expectEmptyRefetchMatchesFreshMount) も確かめる。
  *      その 2 つを呼ぶテストが受け手ごとにあることをここで数える。除外の alwaysBlockedWhileShown のページは、AI が書く値を出している間
@@ -86,17 +86,10 @@ const PAGE_FILE = 'page.tsx';
 const API_ROOT = 'src/app/api';
 const ROUTE_FILE = 'route.ts';
 const READ_HANDLER = 'GET';
-/** 旧の受け手の hook のファイル (段 F で消す。#2206 G1) */
-const LEGACY_RECEIVER_HOOK_FILE = 'src/hooks/useAiConsultationDataRefetch.ts';
-/** 新しい受け手の hook のファイル (#2206 G1) */
+/** 受け手の hook のファイル (#2206 G1) */
 const RECEIVER_HOOK_FILE = 'src/hooks/useAiConsultationReceiver.ts';
-/**
- * 受け手の hook (ファイルと名前)。#2206 G1 の段 B〜E で受け手を旧から新へ移す間は新旧の両方を数える (どちらかを使えば受け手)。
- * 段 F で旧の 2 行を外す (§17 G-6)
- */
+/** 受け手の hook (ファイルと名前。#2206 G1 の段 F で旧の hook を外し、これだけにした。§17 G-6) */
 const RECEIVER_HOOKS: ReadonlyArray<{ readonly file: string; readonly hook: string }> = [
-  { file: LEGACY_RECEIVER_HOOK_FILE, hook: 'useAiConsultationDataRefetch' },
-  { file: LEGACY_RECEIVER_HOOK_FILE, hook: 'useAiConsultationRefetchKey' },
   { file: RECEIVER_HOOK_FILE, hook: 'useAiConsultationReceiver' },
 ];
 /** 生成の見張り (受け手の hook だけが使う) と、hook が呼ぶその関数 */
@@ -107,7 +100,7 @@ const GENERATION_REQUEST_TABLE = 'weekly_menu_requests';
 /** 実行の結果を入れる変数 (runConsultationAction の result) */
 const EXECUTOR_RESULT_VARIABLE = 'result';
 /** src の中で生成の見張りを import してよいファイル (受け手の hook と、見張りそのもの) */
-const GENERATION_WATCH_IMPORTERS = [LEGACY_RECEIVER_HOOK_FILE, RECEIVER_HOOK_FILE, GENERATION_WATCH_FILE] as const;
+const GENERATION_WATCH_IMPORTERS = [RECEIVER_HOOK_FILE, GENERATION_WATCH_FILE] as const;
 /** 生成の見張りの import を探す場所 */
 const SRC_ROOT = 'src';
 /** 描画のテストの呼び出し (受け手ごとにあること)。tests/helpers/ai-refetch-read-recorder.ts の関数の名前 */
@@ -678,8 +671,7 @@ describe('3. 非同期で書く AI の操作 (献立の生成 3 種類など) �
   });
 
   it('受け手の hook は生成の見張りを使い、見張りは生成の依頼の行を読む状態の確認 (GET) を読む', () => {
-    // 受け手の hook のどれからたどっても、見張りの関数に届く (useAiConsultationRefetchKey は useAiConsultationDataRefetch を通る。
-    // 新しい useAiConsultationReceiver は自分で見張る。#2206 G1)
+    // 受け手の hook からたどると、見張りの関数に届く (useAiConsultationReceiver は自分で見張る。#2206 G1)
     for (const { file, hook } of RECEIVER_HOOKS) {
       const findings = scanner.newFindings();
       scanner.scanExport(file, hook, findings);

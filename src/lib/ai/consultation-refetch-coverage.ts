@@ -2,7 +2,7 @@
  * AI 相談の操作 → 変わる表 → 出す Web のページ の閉じた一覧 (#2195 V1)。
  *
  * Web の AI 相談 (src/components/AIChatBubble.tsx) の提案の実行が成功すると、開いているページは
- * useAiConsultationDataRefetch (src/hooks/useAiConsultationDataRefetch.ts) で自分の取得をもう一度走らせる。
+ * useAiConsultationReceiver (src/hooks/useAiConsultationReceiver.ts) で自分の取得をもう一度走らせる。
  * どのページが受け手になるべきかを手で書いた一覧で決めていたため、受け手の抜けと「取り直しが前の値を残す」書き方が
  * 敵対レビューの周ごとに 1〜2 件ずつ見つかった。ここに表を置き、tests/ai-consultation-refetch-coverage-2195.test.ts が
  * ソースの構文木から同じ表を組み立てて突き合わせる:
@@ -14,7 +14,7 @@
  *   2. AI_CONSULTATION_REFETCH_PAGES: src/app/(main) のページのうち、AI が書く表を読むもの全部。ページから名前でたどれる
  *      部品・hook の Supabase の読み取りと、ページが呼ぶ API の route (GET) が読む表から決める。表に無いページが
  *      AI が書く表を読んでいたら赤 (新しいページ・新しい AI の操作で漏れたら気付く)。
- *      受け手 (receiver) は useAiConsultationDataRefetch / useAiConsultationRefetchKey を使い、開いたときとパネルが読むもの全部を
+ *      受け手 (receiver) は useAiConsultationReceiver を使い、開いたときとパネルが読むもの全部を
  *      取り直す (tests/helpers/ai-refetch-read-recorder.ts で描画して確かめる)。除外 (excluded) は理由を書く
  *
  * user_profiles は、AI 相談が書く列 (AI_CONSULTATION_WRITTEN_COLUMNS) を読むときだけ「AI が書く表を読む」と数える
@@ -96,7 +96,7 @@ export type AiConsultationActionType = keyof typeof AI_CONSULTATION_ACTION_WRITT
  * キー = 実行の case のうち、Edge Function を呼ぶ (`.functions.invoke(...)` か '/functions/v1/<名前>' の URL) もの全部
  * (tests/ai-consultation-refetch-coverage-2195.test.ts がソースの構文木から数えて突き合わせる)。
  *   - watched: 実行の結果が生成の受付 ({ requestId, status: 'processing' }) で、受け手の共通の hook
- *     (src/hooks/useAiConsultationDataRefetch.ts) がその依頼を終わるまで見張り、終わったらもう一度取り直す
+ *     (src/hooks/useAiConsultationReceiver.ts) がその依頼を終わるまで見張り、終わったらもう一度取り直す
  *     (src/lib/ai/consultation-generation-watch.ts)。受け手のページは全部この hook を使う (同じテストが数える) ので、
  *     どの受け手も受付と完了の両方で取り直す
  *   - notWatched: 見張らない理由を事実で書く

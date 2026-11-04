@@ -1,6 +1,6 @@
 /**
  * #2195 V1 の整合ゲートの是正: AI 相談が始めた献立の生成は、受付と完了の両方で取り直す
- * (src/hooks/useAiConsultationDataRefetch.ts と src/lib/ai/consultation-generation-watch.ts)
+ * (src/hooks/useAiConsultationReceiver.ts と src/lib/ai/consultation-generation-watch.ts。#2206 G1 で受け手の hook を移した)
  *
  * 問題 (直す前):
  *   - AI 相談の献立の生成 (generate_day_menu・generate_week_menu・generate_single_meal) は、依頼の行を作った時点
@@ -17,7 +17,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useAiConsultationDataRefetch } from '@/hooks/useAiConsultationDataRefetch';
+import { useAiConsultationReceiver } from '@/hooks/useAiConsultationReceiver';
 import { AI_CONSULTATION_DATA_CHANGED_EVENT } from '@/lib/ai/consultation-data-refetch';
 import {
   AI_CONSULTATION_GENERATION_SETTLED_STATUSES,
@@ -63,7 +63,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 function Receiver({ name }: { name: string }) {
-  useAiConsultationDataRefetch(() => {
+  useAiConsultationReceiver(() => {
     refetchCount += 1;
   });
   return <p>{name}</p>;

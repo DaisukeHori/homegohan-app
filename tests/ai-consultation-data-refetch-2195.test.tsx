@@ -8,7 +8,7 @@
  *
  * 直したあと:
  *   - データを出すページ (献立表・ホーム・比較・冷蔵庫・健康・健康目標・マイページ・栄養目標の根拠・食事の詳細・連続記録・
- *     健康のグラフ・バッジ) は useAiConsultationDataRefetch でこの通知を受け、ページの既存の取得をもう一度呼ぶ (ページ全体の reload はしない)
+ *     健康のグラフ・バッジ) は useAiConsultationReceiver (#2206 G1 で受け手の hook を移した) でこの通知を受け、ページの既存の取得をもう一度呼ぶ (ページ全体の reload はしない)
  *   - 入力の部品・開いているモーダルがページにある間は取り直さない。ただし AI 相談の吹き出しの中 (MainLayout が
  *     data-ai-consultation-chat-root で包む) は数えない (吹き出しは送信の入力欄を持ったまま成功を知らせるため)
  *   - 入力欄がいつも出ている部品 (栄養目標の再設定) は、入力欄の値が取得した値のままの間だけ data-ai-consultation-unedited-inputs で
@@ -18,17 +18,8 @@
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
 import { readFileSync } from 'node:fs';
-import type {
-  AiConsultationFetchStream,
-  AiConsultationFetchStreamOrder,
-  AiConsultationFetchTicket,
-  AiConsultationLoadingState,
-  AiConsultationPendingWrites,
-  AiConsultationRefetchControl,
-  AiConsultationWriteInFlightRef,
-} from '@/hooks/useAiConsultationDataRefetch';
 import path from 'node:path';
-import { act, useEffect, useState } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -103,14 +94,6 @@ const {
   AI_CONSULTATION_UNEDITED_INPUTS_ATTRIBUTE,
   isAiConsultationRefetchBlocked,
 } = await import('@/lib/ai/consultation-data-refetch');
-const {
-  useAiConsultationDataRefetch,
-  useAiConsultationFetchStream,
-  useAiConsultationLoading,
-  useAiConsultationPendingWrites,
-  useAiConsultationRefetchKey,
-  useAiConsultationRefetchRun,
-} = await import('@/hooks/useAiConsultationDataRefetch');
 const { AI_CONSULTATION_WRITES_ATTRIBUTE } = await import('@/hooks/useAiConsultationReceiver');
 const { default: MainLayout } = await import('@/app/(main)/MainLayout');
 const { default: ComparisonPage } = await import('@/app/(main)/comparison/page');
@@ -308,814 +291,6 @@ describe('投げる側との名前の一致 (#2195 V1)', () => {
     );
     expect(dispatchedNames.length).toBeGreaterThan(0);
     expect(new Set(dispatchedNames)).toEqual(new Set([AI_CONSULTATION_DATA_CHANGED_EVENT]));
-  });
-});
-
-describe('useAiConsultationDataRefetch (#2195 V1)', () => {
-  function Receiver({ refetch }: { refetch: () => unknown }) {
-    useAiConsultationDataRefetch(refetch);
-    return <p>表示だけのページ</p>;
-  }
-
-  it('AI 相談の成功を受けたら 1 回だけ取り直す', async () => {
-    const refetch = vi.fn();
-    await act(async () => {
-      root.render(<Receiver refetch={refetch} />);
-    });
-    expect(refetch).not.toHaveBeenCalled();
-
-    await notifyAiConsultationSucceeded();
-    expect(refetch).toHaveBeenCalledTimes(1);
-
-    await notifyAiConsultationSucceeded();
-    expect(refetch).toHaveBeenCalledTimes(2);
-  });
-
-  it('ほかの名前のイベントでは取り直さない', async () => {
-    const refetch = vi.fn();
-    await act(async () => {
-      root.render(<Receiver refetch={refetch} />);
-    });
-    await notifyAiConsultationSucceeded('somethingElseUpdated');
-    expect(refetch).not.toHaveBeenCalled();
-  });
-
-  it('ページに入力欄があれば取り直さない・閉じたら止めた成功のぶん 1 回取り直す (#2201 U2)', async () => {
-    const refetch = vi.fn();
-    await act(async () => {
-      root.render(<Receiver refetch={refetch} />);
-    });
-    const holder = addToBody('<input type="text" value="打ちかけ">');
-
-    // 止めている間に何回来ても、外れたときの取り直しは 1 回
-    await notifyAiConsultationSucceeded();
-    await notifyAiConsultationSucceeded();
-    expect(refetch).not.toHaveBeenCalled();
-
-    await act(async () => {
-      holder.remove();
-    });
-    expect(refetch).toHaveBeenCalledTimes(1);
-
-    // 外れたあとの成功は、これまでどおりすぐ取り直す
-    await notifyAiConsultationSucceeded();
-    expect(refetch).toHaveBeenCalledTimes(2);
-  });
-
-  it('ページにモーダルが開いていれば取り直さない・閉じたら 1 回取り直す (#2201 U2)', async () => {
-    const refetch = vi.fn();
-    await act(async () => {
-      root.render(<Receiver refetch={refetch} />);
-    });
-    const modal = addToBody('<div role="dialog"><p>確認</p></div>');
-    await notifyAiConsultationSucceeded();
-    expect(refetch).not.toHaveBeenCalled();
-
-    // role を外す (属性の変化) でも番兵が外れる
-    await act(async () => {
-      modal.firstElementChild!.removeAttribute('role');
-    });
-    expect(refetch).toHaveBeenCalledTimes(1);
-  });
-
-  it('止めた成功が無ければ、モーダルを閉じても取り直さない (#2201 U2)', async () => {
-    const refetch = vi.fn();
-    await act(async () => {
-      root.render(<Receiver refetch={refetch} />);
-    });
-    const modal = addToBody('<div role="dialog"><p>確認</p></div>');
-    await act(async () => {
-      modal.remove();
-    });
-    expect(refetch).not.toHaveBeenCalled();
-  });
-
-  it('止めている間にページを離れたら (アンマウント)、あとで番兵が外れても取り直さない (#2201 U2)', async () => {
-    const refetch = vi.fn();
-    await act(async () => {
-      root.render(<Receiver refetch={refetch} />);
-    });
-    const modal = addToBody('<div role="dialog"><p>確認</p></div>');
-    await notifyAiConsultationSucceeded();
-    await act(async () => {
-      root.render(<p>別のページ</p>);
-    });
-    await act(async () => {
-      modal.remove();
-    });
-    expect(refetch).not.toHaveBeenCalled();
-  });
-
-  it('AI 相談の吹き出しの中の入力欄だけなら取り直す', async () => {
-    const refetch = vi.fn();
-    await act(async () => {
-      root.render(<Receiver refetch={refetch} />);
-    });
-    addToBody(`<div ${AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE}=""><input type="text" value="次の相談"></div>`);
-    await notifyAiConsultationSucceeded();
-    expect(refetch).toHaveBeenCalledTimes(1);
-  });
-
-  it('描画のたびに渡し直された最新の関数を呼び、購読は 1 回だけ', async () => {
-    const addSpy = vi.spyOn(window, 'addEventListener');
-    const first = vi.fn();
-    const second = vi.fn();
-    await act(async () => {
-      root.render(<Receiver refetch={first} />);
-    });
-    await act(async () => {
-      root.render(<Receiver refetch={second} />);
-    });
-    await notifyAiConsultationSucceeded();
-    expect(first).not.toHaveBeenCalled();
-    expect(second).toHaveBeenCalledTimes(1);
-    expect(addSpy.mock.calls.filter(([name]) => name === AI_CONSULTATION_DATA_CHANGED_EVENT)).toHaveLength(1);
-  });
-
-  it('ページを離れたら (アンマウント) 取り直さない', async () => {
-    const refetch = vi.fn();
-    await act(async () => {
-      root.render(<Receiver refetch={refetch} />);
-    });
-    await act(async () => {
-      root.render(<p>別のページ</p>);
-    });
-    await notifyAiConsultationSucceeded();
-    expect(refetch).not.toHaveBeenCalled();
-  });
-});
-
-describe('useAiConsultationDataRefetch の世代番号・失敗・書き込みの印 (#2201 U1 + U2)', () => {
-  function WriteReceiver({
-    refetch,
-    writeInFlightRef,
-    onControl,
-  }: {
-    refetch: (ticket: AiConsultationFetchTicket) => unknown;
-    writeInFlightRef?: AiConsultationWriteInFlightRef;
-    onControl?: (control: AiConsultationRefetchControl) => void;
-  }) {
-    const control = useAiConsultationDataRefetch(refetch, { writeInFlightRef });
-    onControl?.(control);
-    return <p>書き込みのあるページ</p>;
-  }
-
-  it('取り直しのたびに新しい札を渡し、あとから始めた取得 (beginFetch) があれば前の札は最新でなくなる', async () => {
-    const tickets: AiConsultationFetchTicket[] = [];
-    let control: AiConsultationRefetchControl | null = null;
-    await act(async () => {
-      root.render(<WriteReceiver refetch={(ticket) => tickets.push(ticket)} onControl={(c) => (control = c)} />);
-    });
-    await notifyAiConsultationSucceeded();
-    expect(tickets).toHaveLength(1);
-    expect(tickets[0].isLatest()).toBe(true);
-
-    await notifyAiConsultationSucceeded();
-    expect(tickets).toHaveLength(2);
-    expect(tickets[0].isLatest(), '先の取り直しの札が最新のまま').toBe(false);
-    expect(tickets[1].isLatest()).toBe(true);
-
-    // ページの取得 (開いたとき・週の移動など) も同じ世代を進める
-    const pageTicket = control!.beginFetch();
-    expect(tickets[1].isLatest(), 'ページの取得のあとも取り直しの札が最新のまま').toBe(false);
-    expect(pageTicket.isLatest()).toBe(true);
-  });
-
-  it('取り直しが reject しても・同期で投げても拾う (未処理の Promise 拒否にしない)', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const unhandled = vi.fn();
-    process.on('unhandledRejection', unhandled);
-    try {
-      await act(async () => {
-        root.render(<WriteReceiver refetch={() => Promise.reject(new Error('通信の失敗'))} />);
-      });
-      await notifyAiConsultationSucceeded();
-      await act(async () => {
-        root.render(
-          <WriteReceiver
-            refetch={() => {
-              throw new Error('同期の失敗');
-            }}
-          />,
-        );
-      });
-      await notifyAiConsultationSucceeded();
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      });
-      expect(unhandled).not.toHaveBeenCalled();
-      expect(warn.mock.calls.map(([message]) => message)).toEqual([
-        '[ai-consultation-refetch] refetch failed:',
-        '[ai-consultation-refetch] refetch failed:',
-      ]);
-    } finally {
-      process.off('unhandledRejection', unhandled);
-    }
-  });
-
-  it('書き込みの印が立っている間は取り直さず、notifyWriteSettled で止めた成功のぶん 1 回だけ取り直す', async () => {
-    const refetch = vi.fn();
-    const writeInFlightRef = { current: false };
-    let control: AiConsultationRefetchControl | null = null;
-    await act(async () => {
-      root.render(<WriteReceiver refetch={refetch} writeInFlightRef={writeInFlightRef} onControl={(c) => (control = c)} />);
-    });
-
-    // 止めた成功が無ければ、書き込みが終わっても取り直さない
-    await act(async () => {
-      control!.notifyWriteSettled();
-    });
-    expect(refetch).not.toHaveBeenCalled();
-
-    writeInFlightRef.current = true;
-    await notifyAiConsultationSucceeded();
-    await notifyAiConsultationSucceeded();
-    expect(refetch).not.toHaveBeenCalled();
-
-    // 印を下ろさずに知らせても取り直さない
-    await act(async () => {
-      control!.notifyWriteSettled();
-    });
-    expect(refetch).not.toHaveBeenCalled();
-
-    writeInFlightRef.current = false;
-    await act(async () => {
-      control!.notifyWriteSettled();
-    });
-    expect(refetch).toHaveBeenCalledTimes(1);
-    await act(async () => {
-      control!.notifyWriteSettled();
-    });
-    expect(refetch).toHaveBeenCalledTimes(1);
-  });
-
-  it('書き込みが終わったときにモーダルが出ていれば、閉じたときに取り直す', async () => {
-    const refetch = vi.fn();
-    const writeInFlightRef = { current: true };
-    let control: AiConsultationRefetchControl | null = null;
-    await act(async () => {
-      root.render(<WriteReceiver refetch={refetch} writeInFlightRef={writeInFlightRef} onControl={(c) => (control = c)} />);
-    });
-    await notifyAiConsultationSucceeded();
-    const modal = addToBody('<div role="dialog"></div>');
-    writeInFlightRef.current = false;
-    await act(async () => {
-      control!.notifyWriteSettled();
-    });
-    expect(refetch).not.toHaveBeenCalled();
-    await act(async () => {
-      modal.remove();
-    });
-    expect(refetch).toHaveBeenCalledTimes(1);
-  });
-
-  it('重なった書き込み (useAiConsultationPendingWrites) は、全部終わったときに自分で知らせ、1 回だけ取り直す', async () => {
-    const refetch = vi.fn();
-    let writes: AiConsultationPendingWrites | null = null;
-    function PendingWritesReceiver() {
-      const pendingWrites = useAiConsultationPendingWrites();
-      writes = pendingWrites;
-      useAiConsultationDataRefetch(refetch, { writeInFlightRef: pendingWrites });
-      return <p>一覧の行ごとの書き込み</p>;
-    }
-    await act(async () => {
-      root.render(<PendingWritesReceiver />);
-    });
-    const endFirst = writes!.begin();
-    const endSecond = writes!.begin();
-    expect(writes!.current).toBe(true);
-    await notifyAiConsultationSucceeded();
-
-    // 先の書き込みが終わっても、あとの書き込みの途中なら取り直さない
-    await act(async () => {
-      endFirst();
-      endFirst();
-    });
-    expect(writes!.current).toBe(true);
-    expect(refetch).not.toHaveBeenCalled();
-
-    await act(async () => {
-      endSecond();
-    });
-    expect(writes!.current).toBe(false);
-    expect(refetch).toHaveBeenCalledTimes(1);
-  });
-});
-
-/**
- * 取り直しの応答を置く時点の番兵 (札の deferIfHeld。#2201 U1 + U2)。
- * 取り直しでは読み込み中の表示を出さないので、応答を待つあいだも入力欄・モーダルを開くボタン・書き込みのボタンが出ている。
- * 番兵と書き込みの印を通知の時点にしか見ないと、その間に開いたモーダル・打ち始めた入力・始めた書き込みを、届いた応答
- * (それより前に読んだ値) で上書きする
- */
-describe('取り直しの応答を置く時点の番兵・書き込みの印 (札の deferIfHeld。#2201 U1 + U2)', () => {
-  function TicketReceiver({
-    tickets,
-    writeInFlightRef,
-    onControl,
-  }: {
-    tickets: AiConsultationFetchTicket[];
-    writeInFlightRef?: AiConsultationWriteInFlightRef;
-    onControl?: (control: AiConsultationRefetchControl) => void;
-  }) {
-    const control = useAiConsultationDataRefetch((ticket) => tickets.push(ticket), { writeInFlightRef });
-    onControl?.(control);
-    return <p>取り直しの札を受けるページ</p>;
-  }
-
-  it('番兵も書き込みも無ければ置く (false)。取り直しを足さない', async () => {
-    const tickets: AiConsultationFetchTicket[] = [];
-    await act(async () => {
-      root.render(<TicketReceiver tickets={tickets} />);
-    });
-    await notifyAiConsultationSucceeded();
-    expect(tickets).toHaveLength(1);
-    await act(async () => {
-      expect(tickets[0].deferIfHeld()).toBe(false);
-    });
-    expect(tickets).toHaveLength(1);
-  });
-
-  it('応答を待つあいだにモーダルを開いたら置かず (true)、閉じたら 1 回取り直す', async () => {
-    const tickets: AiConsultationFetchTicket[] = [];
-    await act(async () => {
-      root.render(<TicketReceiver tickets={tickets} />);
-    });
-    await notifyAiConsultationSucceeded();
-    expect(tickets).toHaveLength(1);
-
-    const modal = addToBody('<div role="dialog"><input type="number" value="63.4"></div>');
-    await act(async () => {
-      expect(tickets[0].deferIfHeld(), '応答を待つあいだに開いたモーダルがあるのに置く').toBe(true);
-      // 何度見ても、取り直しは閉じたときの 1 回
-      expect(tickets[0].deferIfHeld()).toBe(true);
-    });
-    expect(tickets, 'モーダルが開いているのに取り直した').toHaveLength(1);
-
-    await act(async () => {
-      modal.remove();
-    });
-    expect(tickets, '閉じても止めた取り直しをしない').toHaveLength(2);
-    await act(async () => {
-      expect(tickets[1].deferIfHeld()).toBe(false);
-    });
-    expect(tickets).toHaveLength(2);
-  });
-
-  it('ページが自分で始めた取得の札 (beginFetch) は、番兵が立っていても置く (false)', async () => {
-    const tickets: AiConsultationFetchTicket[] = [];
-    let control: AiConsultationRefetchControl | null = null;
-    await act(async () => {
-      root.render(<TicketReceiver tickets={tickets} onControl={(c) => (control = c)} />);
-    });
-    const pageTicket = control!.beginFetch();
-    addToBody('<div role="dialog"></div>');
-    await act(async () => {
-      expect(pageTicket.deferIfHeld()).toBe(false);
-    });
-    expect(tickets).toHaveLength(0);
-  });
-
-  it('応答を待つあいだに書き込みを始めたら、書き込みの途中は置かず (true)、全部終わったら 1 回取り直す', async () => {
-    const tickets: AiConsultationFetchTicket[] = [];
-    let writes: AiConsultationPendingWrites | null = null;
-    function PendingWritesTicketReceiver() {
-      const pendingWrites = useAiConsultationPendingWrites();
-      writes = pendingWrites;
-      useAiConsultationDataRefetch((ticket) => tickets.push(ticket), { writeInFlightRef: pendingWrites });
-      return <p>楽観的な更新のあるページ</p>;
-    }
-    await act(async () => {
-      root.render(<PendingWritesTicketReceiver />);
-    });
-    await notifyAiConsultationSucceeded();
-    expect(tickets).toHaveLength(1);
-
-    const endWrite = writes!.begin();
-    await act(async () => {
-      expect(tickets[0].deferIfHeld(), '書き込みの途中に届いた応答を置く').toBe(true);
-    });
-    expect(tickets, '書き込みの途中に取り直した').toHaveLength(1);
-    await act(async () => {
-      endWrite();
-    });
-    expect(tickets, '書き込みが終わっても止めた取り直しをしない').toHaveLength(2);
-  });
-
-  it('応答を待つあいだに書き込みを始めて終えていたら、置かず (true)、すぐに 1 回取り直す (書き込みの前に読んだ値を置かない)', async () => {
-    const tickets: AiConsultationFetchTicket[] = [];
-    let writes: AiConsultationPendingWrites | null = null;
-    function PendingWritesTicketReceiver() {
-      const pendingWrites = useAiConsultationPendingWrites();
-      writes = pendingWrites;
-      useAiConsultationDataRefetch((ticket) => tickets.push(ticket), { writeInFlightRef: pendingWrites });
-      return <p>楽観的な更新のあるページ</p>;
-    }
-    await act(async () => {
-      root.render(<PendingWritesTicketReceiver />);
-    });
-    await notifyAiConsultationSucceeded();
-    expect(tickets).toHaveLength(1);
-    const startedBefore = writes!.startedCount;
-
-    await act(async () => {
-      writes!.begin()();
-    });
-    expect(writes!.startedCount).toBe(startedBefore + 1);
-    expect(writes!.current).toBe(false);
-    // 書き込みの間に来た通知は無いので、書き込みが終わっただけでは取り直さない
-    expect(tickets).toHaveLength(1);
-
-    await act(async () => {
-      expect(tickets[0].deferIfHeld(), '書き込みの前に読んだかもしれない応答を置く').toBe(true);
-    });
-    expect(tickets, '置かなかった応答のぶん取り直さない').toHaveLength(2);
-    // 書き込みのあとに始めた取り直しの応答は置く
-    await act(async () => {
-      expect(tickets[1].deferIfHeld()).toBe(false);
-    });
-    expect(tickets).toHaveLength(2);
-  });
-
-  it('1 つの取り直しの応答を何か所かに分けて置くページが置く場所ごとに見ても、置かずに取り直すのは 1 回 (#2201 U2)', async () => {
-    const tickets: AiConsultationFetchTicket[] = [];
-    let writes: AiConsultationPendingWrites | null = null;
-    function PendingWritesTicketReceiver() {
-      const pendingWrites = useAiConsultationPendingWrites();
-      writes = pendingWrites;
-      useAiConsultationDataRefetch((ticket) => tickets.push(ticket), { writeInFlightRef: pendingWrites });
-      return <p>応答を何か所かに分けて置くページ</p>;
-    }
-    await act(async () => {
-      root.render(<PendingWritesTicketReceiver />);
-    });
-    await notifyAiConsultationSucceeded();
-    expect(tickets).toHaveLength(1);
-
-    // 応答を待つあいだに書き込みを始めて終えた (番兵も書き込みの途中の印も立っていない)
-    await act(async () => {
-      writes!.begin()();
-    });
-    // 献立・買い物リスト・カレンダーの印のように、置く場所ごとに見る
-    await act(async () => {
-      expect(tickets[0].deferIfHeld(), '書き込みの前に読んだかもしれない応答を置く').toBe(true);
-      expect(tickets[0].deferIfHeld(), '一度置かなかった札の応答を、ほかの場所では置く').toBe(true);
-      expect(tickets[0].deferIfHeld()).toBe(true);
-    });
-    expect(tickets, '置く場所ごとに取り直しを足した').toHaveLength(2);
-  });
-
-  it('書き込みの印が真偽の ref のときは、応答を置く時点で書き込みの途中かだけを見る', async () => {
-    const tickets: AiConsultationFetchTicket[] = [];
-    const writeInFlightRef = { current: false };
-    let control: AiConsultationRefetchControl | null = null;
-    await act(async () => {
-      root.render(<TicketReceiver tickets={tickets} writeInFlightRef={writeInFlightRef} onControl={(c) => (control = c)} />);
-    });
-    await notifyAiConsultationSucceeded();
-    writeInFlightRef.current = true;
-    await act(async () => {
-      expect(tickets[0].deferIfHeld()).toBe(true);
-    });
-    expect(tickets).toHaveLength(1);
-    writeInFlightRef.current = false;
-    await act(async () => {
-      control!.notifyWriteSettled();
-    });
-    expect(tickets).toHaveLength(2);
-  });
-
-  it('ページを離れたあと (アンマウント) に届いた応答では、取り直しを足さない', async () => {
-    const tickets: AiConsultationFetchTicket[] = [];
-    await act(async () => {
-      root.render(<TicketReceiver tickets={tickets} />);
-    });
-    await notifyAiConsultationSucceeded();
-    const modal = addToBody('<div role="dialog"></div>');
-    await act(async () => {
-      root.render(<p>別のページ</p>);
-    });
-    await act(async () => {
-      expect(tickets[0].deferIfHeld()).toBe(true);
-    });
-    await act(async () => {
-      modal.remove();
-    });
-    expect(tickets).toHaveLength(1);
-  });
-
-  it('useAiConsultationRefetchKey: 最後に数を増やした取り直しの札を返す (増やす前は null)', async () => {
-    let state: { refetchKey: number; refetchTicket: () => AiConsultationFetchTicket | null } | null = null;
-    function KeyTicketView() {
-      const keyState = useAiConsultationRefetchKey();
-      state = keyState;
-      return <p data-testid="refetch-key">{keyState.refetchKey}</p>;
-    }
-    await act(async () => {
-      root.render(<KeyTicketView />);
-    });
-    expect(state!.refetchTicket()).toBeNull();
-
-    await notifyAiConsultationSucceeded();
-    expect(state!.refetchKey).toBe(1);
-    const ticket = state!.refetchTicket();
-    expect(ticket).not.toBeNull();
-
-    // 応答を待つあいだにモーダルを開いた: 置かず、閉じたら 1 つ増える
-    const modal = addToBody('<div role="dialog"></div>');
-    await act(async () => {
-      expect(ticket!.deferIfHeld()).toBe(true);
-    });
-    expect(state!.refetchKey).toBe(1);
-    await act(async () => {
-      modal.remove();
-    });
-    expect(state!.refetchKey).toBe(2);
-    expect(state!.refetchTicket()).not.toBe(ticket);
-  });
-});
-
-describe('useAiConsultationRefetchKey (#2195 V1)', () => {
-  function KeyView() {
-    const { refetchKey } = useAiConsultationRefetchKey();
-    return <p data-testid="refetch-key">{refetchKey}</p>;
-  }
-  const keyText = () => container.querySelector('[data-testid="refetch-key"]')?.textContent;
-
-  it('成功のたびに 1 つ増え、入力欄がある間は増えない', async () => {
-    await act(async () => {
-      root.render(<KeyView />);
-    });
-    expect(keyText()).toBe('0');
-
-    await notifyAiConsultationSucceeded();
-    expect(keyText()).toBe('1');
-
-    const holder = addToBody('<textarea>打ちかけ</textarea>');
-    await notifyAiConsultationSucceeded();
-    expect(keyText()).toBe('1');
-
-    // 外れたら止めた成功のぶん 1 つ増える (#2201 U2)
-    await act(async () => {
-      holder.remove();
-    });
-    expect(keyText()).toBe('2');
-
-    await notifyAiConsultationSucceeded();
-    expect(keyText()).toBe('3');
-  });
-});
-
-describe('取得の流れ (useAiConsultationFetchStream。#2201 U1 + U2)', () => {
-  /** 取得の流れを 1 本持ち、AI 相談の成功の取り直しの札を受けるページ */
-  function renderStreamPage(order: AiConsultationFetchStreamOrder, writeInFlightRef?: AiConsultationWriteInFlightRef) {
-    const page: { stream: AiConsultationFetchStream | null; tickets: AiConsultationFetchTicket[] } = { stream: null, tickets: [] };
-    function StreamPage() {
-      page.stream = useAiConsultationFetchStream(order);
-      useAiConsultationDataRefetch((ticket) => page.tickets.push(ticket), { writeInFlightRef });
-      return <p>取得の流れを持つページ</p>;
-    }
-    return { page, element: <StreamPage /> };
-  }
-
-  it("'latestStarted': 最後に始めた取得の応答だけを置く (開いたときの読み込みの応答が取り直しの応答より後に届いても置かない)", async () => {
-    const { page, element } = renderStreamPage('latestStarted');
-    await act(async () => {
-      root.render(element);
-    });
-    const placed: string[] = [];
-    const mount = page.stream!.begin();
-    await notifyAiConsultationSucceeded();
-    const refetch = page.stream!.begin(page.tickets[0]);
-    expect(mount.isLatest()).toBe(false);
-    expect(refetch.isLatest()).toBe(true);
-
-    await act(async () => {
-      expect(refetch.place(() => placed.push('取り直し'))).toBe('placed');
-      expect(mount.place(() => placed.push('開いたとき')), '古い応答を置いた').toBe('superseded');
-    });
-    expect(placed).toEqual(['取り直し']);
-
-    // あとの取得がまだ何も置いていなくても、先に始めた取得の応答は置かない
-    const older = page.stream!.begin();
-    const newer = page.stream!.begin();
-    await act(async () => {
-      expect(older.place(() => placed.push('先'))).toBe('superseded');
-      expect(newer.place(() => placed.push('あと'))).toBe('placed');
-    });
-    expect(placed).toEqual(['取り直し', 'あと']);
-  });
-
-  it("'newerThanPlaced': 置いた応答より新しい取得の応答を置く (あとの取得がまだ置いていなければ、先に始めた取得の応答も置く)", async () => {
-    const { page, element } = renderStreamPage('newerThanPlaced');
-    await act(async () => {
-      root.render(element);
-    });
-    const placed: string[] = [];
-    const older = page.stream!.begin();
-    const newer = page.stream!.begin();
-    await act(async () => {
-      // あとの取得が失敗した・まだ届いていない: 先に始めた取得の応答を置く
-      expect(older.place(() => placed.push('先'))).toBe('placed');
-      expect(newer.place(() => placed.push('あと'))).toBe('placed');
-    });
-    const late = page.stream!.begin();
-    const early = page.stream!.begin();
-    await act(async () => {
-      expect(early.place(() => placed.push('あとに始めた'))).toBe('placed');
-      expect(late.place(() => placed.push('先に始めた')), 'もう置いた新しい応答を古い応答で上書きした').toBe('superseded');
-    });
-    expect(placed).toEqual(['先', 'あと', 'あとに始めた']);
-  });
-
-  it("'newerThanPlaced' は鍵 (対象) ごとに順序を持つ: 別の対象の応答を置いても、選び直した対象の先に始めた取得の応答を古いと見なさない (A→B→A)", async () => {
-    const { page, element } = renderStreamPage('newerThanPlaced');
-    await act(async () => {
-      root.render(element);
-    });
-    const placed: string[] = [];
-    const firstA = page.stream!.begin(null, '日 A');
-    const otherB = page.stream!.begin(null, '日 B');
-    const secondA = page.stream!.begin(null, '日 A');
-    await act(async () => {
-      expect(otherB.place(() => placed.push('B'))).toBe('placed');
-      expect(firstA.place(() => placed.push('A (先に始めた)')), '別の対象 (B) の応答を置いたことで、A の応答を古いと見なした').toBe('placed');
-      expect(secondA.place(() => placed.push('A (あとに始めた)'))).toBe('placed');
-    });
-    // 同じ対象の中では、もう置いた新しい応答を古い応答で上書きしない
-    const lateA = page.stream!.begin(null, '日 A');
-    const earlyA = page.stream!.begin(null, '日 A');
-    await act(async () => {
-      expect(earlyA.place(() => placed.push('A (さらにあと)'))).toBe('placed');
-      expect(lateA.place(() => placed.push('A (古い)'))).toBe('superseded');
-    });
-    expect(placed).toEqual(['B', 'A (先に始めた)', 'A (あとに始めた)', 'A (さらにあと)']);
-  });
-
-  it('鍵ごとに別々の順序を持つ (ほかの範囲の取得で古くならない)', async () => {
-    const { page, element } = renderStreamPage('latestStarted');
-    await act(async () => {
-      root.render(element);
-    });
-    const placed: string[] = [];
-    const weekRange = page.stream!.begin(null, '週の範囲');
-    const monthRange = page.stream!.begin(null, '月の範囲');
-    const weekRangeAgain = page.stream!.begin(null, '週の範囲');
-    await act(async () => {
-      expect(monthRange.place(() => placed.push('月'))).toBe('placed');
-      expect(weekRange.place(() => placed.push('週 (古い)'))).toBe('superseded');
-      expect(weekRangeAgain.place(() => placed.push('週'))).toBe('placed');
-    });
-    expect(placed).toEqual(['月', '週']);
-  });
-
-  it('取り直しの札を渡した取得は、応答を置く時点にモーダルが開いていれば置かず (deferred)、閉じたら 1 回取り直す。古い応答では止めた通知の印を付けない', async () => {
-    const { page, element } = renderStreamPage('latestStarted');
-    await act(async () => {
-      root.render(element);
-    });
-    const placed: string[] = [];
-    await notifyAiConsultationSucceeded();
-    await notifyAiConsultationSucceeded();
-    expect(page.tickets).toHaveLength(2);
-    const olderRefetch = page.stream!.begin(page.tickets[0]);
-    const newerRefetch = page.stream!.begin(page.tickets[1]);
-    // 開いたときの読み込み (札なし) は番兵を見ない
-    const modal = addToBody('<div role="dialog"></div>');
-    await act(async () => {
-      expect(olderRefetch.place(() => placed.push('先の取り直し')), '古い応答で番兵を見た').toBe('superseded');
-      expect(newerRefetch.place(() => placed.push('あとの取り直し'))).toBe('deferred');
-      // 1 つの取得の応答を何か所かに分けて置く: 一度止めた取得は、ほかの場所でも置かない
-      expect(newerRefetch.place(() => placed.push('あとの取り直しの別の場所'))).toBe('deferred');
-    });
-    expect(placed).toEqual([]);
-    expect(page.tickets, 'モーダルが開いているのに取り直した').toHaveLength(2);
-    await act(async () => {
-      modal.remove();
-    });
-    // 止めた取り直しのぶん 1 回だけ (古い応答は印を付けていない)
-    expect(page.tickets, '閉じても止めた取り直しをしない・古い応答のぶんも取り直した').toHaveLength(3);
-    const flushed = page.stream!.begin(page.tickets[2]);
-    await act(async () => {
-      expect(flushed.place(() => placed.push('閉じたあとの取り直し'))).toBe('placed');
-    });
-    expect(placed).toEqual(['閉じたあとの取り直し']);
-  });
-
-  it('札を渡さない取得 (開いたとき・書き込みのあとの読み直し) は、番兵が立っていても置く', async () => {
-    const { page, element } = renderStreamPage('latestStarted');
-    await act(async () => {
-      root.render(element);
-    });
-    const placed: string[] = [];
-    addToBody('<div role="dialog"></div>');
-    const mount = page.stream!.begin();
-    await act(async () => {
-      expect(mount.place(() => placed.push('開いたとき'))).toBe('placed');
-    });
-    expect(placed).toEqual(['開いたとき']);
-    expect(page.tickets).toHaveLength(0);
-  });
-
-  it('段ごとに置く取得は、途中であとの取得が始まったら次の段を置かない', async () => {
-    const { page, element } = renderStreamPage('latestStarted');
-    await act(async () => {
-      root.render(element);
-    });
-    const placed: string[] = [];
-    const first = page.stream!.begin();
-    await act(async () => {
-      expect(first.place(() => placed.push('1 段目'))).toBe('placed');
-    });
-    page.stream!.begin();
-    await act(async () => {
-      expect(first.place(() => placed.push('2 段目'))).toBe('superseded');
-    });
-    expect(placed).toEqual(['1 段目']);
-  });
-});
-
-describe('開いたときの読み込み中に始まった取り直しは、その読み込みの役を引き継ぐ (#2201 U1)', () => {
-  it('useAiConsultationLoading: 読み込み中の表示を出している間の取り直しの読み方は mount、下ろしたあとは refetch。下ろすのは最後の札だけ', async () => {
-    let state: AiConsultationLoadingState | null = null;
-    let control: AiConsultationRefetchControl | null = null;
-    function LoadingProbe() {
-      state = useAiConsultationLoading();
-      control = useAiConsultationDataRefetch(() => undefined);
-      return <p data-testid="loading">{String(state.loading)}</p>;
-    }
-    const loadingText = () => container.querySelector('[data-testid="loading"]')?.textContent;
-    await act(async () => {
-      root.render(<LoadingProbe />);
-    });
-    expect(loadingText()).toBe('true');
-    expect(state!.refetchReadMode(), '開いたときの読み込み中の取り直しが、取り直しの扱い (失敗を隠す) になる').toBe('mount');
-
-    // 開いたときの札のあとに取り直しの札を作った: 開いたときの札では下ろさない (取り直しの応答を待っている)
-    const mountTicket = control!.beginFetch();
-    const refetchTicket = control!.beginFetch();
-    await act(async () => {
-      state!.settleLoading(mountTicket);
-    });
-    expect(loadingText(), '最後でない札で読み込み中の表示を下ろした').toBe('true');
-    // 取り直しの札 (最後の札) が下ろす
-    await act(async () => {
-      state!.settleLoading(refetchTicket);
-    });
-    expect(loadingText(), '最後の札 (取り直し) で読み込み中の表示を下ろさない').toBe('false');
-    expect(state!.refetchReadMode()).toBe('refetch');
-
-    // 描画の前でも、setLoading の直後から読み方が変わる (「再試行」で読み込み中の表示を出した直後に来た成功)
-    await act(async () => {
-      state!.setLoading(true);
-      expect(state!.refetchReadMode()).toBe('mount');
-    });
-  });
-
-  it('useAiConsultationRefetchRun: 読み込み中の表示を出している間に増えた回は取り直しの扱いにしない。下ろしたあとに増えた回は取り直し', async () => {
-    const runs: boolean[] = [];
-    let setLoading: ((loading: boolean) => void) | null = null;
-    function RunProbe() {
-      const { refetchKey } = useAiConsultationRefetchKey();
-      const [loading, setLoadingState] = useState(true);
-      setLoading = setLoadingState;
-      const takeRun = useAiConsultationRefetchRun(refetchKey, loading);
-      useEffect(() => {
-        runs.push(takeRun());
-      }, [refetchKey, takeRun]);
-      return null;
-    }
-    await act(async () => {
-      root.render(<RunProbe />);
-    });
-    expect(runs).toEqual([false]);
-
-    // 開いたときの読み込み中に成功が来た: 開いたときの回の役を引き継ぐ (取り直しの扱いにしない)
-    await notifyAiConsultationSucceeded();
-    expect(runs).toEqual([false, false]);
-
-    await act(async () => {
-      setLoading!(false);
-    });
-    await notifyAiConsultationSucceeded();
-    expect(runs, '読み込み中の表示を下ろしたあとの成功が取り直しの扱いにならない').toEqual([false, false, true]);
-  });
-
-  it('useAiConsultationRefetchRun: 読み込み中の表示を渡さない部品は、数が増えたかだけで決める', async () => {
-    const runs: boolean[] = [];
-    function RunProbe() {
-      const { refetchKey } = useAiConsultationRefetchKey();
-      const takeRun = useAiConsultationRefetchRun(refetchKey);
-      useEffect(() => {
-        runs.push(takeRun());
-      }, [refetchKey, takeRun]);
-      return null;
-    }
-    await act(async () => {
-      root.render(<RunProbe />);
-    });
-    await notifyAiConsultationSucceeded();
-    expect(runs).toEqual([false, true]);
   });
 });
 
@@ -1572,97 +747,70 @@ describe('ページが AI 相談の成功で取り直す (#2195 V1)', () => {
 
 /**
  * 描画の重いページ (献立表は 6,000 行を超え、ホーム・健康は Supabase の取得が多い) は、ページが既存の取得の関数を
- * 受け手に渡していることをソースで確かめる (受け手の動きそのものは上の useAiConsultationDataRefetch のテストで確かめる)。
+ * 受け手に渡していることをソースで確かめる (受け手の動きそのものは tests/ai-consultation-receiver-2206.test.tsx で確かめる)。
  * マイページは、上で描画して編集のモーダルが取り直しを止めることも確かめている。
  * 献立表が取り直して出すもの (生成中の依頼の監視・買い物リスト・月のカレンダー・人数の設定・家族の切り替えの名前) は、
  * tests/ai-consultation-weekly-refetch-2195.test.tsx が献立表を描画して確かめる
  */
 describe('受け手の配線 (#2195 V1)', () => {
-  /** 旧の hook (src/hooks/useAiConsultationDataRefetch.ts) の import。段 F で消す (#2206 G1 §17 G-5) */
-  const HOOK_IMPORT = /from "@\/hooks\/useAiConsultationDataRefetch";/;
-  /**
-   * 配線の行。hookImport は、そのページが hook をどこから import するか (移行前は旧の HOOK_IMPORT。移行した段は新しい hook の import に替える)。
-   * 行は受け手の段 (#2206 G1 §16) ごとの配列に分ける。各段は自分の段の配列の行だけを書き換える (並行する段の取り込みで同じ行を触らない)
-   */
+  /** 受け手の hook (src/hooks/useAiConsultationReceiver.ts) の import。どの配線の行のファイルもこれを持つ (#2206 G1 §17 G-5) */
+  const RECEIVER_HOOK_IMPORT = /from "@\/hooks\/useAiConsultationReceiver";/;
+  /** 配線の行 */
   interface WiringRow {
     readonly page: string;
     readonly file: string;
-    readonly hookImport: RegExp;
     readonly wiring: RegExp;
   }
 
-  // 段 B (新しい受け手の hook へ移した。hookImport は行ごとに新しい hook の import を書く。#2206 G1 §17 G-5)
-  const WIRING_STAGE_B: readonly WiringRow[] = [
+  const WIRING: readonly WiringRow[] = [
     {
       // 取り直しは表示中の期間 (periodTypeRef) を読む。開いたとき・期間の切り替えの読み取りだけが中断の印 (signal) を渡す
       page: '比較 (/comparison): 開いたとき・期間の切り替えは表示中の期間の鍵で読み込み中にし、取り直しは表示中の期間を読む',
       file: 'src/app/(main)/comparison/page.tsx',
-      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
       wiring: /const receiver = useAiConsultationReceiver\(\(read\) => readRankings\(read, periodTypeRef\.current\), \{\s*initialLoadingKeys: \[rankingsKey\(INITIAL_PERIOD_TYPE\)\],\s*\}\);[\s\S]*?void receiver\.read\(\{ loadingKeys: \[rankingsKey\(periodType\)\] \}, \(read\) => readRankings\(read, periodType, controller\.signal\)\);\s*return \(\) => controller\.abort\(\);\s*\}, \[periodType, receiver, readRankings\]\);/,
     },
     {
       page: '冷蔵庫 (/pantry): fetchItems',
       file: 'src/app/(main)/pantry/page.tsx',
-      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
       wiring: /const receiver = useAiConsultationReceiver\(fetchItems, \{ initialLoadingKeys: \[KEY_ITEMS\] \}\);[\s\S]*?useEffect\(\(\) => \{\s*void receiver\.read\(\{ loadingKeys: \[KEY_ITEMS\] \}, fetchItems\);\s*\}, \[receiver, fetchItems\]\);/,
     },
     {
       page: '健康目標 (/health/goals): fetchGoals',
       file: 'src/app/(main)/health/goals/page.tsx',
-      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
       wiring: /const receiver = useAiConsultationReceiver\(fetchGoals, \{ initialLoadingKeys: \[KEY_GOALS\] \}\);[\s\S]*?useEffect\(\(\) => \{\s*void receiver\.read\(\{ loadingKeys: \[KEY_GOALS\] \}, fetchGoals\);\s*\}, \[receiver, fetchGoals\]\);/,
     },
     {
       // 「再読み込み」は開いたときと同じ読み取り (#2206 G5 の profileReloadKey の数は消した)
       page: 'マイページ (/profile): readProfile (開いたとき・「再読み込み」・取り直し)',
       file: 'src/app/(main)/profile/page.tsx',
-      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
       wiring: /const receiver = useAiConsultationReceiver\(readProfile, \{ initialLoadingKeys: \[KEY_PROFILE\] \}\);[\s\S]*?useEffect\(\(\) => \{\s*void receiver\.read\(\{ loadingKeys: \[KEY_PROFILE\] \}, readProfile\);\s*\}, \[receiver, readProfile\]\);[\s\S]*?onClick=\{\(\) => void receiver\.read\(\{ loadingKeys: \[KEY_PROFILE\] \}, readProfile\)\}/,
     },
-  ];
-
-  // 段 C
-  const WIRING_STAGE_C: readonly WiringRow[] = [
     {
       page: '健康 (/health): fetchData と、出している選んだ日のパネルの記録',
       file: 'src/app/(main)/health/page.tsx',
-      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
       // 取り直しは開いたときに読むもの (fetchData) と、出している選んだ日のパネルの記録 (日を選んだときと同じ readSelectedDateRecord) を
       // 同じ read で読む。開いたときの読み込みは画面全体の読み込み中の鍵を立てる (最初の描画からも立てる。#2206 G1 §9 #12)
       wiring: /await Promise\.all\(\[fetchData\(read\), date === null \? undefined : readSelectedDateRecord\(read, date\)\]\);\s*\}, \[fetchData, readSelectedDateRecord\]\);[\s\S]*?const receiver = useAiConsultationReceiver\(refetchAfterAiConsultation, \{ initialLoadingKeys: HEALTH_PAGE_LOADING_KEYS \}\);[\s\S]*?void receiver\.read\(\{ loadingKeys: HEALTH_PAGE_LOADING_KEYS \}, fetchData\);/,
     },
-  ];
-
-  // 段 D
-  const WIRING_STAGE_D: readonly WiringRow[] = [
     {
       // 受け手は useHomeData (#2206 G1 段 D。home/page.tsx は hook を呼ばない)。取り直し (refetchHome) は同じ取り直しの読み取りで
       // 分析を AI を付けずに読み始め、ページの読み取り (fetchHomeData) は全画面の読み込み中の鍵を立てて主のデータを読む
       page: 'ホーム (/home): useHomeData の refetchHome と fetchHomeData',
       file: 'src/hooks/useHomeData.ts',
-      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
       wiring:
         /const refetchHome = \(read: AiConsultationRead\) =>\s*readHomeData\(read, \(refetchRead, userId\) => \{\s*void fetchNutritionAnalysis\(refetchRead, \{ analysisWithoutAi: true \}\);\s*void fetchPerformanceAnalysis\(userId, refetchRead\);\s*\}\);[\s\S]*?const receiver = useAiConsultationReceiver\(refetchHome, \{ initialLoadingKeys: \[KEY_HOME_LOADING\] \}\);[\s\S]*?const fetchHomeData = \(\) =>\s*receiver\.read\(\{ loadingKeys: \[KEY_HOME_LOADING\] \}, \(read\) =>\s*readHomeData\(read,/,
     },
-  ];
-
-  // 段 E
-  /** 新しい hook (src/hooks/useAiConsultationReceiver.ts) の import (#2206 G1 §17 G-5) */
-  const RECEIVER_HOOK_IMPORT = /from "@\/hooks\/useAiConsultationReceiver";/;
-  const WIRING_STAGE_E: readonly WiringRow[] = [
     {
       page: '献立表 (/menus/weekly): 週のキャッシュ (捨てる前に読み始めた応答も書かない discard。#2201 U1) と取得済みの月を捨て、生成中の依頼を確かめ、表示中の週・冷蔵庫・人数の設定・家族の一覧と名前・月のカレンダーの印を同じ取り直しの読み取りで読む (#2206 G1)',
       file: 'src/app/(main)/menus/weekly/page.tsx',
-      hookImport: RECEIVER_HOOK_IMPORT,
       wiring:
         /const refetchAfterAiConsultation = useCallback\(async \(read: AiConsultationRead\) => \{\s*weekDataCache\.current\.discard\(\);\s*fetchedMonthsRef\.current\.clear\(\);[\s\S]*?void checkPendingRequests\(weekStartKeyRef\.current\);\s*await Promise\.all\(\[\s*readDisplayedWeek\(read, WEEK_PLACEMENT_REREAD\),\s*fetchPantry\(read\),\s*fetchUserSettings\(read\),\s*loadFamilyData\(read\),\s*fetchAndCacheMealDates\(read, \.\.\.weekWindowOf\(weekStartRef\.current\)\),\s*fetchAndCacheMealDates\(read, \.\.\.monthWindowOf\(displayMonthRef\.current\)\),\s*\]\);\s*\}, \[readDisplayedWeek, fetchPantry, fetchUserSettings, loadFamilyData, fetchAndCacheMealDates, checkPendingRequests\]\);[\s\S]*?const receiver = useAiConsultationReceiver\(refetchAfterAiConsultation, \{ initialLoadingKeys: \[KEY_WEEK_LOADING\] \}\);/,
     },
   ];
 
-  const WIRING: readonly WiringRow[] = [...WIRING_STAGE_B, ...WIRING_STAGE_C, ...WIRING_STAGE_D, ...WIRING_STAGE_E];
-  it.each(WIRING)('$page', ({ file, hookImport, wiring }) => {
+  it.each(WIRING)('$page', ({ file, wiring }) => {
     const source = readRepoFile(file);
-    expect(source).toMatch(hookImport);
+    expect(source).toMatch(RECEIVER_HOOK_IMPORT);
     expect(source).toMatch(wiring);
   });
 
@@ -1715,9 +863,8 @@ describe('受け手のページのモーダルは role="dialog" を持つ (#2195
 
   it.each(RECEIVER_PAGES)('$file', ({ file, overlays }) => {
     const source = readRepoFile(file);
-    // 新しい受け手の hook (useAiConsultationReceiver。#2206 G1) へ移した受け手も、移す前の受け手も数える
-    // /home は useHomeData が受け手 (useAiConsultationReceiver を呼ぶ。#2206 G1 段 D)。ページは useHomeData() を呼ぶ
-    expect(source, '受け手のページではない').toMatch(/useAiConsultation(DataRefetch|RefetchKey|Receiver)\(|useHomeData\(\)/);
+    // 受け手は useAiConsultationReceiver を呼ぶ (#2206 G1)。/home は useHomeData が受け手で、ページは useHomeData() を呼ぶ
+    expect(source, '受け手のページではない').toMatch(/useAiConsultationReceiver\(|useHomeData\(\)/);
     let checked = 0;
     for (let at = source.indexOf(OVERLAY); at !== -1; at = source.indexOf(OVERLAY, at + OVERLAY.length)) {
       const start = source.lastIndexOf(OPEN_PRESENCE, at);
