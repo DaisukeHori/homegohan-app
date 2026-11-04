@@ -237,7 +237,7 @@ describe('enqueueMealImageJobsAfterSave の mealAfterMark と withMealAfterEnque
     expect(reread?.calls[0]).toEqual({ method: 'select', args: [MEAL_AFTER_ENQUEUE_THREW_COLUMNS] });
   });
 
-  it('読み直しに失敗したら mealAfterMark は null (応答は保存した行のまま。ログに残す)', async () => {
+  it('読み直しに失敗したら mealAfterMark は null (応答の行には failuresToOverlay の料理の印を重ねる。#2227 H4。ログに残す)', async () => {
     let reads = 0;
     const db = createRecordingSupabase((query) => {
       if (firstMethodOf(query) === 'update') return { data: [{ id: MEAL_ID }] };
@@ -256,7 +256,11 @@ describe('enqueueMealImageJobsAfterSave の mealAfterMark と withMealAfterEnque
       usage: null,
     });
 
-    expect(outcome).toEqual({ status: 'enqueue_threw', mealAfterMark: null });
+    expect(outcome).toEqual({
+      status: 'enqueue_threw',
+      mealAfterMark: null,
+      failuresToOverlay: [{ dishIndex: JOB.dishIndex, subjectHash: SUBJECT_HASH }],
+    });
     expect(h.logWarn).toHaveBeenCalledWith(
       'Failed to reload the meal after marking dishes whose meal image jobs were not enqueued',
       expect.objectContaining({ planned_meal_id: MEAL_ID }),
@@ -265,13 +269,13 @@ describe('enqueueMealImageJobsAfterSave の mealAfterMark と withMealAfterEnque
 
   it('withMealAfterEnqueueThrew: 積み込みの例外のときだけ料理を重ね、updated_at は行が持つときだけ重ねる', () => {
     const mealAfterMark = { dishes: [{ name: '印の後' }], updated_at: '2026-11-04T00:00:09.000Z' };
-    const threw = { status: 'enqueue_threw' as const, mealAfterMark };
+    const threw = { status: 'enqueue_threw' as const, mealAfterMark, failuresToOverlay: [] };
     const fullRow = { id: MEAL_ID, dishes: [PENDING_DISH], updated_at: '2026-11-04T00:00:01.000Z', dish_name: '筑前煮' };
     const partialRow = { id: MEAL_ID, dish_name: '筑前煮', dishes: [PENDING_DISH] };
 
     expect(withMealAfterEnqueueThrew(fullRow, threw)).toEqual({ ...fullRow, ...mealAfterMark });
     expect(withMealAfterEnqueueThrew(partialRow, threw)).toEqual({ ...partialRow, dishes: mealAfterMark.dishes });
-    expect(withMealAfterEnqueueThrew(fullRow, { status: 'enqueue_threw', mealAfterMark: null })).toBe(fullRow);
+    expect(withMealAfterEnqueueThrew(fullRow, { status: 'enqueue_threw', mealAfterMark: null, failuresToOverlay: [] })).toBe(fullRow);
     expect(
       withMealAfterEnqueueThrew(fullRow, {
         status: 'enqueued',

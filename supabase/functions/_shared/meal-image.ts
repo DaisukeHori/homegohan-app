@@ -370,6 +370,23 @@ export function summarizeMealImageJobOutcomes(outcomes: ReadonlyArray<MealImageJ
 }
 
 /**
+ * ジョブを積んだあとの後始末 (失敗した行のログ・積めなかった料理の印・数え戻し) を 1 つ行い、例外を外へ出さない (#2227 H4)。
+ * enqueueMealImageJobs (Next.js の lib/meal-image-jobs.ts と Edge の ./meal-image-jobs.ts) は、行を積み始めたあとは例外を投げない。
+ * 積んだあとに投げると、呼び出し側 (src/lib/meal-image-enqueue-after-save.ts・./save-meal.ts の enqueueSavedMealImageJobs) は
+ * 積み込み全体の失敗とみなして、積めた料理や同じ料理の待ちのジョブがある料理まで 'failed' + 'enqueue_failed' にし、数え戻しも
+ * 重ねていた (残ったジョブはあとで画像を書く)。後始末が投げたときは、その後始末だけを諦めてログに残す
+ * (ロガーが投げた場合もあるので console に書く)。呼び出し側が全体の例外を受けるのは、行を 1 つも積む前 (積む行を作る・
+ * service role のクライアントを取り出す) に失敗したときだけになる
+ */
+export async function runMealImageEnqueueAftercare(label: string, step: () => unknown): Promise<void> {
+  try {
+    await step();
+  } catch (error) {
+    console.error(`[meal-image-jobs] ${label} failed after enqueueing meal image jobs`, error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
  * ジョブを積めなかった (書き込みの失敗) 料理を 'failed' + MEAL_IMAGE_ENQUEUE_FAILED_ERROR にする (#1505)。
  * 料理は保存したあとなので、'pending' のまま残すと処理するジョブが無く「生成中」のまま残る。
  * 変えるのは、同じ料理 (image_subject_hash が積もうとしたジョブと同じ) で、画像がまだ無く、待ち・更新待ちの、

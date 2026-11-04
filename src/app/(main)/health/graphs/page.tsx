@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { formatLocalDate } from "@/lib/date-utils";
+import { addDaysToDate, todayLocal } from "@/lib/date-utils";
 import { createClient } from "@/lib/supabase/client";
 import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 import {
@@ -56,6 +56,9 @@ interface HealthRecord {
   /** health_checkups 由来のデータかどうか */
   fromCheckup?: boolean;
 }
+
+/** 期間ごとにグラフに並べる日数 (今日 (JST の暦日) を最後の日として、この日数の暦日を並べる) */
+const PERIOD_DAYS: Record<Period, number> = { week: 7, month: 30, '3months': 90, year: 365 };
 
 /** 開いたときの期間 (useState の初期値と、最初の描画から読み込み中にする鍵の両方に使う。#2206 G1) */
 const INITIAL_PERIOD: Period = 'month';
@@ -135,6 +138,12 @@ export default function HealthGraphsPage() {
   periodRef.current = period;
   const [metric, setMetric] = useState<Metric>('weight');
   const [targetWeight, setTargetWeight] = useState<number | null>(null);
+  /**
+   * 記録か健診を読めなかったページの読み取り (開いたとき・期間の切り替え・再読み込み) の期間 (#2227 H3)。その期間を出している間は
+   * 空のグラフ (「データがありません」) の代わりに「読み込めませんでした」と再読み込みのボタンを出す (記録が無いのと区別する)。
+   * 記録の鍵 (graphsKey) に記録の線と一緒に置く (読めたら null に戻す)
+   */
+  const [loadFailedPeriod, setLoadFailedPeriod] = useState<Period | null>(null);
   const channelRef = useRef<ReturnType<ReturnType<typeof createClient>['channel']> | null>(null);
   // <svg aria-describedby> が参照する <desc> の id
   const chartDescId = useId();
@@ -148,16 +157,14 @@ export default function HealthGraphsPage() {
   const fetchData = useCallback(async (read: AiConsultationRead, options: GraphsFetchOptions = {}) => {
     // 読み始めた期間 (置く鍵と、置く直前の比べに使う)
     const requestedPeriod = period;
-    // 期間に応じた日数を計算
-    const days = requestedPeriod === 'week' ? 7 : requestedPeriod === 'month' ? 30 : requestedPeriod === '3months' ? 90 : 365;
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days);
-    
+    // 読み始めの日 = 今日 (JST の暦日) の期間の日数だけ前 (グラフの最初の日の前の日から読む)。時計は 1 回だけ読み、暦日の文字列で数える (#2227 H6)
+    const startDay = addDaysToDate(todayLocal(), -PERIOD_DAYS[requestedPeriod]);
+
     try {
       // 3 つとも投げずに読む (どれかが通信の失敗で投げても・本文が壊れていても、読めた本文は置く。#2206 G5)。
       // 記録・健診を通信の失敗・本文の壊れで読めなかったときは、その応答が 2xx でないときと同じに扱う
       const [recordsRes, checkupsRes, goalsRes] = await Promise.all([
-        fetchOrNull(`/api/health/records?start_date=${formatLocalDate(startDate)}&limit=365`, 'health records'),
+        fetchOrNull(`/api/health/records?start_date=${startDay}&limit=365`, 'health records'),
         fetchOrNull(`/api/health/checkups?limit=365`, 'health checkups'),
         fetchOrNull('/api/health/goals?status=active', 'health goals'),
       ]);
@@ -168,9 +175,11 @@ export default function HealthGraphsPage() {
         readOkJson<GoalsBody>(goalsRes, 'health goals'),
       ]);
 
+      // 記録か健診を読めなかった (通信の失敗・非 2xx・本文の壊れ)
+      const recordsUnread = recordsBody === null || checkupsBody === null;
       // 取り直しで記録か健診を読めなかった: 片方だけで線を作り直すと点が欠けるので、今の線を残す (記録の鍵に置かない。
       // 目標は読めていれば別の鍵に置く。#2206 G1)
-      const keepShownRecords = (read.mode === 'refetch' || options.keepOnFailure === true) && (recordsBody === null || checkupsBody === null);
+      const keepShownRecords = (read.mode === 'refetch' || options.keepOnFailure === true) && recordsUnread;
 
       const mergedRecords: HealthRecord[] = [];
 
@@ -183,7 +192,7 @@ export default function HealthGraphsPage() {
       if (checkupsBody !== null) {
         for (const c of (checkupsBody.checkups || [])) {
           // checkup_date が期間内のものだけ
-          if (c.checkup_date < formatLocalDate(startDate)) continue;
+          if (c.checkup_date < startDay) continue;
           // 同じ日付がすでに health_records にあれば weight/bp のみ補完
           const existing = mergedRecords.find(r => r.record_date === c.checkup_date);
           if (existing) {
@@ -206,10 +215,19 @@ export default function HealthGraphsPage() {
 
       // 日付降順でソート（gridsを日付昇順で表示するため reversed later in getGraphData）
       mergedRecords.sort((a, b) => b.record_date.localeCompare(a.record_date));
-      // 記録は目標より先に置く (目標を読めなくても、読めた記録の線を出す。#2206 G5)
+      // 記録は目標より先に置く (目標を読めなくても、読めた記録の線を出す。#2206 G5)。
+      // ページの読み取り (開いたとき・期間の切り替え・再読み込み) で記録か健診を読めなかったときは、空のグラフでなく失敗の知らせを置く
+      // (記録が無いのと区別する。前の期間の線も残さない。#2227 H3)
       if (!keepShownRecords) {
         read.place(graphsKey(requestedPeriod), () => {
-          if (periodRef.current === requestedPeriod) setRecords(mergedRecords);
+          if (periodRef.current !== requestedPeriod) return;
+          if (recordsUnread) {
+            setRecords([]);
+            setLoadFailedPeriod(requestedPeriod);
+          } else {
+            setRecords(mergedRecords);
+            setLoadFailedPeriod(null);
+          }
         });
       }
 
@@ -230,6 +248,8 @@ export default function HealthGraphsPage() {
   const receiver = useAiConsultationReceiver(fetchData, { initialLoadingKeys: [graphsKey(INITIAL_PERIOD)] });
   // スピナーは表示中の期間の鍵 (古い期間の読み取りの終わり・置いたことでは、今の期間の鍵は下りない)
   const loading = receiver.isLoading(graphsKey(period));
+  /** 今の期間の記録か健診を読めなかった (読み込み中は出さない。#2227 H3) */
+  const loadFailed = !loading && loadFailedPeriod === period;
 
   // 開いたとき・期間の切り替えの読み込み (読み込み中の表示を出す)。receiver の参照は一生同じなので、期間が変わったときだけ走る
   useEffect(() => {
@@ -273,14 +293,12 @@ export default function HealthGraphsPage() {
 
     let values: { date: string; value: number | null; value2?: number | null; fromCheckup?: boolean }[] = [];
 
-    // 期間内の全日付を生成
-    const days = period === 'week' ? 7 : period === 'month' ? 30 : period === '3months' ? 90 : 365;
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - days + 1);
-
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-      const dateStr = formatLocalDate(d);
+    // 期間内の全日付 (今日 (JST の暦日) までの PERIOD_DAYS 日) を生成する。
+    // 時計は 1 回だけ読み、暦日の文字列で前の日を数える (#2227 H6: 以前は期間の終わりと始まりで時計を 2 回読み、始まりから 1 日ずつ
+    // 進めた日時が終わりの日時以下のあいだを並べていたので、2 回の読み取りの間に時計が 1 ms 進むと今日が期間から落ちた)
+    const today = todayLocal();
+    for (let daysBefore = PERIOD_DAYS[period] - 1; daysBefore >= 0; daysBefore -= 1) {
+      const dateStr = addDaysToDate(today, -daysBefore);
       const record = records.find(r => r.record_date === dateStr);
 
       let value: number | null = null;
@@ -758,6 +776,21 @@ export default function HealthGraphsPage() {
               <div className="h-full flex items-center justify-center">
                 <div className="animate-spin w-8 h-8 border-2 border-accent border-t-transparent rounded-full" />
               </div>
+            ) : loadFailed ? (
+              // 記録か健診を読めなかった: 記録が無いのと区別して知らせ、読み直せるようにする (#2227 H3)
+              <div role="alert" className="h-full flex flex-col items-center justify-center gap-3">
+                <p className="text-sm" style={{ color: colors.dangerText }}>
+                  記録を読み込めませんでした
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void receiver.read({ loadingKeys: [graphsKey(period)] }, fetchData)}
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-white"
+                  style={{ backgroundColor: colors.accent }}
+                >
+                  再読み込み
+                </button>
+              </div>
             ) : graphData.filter(d => d.value !== null).length > 0 ? (
               renderGraph()
             ) : (
@@ -813,7 +846,8 @@ export default function HealthGraphsPage() {
       </div>
 
       {/* 目標との比較（体重のみ） */}
-      {metric === 'weight' && targetWeight && (
+      {/* 記録を読めなかったときは出さない (最新の値が無いまま「目標まであと」を目標の値で出してしまう。#2227 H3) */}
+      {metric === 'weight' && targetWeight && !loadFailed && (
         <div className="px-4 mb-4">
           <div 
             className="p-4 rounded-xl"
