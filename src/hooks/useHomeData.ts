@@ -447,7 +447,7 @@ export const useHomeData = () => {
       startAnalyses(read, authUser.id);
     } else if (read.mode === 'mount') {
       // 取り直しでログインを確かめられなかったときは、今の表示を残す (#2201 U1。ログアウトはログインの状態の変化の読み込みが反映する)。
-      // ログインしていないと置けたときに覚える (#2227 H3・#2235 I2。追い越されたときは前の値のまま。取り直しは覚えた値を変えない)
+      // ログインしていないと置けたときに覚える (#2227 H3・#2235 I2。追い越されたときは前の値のまま。取り直しでログインを確かめられなかったときは覚えた値を変えない)
       read.place(KEY_USER, () => {
         setUser(null);
         lastReadAuthUserIdRef.current = null;
@@ -1253,7 +1253,7 @@ export const useHomeData = () => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      // ログインしている人が変わったときだけ読み直す (INITIAL_SESSION・TOKEN_REFRESHED では読まない。#2206 G3)。
+      // SIGNED_IN・SIGNED_OUT・USER_UPDATED (HOME_REFETCH_AUTH_EVENTS) で読み直す (INITIAL_SESSION・TOKEN_REFRESHED では読まない。#2206 G3)。SIGNED_OUT・USER_UPDATED は毎回。
       // SIGNED_IN はタブを前に戻したときにも同じ人で来ることがあるので、前回読んだ利用者と違うときだけ読み直す (#2227 H3)
       // ホームの読み取りが自分で setSession している間の SIGNED_IN は、その読み取りの同期の知らせなので読み直さない (#2235 I2)
       if (shouldRefetchHomeOnAuthChange(event, session?.user.id, lastReadAuthUserIdRef.current, ownSessionSyncsRef.current > 0)) {
