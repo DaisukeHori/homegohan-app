@@ -7,7 +7,9 @@
  *   - 秘密 / 内部の列 (Stripe の ID・運営の備考・権限など) は出力に入らない
  *   - 出力は常に有効な JSON。サイズ / 行数 / 時間の上限に達したときも、どこが切れたかを summary に残す
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { JST_EXPORT_FILENAME_BOUNDARIES } from './helpers/jst-export-filename-boundaries';
+import { TEST_TIME_ZONES, withTimeZone } from './helpers/time-zones';
 import {
   ACCOUNT_EXPORT_TABLES,
   EXPORT_STORED_FAILURE_MESSAGE,
@@ -220,9 +222,38 @@ describe('generateAccountExport: 出力の形式', () => {
     expect(text.endsWith('}\n')).toBe(true);
   });
 
-  it('ファイル名は homegohan-export-YYYY-MM-DD.json (UTC の日付)', () => {
-    expect(buildExportFilename(new Date('2026-10-07T23:59:59Z'))).toBe('homegohan-export-2026-10-07.json');
+  it('ファイル名は homegohan-export-YYYY-MM-DD.json', () => {
     expect(buildExportFilename()).toMatch(/^homegohan-export-\d{4}-\d{2}-\d{2}\.json$/);
+  });
+});
+
+describe('buildExportFilename: ファイル名の日付は JST の今日 (#2245 K3)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('境界の組は、UTC の暦日と JST の今日が違う時刻 (以前の書き方で前日になる JST 0:00〜8:59) を含む', () => {
+    for (const { now, utcDay } of JST_EXPORT_FILENAME_BOUNDARIES) {
+      expect(new Date(now).toISOString().slice(0, 10), now).toBe(utcDay);
+    }
+    expect(JST_EXPORT_FILENAME_BOUNDARIES.filter((b) => b.jstToday !== b.utcDay).map((b) => b.now)).toEqual([
+      '2026-10-07T15:00:00.000Z',
+      '2026-10-07T23:59:59.999Z',
+    ]);
+  });
+
+  it.each(TEST_TIME_ZONES)('TZ=%s でも、渡した時刻の JST の暦日 (JST 0:00〜8:59 は UTC の前日ではなく JST の当日)', (tz) => {
+    for (const { now, jstToday } of JST_EXPORT_FILENAME_BOUNDARIES) {
+      expect(withTimeZone(tz, () => buildExportFilename(new Date(now))), now).toBe(`homegohan-export-${jstToday}.json`);
+    }
+  });
+
+  it.each(TEST_TIME_ZONES)('TZ=%s でも、引数を省くと今の時刻の JST の今日', (tz) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    for (const { now, jstToday } of JST_EXPORT_FILENAME_BOUNDARIES) {
+      vi.setSystemTime(new Date(now));
+      expect(withTimeZone(tz, () => buildExportFilename()), now).toBe(`homegohan-export-${jstToday}.json`);
+    }
   });
 });
 

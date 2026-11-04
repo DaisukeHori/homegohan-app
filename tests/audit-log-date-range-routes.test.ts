@@ -11,7 +11,8 @@
  * DB は、渡された条件 (gte / lt / lte / eq) を created_at の時刻として評価するフェイクで置き換える
  * (条件の値と、その条件で実際に残る行の両方を確かめる)。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { JST_EXPORT_FILENAME_BOUNDARIES } from './helpers/jst-export-filename-boundaries';
 import { TEST_TIME_ZONES, withTimeZoneAsync } from './helpers/time-zones';
 
 type Row = { id: string; created_at: string };
@@ -212,4 +213,22 @@ describe.each(ROUTES)('$name: 期間は JST の暦日 (#1433)', ({ table, call }
       expect(fake.selects).toHaveLength(0);
     },
   );
+});
+
+describe('GET /api/super-admin/audit-logs?format=csv: ファイル名の日付は JST の今日 (#2245 K3)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each(TEST_TIME_ZONES)('TZ=%s でも、JST の 0:00〜8:59 は UTC の前日ではなく JST の今日の日付', async (tz) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    for (const { now, jstToday } of JST_EXPORT_FILENAME_BOUNDARIES) {
+      vi.setSystemTime(new Date(now));
+      const res = await withTimeZoneAsync(tz, () =>
+        getSuperAdminAuditLogs(new Request('http://localhost/api/super-admin/audit-logs?format=csv') as never),
+      );
+      expect(res.status, now).toBe(200);
+      expect(res.headers.get('Content-Disposition'), now).toBe(`attachment; filename="audit-logs-${jstToday}.csv"`);
+    }
+  });
 });
