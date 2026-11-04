@@ -1872,7 +1872,7 @@ const LEGACY_IDENTIFIERS: readonly string[] = [
 ];
 /**
  * P6: 受け手ごとの数の表 (§9.3 が正本。段ごとに自分の段の行を足す。段 A は空、段 F で 21 行)。
- * minPlaceCalls = §9 の鍵の欄の数 (place の呼び出しの下限)・writes = §9.1 のそのファイルの書き込みの数 (P2 が数えた数と等しい)。
+ * minPlaceCalls = §9 の鍵の欄の数 (置く鍵 + 読み込み中だけの鍵。place の呼び出しの下限)・writes = §9.1 のそのファイルの書き込みの数 (P2 が数えた数と等しい)。
  * 表に無い受け手のファイル・表にあって受け手でないファイルは赤。読み取りの経路の根は各ファイル 1 つ以上
  */
 const RECEIVER_EXPECTATIONS: Readonly<Record<string, { readonly minPlaceCalls: number; readonly writes: number }>> = {
@@ -2079,7 +2079,7 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 
 ### 9.3 受け手ごとの最初の描画と数の表 (P6 の `RECEIVER_EXPECTATIONS` の正本)
 
-各段は自分の段の受け手の行を `RECEIVER_EXPECTATIONS` に足す (段 A は空)。P6 は表のファイルごとに「読み取りの経路の根 ≥ 1」「`place` の呼び出し ≥ 鍵の欄の数」「書き込み (P2 が数えたもの) = 書き込みの欄の数」を確かめ、表に無い受け手のファイル (`useAiConsultationReceiver(` を呼ぶもの) があれば赤。数は基点 origin/main `eb1ad85da` の数 (`9bff430c` で数えたものと同じ。/profile/nutrition-targets の鍵は G5 の「両方読めたときだけ置く」に合わせて 1 つ。/health/graphs の鍵は記録と目標の 2 つ・`useHomeData.ts` の鍵は同意の知らせと今日のチェックインを分けて 18。§6.2)。各段は、自分の段の受け手の行を枝を切った時点の origin/main で数え直し (§9.1 の列挙の規則)、送信が増減していたら実数に合わせて deviations に書く。
+各段は自分の段の受け手の行を `RECEIVER_EXPECTATIONS` に足す (段 A は空)。P6 は表のファイルごとに「読み取りの経路の根 ≥ 1」「`place` の呼び出し ≥ 鍵の欄の数」「書き込み (P2 が数えたもの) = 書き込みの欄の数」を確かめ、表に無い受け手のファイル (`useAiConsultationReceiver(` を呼ぶもの) があれば赤。数は基点 origin/main `eb1ad85da` の数 (`9bff430c` で数えたものと同じ。/profile/nutrition-targets の鍵は G5 の「両方読めたときだけ置く」に合わせて 1 つ。/health/graphs の鍵は記録と目標の 2 つ・`useHomeData.ts` の鍵は同意の知らせと今日のチェックインを分けて 18。§6.2)。鍵の欄の数の数え方は、§9 の鍵の欄にある鍵の全部 = 置く鍵 + 読み込み中だけの鍵 (どちらもページが `read.place` で置く。読み込み中だけの鍵は何もしない `apply` で置く。§6.4)。読み込み中だけの鍵を持つのは 2 ファイルで、`useHomeData.ts` = 置く鍵 17 + `homeLoading` = 18、`menus/weekly/page.tsx` = 置く鍵 6 (`plan:<週>`・`mealDates:<月>`・`shoppingList`・`pantry`・`settings`・`family`) + `weekLoading` = 7。ほかのファイルは読み込み中だけの鍵を持たないので、鍵の欄の数 = 置く鍵の数。各段は、自分の段の受け手の行を枝を切った時点の origin/main で数え直し (§9.1 の列挙の規則)、送信が増減していたら実数に合わせて deviations に書く。
 
 | ファイル | 段 | `initialLoadingKeys` (今の読み込み中の初期値が true のもの) | 鍵の欄の数 (`place` の下限) | 書き込み |
 |---|---|---|---|---|
@@ -2103,7 +2103,7 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 | `org/transfer-accept/[proposal_id]/page.tsx` | C | `[KEY_PROPOSAL]` | 1 | 2 |
 | `health/page.tsx` | C | `[KEY_TODAY, KEY_STREAK, KEY_GOALS]` | 4 | 1 |
 | `hooks/useHomeData.ts` | D | `[KEY_HOME_LOADING]` (栄養の分析・パフォーマンスの分析の読み込み中は今も初期値 false なので入れない) | 18 | 5 |
-| `menus/weekly/page.tsx` | E | `[KEY_WEEK_LOADING]` | 6 | 29 |
+| `menus/weekly/page.tsx` | E | `[KEY_WEEK_LOADING]` | 7 | 29 |
 
 書き込みの合計 = 57 (§9.1)。ファイルのパスは `src/app/(main)/` (部品は `src/`) からの相対。
 
