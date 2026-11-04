@@ -103,6 +103,7 @@ import {
   AI_CONSULTATION_RELOADABLE_PATHS,
   AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR,
   AI_CONSULTATION_RELOAD_PAGE_BLOCKING_SELECTORS,
+  AI_CONSULTATION_WRITES_ATTRIBUTE,
   BRIDGE_PAGE_PATH,
   aiConsultationReloadBlockingSelectorOf,
 } from '../../src/lib/webViewBridge';
@@ -298,7 +299,7 @@ describe('入力の途中かもしれないページでは読み込み直さな�
     expect(page.reload).not.toHaveBeenCalled();
   });
 
-  it('読み込み直しを止める要素は、入力の部品 (hidden を除く) と開いているモーダル', () => {
+  it('読み込み直しを止める要素は、入力の部品 (hidden を除く) と開いているモーダルと、Web の書き込みの印 (#2206 G1)', () => {
     const parts = AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR.split(',').map((part) => part.trim());
     expect(parts).toEqual([
       'input:not([type="hidden"])',
@@ -308,6 +309,7 @@ describe('入力の途中かもしれないページでは読み込み直さな�
       '[role="dialog"]',
       '[aria-modal="true"]',
       'dialog[open]',
+      'html[data-ai-consultation-writes]',
     ]);
   });
 
@@ -567,7 +569,7 @@ describe('入力の部品・モーダルで止めた読み込み直しは、止�
     expect(page.observers[0].disconnected).toBe(true);
   });
 
-  it('止めている要素の当たり外れを変えうる属性 (モーダルの role・ページごとに足す要素の class など) の変化も見張る', async () => {
+  it('止めている要素の当たり外れを変えうる属性 (モーダルの role・ページごとに足す要素の class・Web の書き込みの印など) の変化も見張る', async () => {
     const script = await scriptInjectedOnDataChange(<WebViewScreen path="/profile" reloadOnAiConsultationDataChange />);
     const page = runOnWatchablePage(script, '/profile', MODAL_SHOWN);
     expect(page.observers[0].options).toEqual({
@@ -577,7 +579,48 @@ describe('入力の部品・モーダルで止めた読み込み直しは、止�
       attributeFilter: [...AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES],
     });
     expect(AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES).toEqual(
-      expect.arrayContaining(['role', 'aria-modal', 'open', 'contenteditable', 'type', 'class']),
+      expect.arrayContaining(['role', 'aria-modal', 'open', 'contenteditable', 'type', 'class', 'data-ai-consultation-writes']),
     );
+  });
+
+  describe('Web の受け手の書き込みの印 (html[data-ai-consultation-writes]。#2206 G1)', () => {
+    /** Web の受け手が書き込みを進めている間の html の印 (止めている要素の 1 つ) */
+    const WRITES_IN_FLIGHT: readonly string[] = ['html[data-ai-consultation-writes]'];
+
+    it('html に data-ai-consultation-writes がある間は読み込み直さず、外れたら 1 回読み込み直す (#2206 G1)', async () => {
+      const script = await scriptInjectedOnDataChange(<WebViewScreen path="/menus/weekly" reloadOnAiConsultationDataChange />);
+      const page = runOnWatchablePage(script, '/menus/weekly', WRITES_IN_FLIGHT);
+      expect(page.location.reload).not.toHaveBeenCalled();
+      expect(page.observers).toHaveLength(1);
+      // 印が外れたこと (html の属性の変化) を見張りが受け取れる
+      expect(page.observers[0].options).toEqual(
+        expect.objectContaining({ attributes: true, attributeFilter: expect.arrayContaining(['data-ai-consultation-writes']) }),
+      );
+
+      // 書き込みが進んでいる間の DOM の変化では読み込み直さない
+      page.mutate();
+      expect(page.location.reload).not.toHaveBeenCalled();
+
+      // 書き込みが全部終わって印が外れたら 1 回だけ読み込み直す
+      page.elements.length = 0;
+      page.mutate();
+      expect(page.location.reload).toHaveBeenCalledTimes(1);
+      expect(page.observers[0].disconnected).toBe(true);
+      page.mutate();
+      expect(page.location.reload).toHaveBeenCalledTimes(1);
+    });
+
+    it('止める要素の一覧に html[data-ai-consultation-writes] があり、見張る属性に data-ai-consultation-writes がある', () => {
+      expect(AI_CONSULTATION_WRITES_ATTRIBUTE).toBe('data-ai-consultation-writes');
+      expect(AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR.split(',').map((part) => part.trim())).toContain(
+        `html[${AI_CONSULTATION_WRITES_ATTRIBUTE}]`,
+      );
+      expect(AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES).toContain(AI_CONSULTATION_WRITES_ATTRIBUTE);
+      for (const pathname of AI_CONSULTATION_RELOADABLE_PATHS) {
+        expect(aiConsultationReloadBlockingSelectorOf(pathname).split(',').map((part) => part.trim())).toContain(
+          `html[${AI_CONSULTATION_WRITES_ATTRIBUTE}]`,
+        );
+      }
+    });
   });
 });
