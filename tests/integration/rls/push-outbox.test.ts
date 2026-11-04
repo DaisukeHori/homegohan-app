@@ -1115,8 +1115,9 @@ function isPhysicallyLast(positions: Map<string, [number, number]>, lastId: stri
 /**
  * 送った (sent) 行を OUT_OF_ORDER_RECEIPT_ROWS 個作り、sent_at を 2000 年の古い順にしたうえで、CI で赤になったときの形を作る:
  * sent_at の最も古い行が、自分の行のうち物理的に最も後ろにある (sent_at は変えない)。並びは ctid で確かめる (DB 任せにしない。#2235 I6)。
- * 書き直した版は、ページの空いた番号 (前の it が消した行の跡) に入って前へ来ることが多い (2026-11-04 に 256 の結合テストの枠で実測:
- * 最も古い行を書き直すだけでは 5 回とも末尾に来なかった) ので、最も古い行より後ろにあるほかの行を書き直して前へ寄せる。
+ * 書き直した版はページの空いた番号のうち小さいものから入る (2026-11-04 に 256 の結合テストの枠で実測: 最も古い行だけを書き直すと
+ * 5 回ともほかの行より前の番号を行き来し、ほかの行だけを書き直すと 10 回ともほかの行が後ろの番号を行き来して、どちらも末尾に来なかった)。
+ * そこで、ほかの行を先に、最も古い行を最後に書き直す (最も古い行が、ほかの行の取ったあとの番号に入る)。sent_at もこの順で書く。
  * 行の id を sent_at の古い順に返す
  */
 async function seedReceiptsOutOfPhysicalOrder(label: string, workerId: string): Promise<string[]> {
@@ -1127,15 +1128,16 @@ async function seedReceiptsOutOfPhysicalOrder(label: string, workerId: string): 
     expect((await complete(row.id, workerId, `ticket-${label}-${n}`)).data).toBe(true);
     ids.push(row.id);
   }
-  for (const id of ids) await updateRows([id], { sent_at: oldTimestamp() });
-  const [oldestId] = ids;
+  const sentAts = ids.map(() => oldTimestamp());
+  const [oldestId, ...othersIds] = ids;
+  for (let n = 1; n < ids.length; n++) await updateRows([ids[n]], { sent_at: sentAts[n] });
+  await updateRows([oldestId], { sent_at: sentAts[0] });
   const history: string[] = [];
   let positions = await physicalPositions(ids);
   for (let attempt = 1; attempt <= PHYSICAL_MOVE_MAX_ATTEMPTS && !isPhysicallyLast(positions, oldestId); attempt++) {
     history.push(ids.map((id) => `${id === oldestId ? '最古' : '他'}(${positions.get(id)?.join(',')})`).join(' '));
-    const oldest = positions.get(oldestId);
-    const behind = ids.filter((id) => id !== oldestId && oldest !== undefined && !isPhysicallyAfter(oldest, positions.get(id) ?? oldest));
-    await updateRows(behind, { updated_at: new Date().toISOString() });
+    await updateRows(othersIds, { updated_at: new Date().toISOString() });
+    await updateRows([oldestId], { updated_at: new Date().toISOString() });
     positions = await physicalPositions(ids);
   }
   expect(
