@@ -36,6 +36,7 @@ export {
   buildPhotoDishList,
   type EnqueueMealImageJobsResult,
   type EnqueueFailedMealRow,
+  type MealImageEnqueueAftercareFailure,
   type PlannedMealLockSnapshot,
   type PlannedMealLockedWriteDecision,
   type PlannedMealLockedWriteOutcome,

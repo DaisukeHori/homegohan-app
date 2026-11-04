@@ -369,20 +369,47 @@ export function summarizeMealImageJobOutcomes(outcomes: ReadonlyArray<MealImageJ
   return result;
 }
 
+/** 後始末が投げたときに onFailure へ渡すもの (#2235 I5) */
+export interface MealImageEnqueueAftercareFailure {
+  /** 諦めた後始末 (runMealImageEnqueueAftercare の label) */
+  label: string;
+  /** 後始末が投げた例外 */
+  error: unknown;
+}
+
 /**
  * ジョブを積んだあとの後始末 (失敗した行のログ・積めなかった料理の印・数え戻し) を 1 つ行い、例外を外へ出さない (#2227 H4)。
  * enqueueMealImageJobs (Next.js の lib/meal-image-jobs.ts と Edge の ./meal-image-jobs.ts) は、行を積み始めたあとは例外を投げない。
  * 積んだあとに投げると、呼び出し側 (src/lib/meal-image-enqueue-after-save.ts・./save-meal.ts の enqueueSavedMealImageJobs) は
  * 積み込み全体の失敗とみなして、積めた料理や同じ料理の待ちのジョブがある料理まで 'failed' + 'enqueue_failed' にし、数え戻しも
  * 重ねていた (残ったジョブはあとで画像を書く)。後始末が投げたときは、その後始末だけを諦めてログに残す
- * (ロガーが投げた場合もあるので console に書く)。呼び出し側が全体の例外を受けるのは、行を 1 つも積む前 (積む行を作る・
- * service role のクライアントを取り出す) に失敗したときだけになる
+ * (ロガーが投げた場合もあるので、まず console に書く)。呼び出し側が全体の例外を受けるのは、行を 1 つも積む前 (積む行を作る・
+ * service role のクライアントを取り出す) に失敗したときだけになる。
+ *
+ * onFailure を渡すと、console に書いたあとで、諦めた後始末と例外を渡して呼ぶ (#2235 I5)。Next.js の側はここで
+ * app_logs に残す (数え戻しが投げると、AI 利用回数の 1 回が戻らないまま、console だけでは運営が追えないため)。
+ * 後始末はやり直さない (数え戻しは一部だけ戻して投げることがあり、やり直すと二重に戻しうる)。
+ * onFailure が投げても外へ出さない (console に書く)。Edge (./meal-image-jobs.ts) は数え戻しをしないので渡さない
+ * (Edge の後始末のログは、ほかの積み込みのログと同じく console = Edge Function のログ)
  */
-export async function runMealImageEnqueueAftercare(label: string, step: () => unknown): Promise<void> {
+export async function runMealImageEnqueueAftercare(
+  label: string,
+  step: () => unknown,
+  onFailure?: (failure: MealImageEnqueueAftercareFailure) => unknown,
+): Promise<void> {
   try {
     await step();
   } catch (error) {
     console.error(`[meal-image-jobs] ${label} failed after enqueueing meal image jobs`, error instanceof Error ? error.message : String(error));
+    if (!onFailure) return;
+    try {
+      await onFailure({ label, error });
+    } catch (reportError) {
+      console.error(
+        `[meal-image-jobs] reporting that ${label} failed also failed`,
+        reportError instanceof Error ? reportError.message : String(reportError),
+      );
+    }
   }
 }
 
