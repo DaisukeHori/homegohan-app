@@ -80,6 +80,9 @@
  * #2206 G2 で足したもの: tests/ai-chat-reload-edges-2206.test.tsx は、同じ型 (AI 相談の吹き出しを描き、文が出るまでの待ちに
  *   tests/helpers/act-wait.ts を使う。tests/ai-chat-timeout-reload-2201.test.tsx と同じ形)。
  *
+ * #2206 G1 で足したもの: tests/ai-consultation-receiver-placement-guard-2206.test.ts は、同じ型 (TypeScript の構文木によるリポジトリの走査。
+ *   src の .ts / .tsx から受け手 (useAiConsultationReceiver を呼ぶファイル) を探し、構文木にしてたどる)。
+ *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる
  * (各ファイルの先頭で applyHeavyUnitTestTimeout() を呼んで vi.setConfig する。時間切れはテスト・フックを登録したときの
@@ -106,7 +109,8 @@ export const UNIT_HEAVY_HOOK_TIMEOUT_ENV = "UNIT_HEAVY_HOOK_TIMEOUT_MS";
  * (#1498 で速くした 2 本は外した)。#1605 で足した 15 本は、時間切れで落ちた 1 本と、同じ型 (テストの中で子プロセスを起こす・route を丸ごと読み込む) の 14 本。
  * #2093 で足した 3 本は、時間切れで落ちた 1 本と、同じ型 (テストの中でリポジトリを構文木で走査する) の 2 本。
  * #2144 で足した 1 本は、同じ型 (テストの中で route を丸ごと読み込む)。#2166 で足した 1 本も同じ型 (route を丸ごと読み込む)。
- * #2201 で足した 4 本と #2206 G2 で足した 1 本は、文が出るまでの待ちの上限 (10 秒) がテストの 5 秒を超えるもの
+ * #2201 で足した 4 本と #2206 G2 で足した 1 本は、文が出るまでの待ちの上限 (10 秒) がテストの 5 秒を超えるもの。
+ * #2206 G1 で足した 1 本は、同じ型 (テストの中でリポジトリを構文木で走査する)
  */
 export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "src/__tests__/api/ai/consultation/ai-chat-gate.test.ts",
@@ -134,6 +138,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/ai-consultation-context-recipe-collections-order-2157.test.ts",
   "tests/ai-consultation-refetch-coverage-2195.test.ts",
   "tests/ai-consultation-latest-messages-2144.test.ts",
+  "tests/ai-consultation-receiver-placement-guard-2206.test.ts",
   "tests/ai-proposal-card-2189.test.tsx",
   "tests/ai-rate-limit-contracts.test.ts",
   "tests/ai-usage-direct-jwt-edge.test.ts",
