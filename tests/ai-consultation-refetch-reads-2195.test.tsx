@@ -39,6 +39,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { formatLocalDate } from '@homegohan/shared';
 import {
   ReadRecorder,
   expectEmptyRefetchMatchesFreshMount,
@@ -396,10 +397,9 @@ async function checkEmptyRefetch(c: PageCase) {
 // ─── ページごとの応答 ───────────────────────────────────────────────
 
 /**
- * テストの時計の始まり (#2227 H6)。今日 (TODAY) を作ってからページを描くまでの間に日付が変わると (実時間で UTC の 0 時をまたいで
- * 流すと)、/health・/health/streaks は TODAY と別の日を読み・出すので、実時間に依らず日付をまたがない時刻から時計を始める。
- * UTC 3 時 = JST 12 時なので、実行環境が UTC でも JST でも同じ日 (2026-11-04)。読み取りの順序・時間切れのため、時計は実時間で進める
- * (shouldAdvanceTime)。このファイルの 1 回の実行 (数十秒) で日付はまたがない
+ * テストの時計の始まり (#2227 H6)。今日 (TODAY) を作ってからページを描くまでの間に日付が変わると、ページは TODAY と別の日を読み・出すので、
+ * 実時間に依らず日付をまたがない時刻から時計を始める。UTC 3 時 = JST 12 時 (2026-11-04)。読み取りの順序・時間切れのため、
+ * 時計は実時間で進める (shouldAdvanceTime)。このファイルの 1 回の実行 (数十秒) で日付はまたがない
  */
 const TEST_CLOCK_START = '2026-11-04T03:00:00.000Z';
 vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true, now: new Date(TEST_CLOCK_START) });
@@ -407,9 +407,11 @@ afterAll(() => {
   vi.useRealTimers();
 });
 
-const pad2 = (n: number) => String(n).padStart(2, '0');
-const localDate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-const TODAY = localDate(new Date());
+/**
+ * 今日 (JST の暦日。#2235 I3)。/health・/health/streaks・/health/graphs はどれも JST の今日 (todayLocal) を読み・出すので、
+ * 実行環境の暦日 (getFullYear / getMonth / getDate) でなく同じ基準で作る (実行環境が UTC・JST 以外のタイムゾーンでも 1 日ずれない)
+ */
+const TODAY = formatLocalDate(new Date());
 
 const HEALTH_RECORD = (date: string, weight: number) => ({ id: `rec-${date}`, record_date: date, weight, mood_score: 4, sleep_hours: 7 });
 const STREAK = { current_streak: 3, longest_streak: 5, achieved_badges: [], total_records: 8, streak_type: 'daily_record' };
