@@ -154,6 +154,7 @@ const RECEIVER_EXPECTATIONS: Readonly<Record<string, { readonly minPlaceCalls: n
   'src/app/(main)/health/page.tsx': { minPlaceCalls: 4, writes: 1 },
 
   // 段 D
+  'src/hooks/useHomeData.ts': { minPlaceCalls: 18, writes: 5 },
 
   // 段 E
 };
