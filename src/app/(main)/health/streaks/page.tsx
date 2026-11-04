@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Flame, Award, ChevronRight, Activity, CheckCircle2, Calendar, X,
 } from "lucide-react";
-import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
+import { STATUS_COLOR_TOKENS, WEEKDAY_LABELS_JA, calendarDaysEndingAt, todayLocal } from "@homegohan/shared";
 import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 
 const colors = {
@@ -36,6 +36,11 @@ interface StreakData {
   last_activity_date?: string | null;
   streak_start_date?: string | null;
 }
+
+/**
+ * 「今週の記録」の日数 (今日を含む過去 7 日)。/api/health/streaks の weeklyRecords (記録のある日) も、JST の今日を含む 7 日を返す
+ */
+const WEEK_CALENDAR_DAYS = 7;
 
 const BADGE_MILESTONES = [7, 14, 30, 60, 100];
 
@@ -112,19 +117,16 @@ export default function StreaksPage() {
     void receiver.read({ loadingKeys: [KEY_STREAK] }, fetchStreak);
   }, [receiver, fetchStreak]);
 
-  // 過去7日間のカレンダー生成
-  const weekDays = Array.from({ length: 7 }, (_, i) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (6 - i));
-    const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    return {
-      date: dateStr,
-      day: ["日", "月", "火", "水", "木", "金", "土"][date.getDay()],
-      dayNum: date.getDate(),
-      isToday: i === 6,
-      hasRecord: weeklyRecords.includes(dateStr),
-    };
-  });
+  // 過去 7 日間のカレンダー (今日を含む。#2235 I3)。時計は 1 回だけ読み、JST の今日から暦の計算だけで並べる
+  // (端末の暦日で作ると、端末のタイムゾーンが日本でないときに、サーバーの weeklyRecords (JST の暦日) やほかの画面の今日とずれる)
+  const today = todayLocal();
+  const weekDays = calendarDaysEndingAt(today, WEEK_CALENDAR_DAYS).map((cell) => ({
+    date: cell.date,
+    day: WEEKDAY_LABELS_JA[cell.dayOfWeek],
+    dayNum: cell.dayOfMonth,
+    isToday: cell.date === today,
+    hasRecord: weeklyRecords.includes(cell.date),
+  }));
 
   if (loading) {
     return (

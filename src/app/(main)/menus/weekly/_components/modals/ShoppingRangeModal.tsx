@@ -5,10 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { X, ChevronDown, ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
 import type { ServingsConfig } from "@/types/domain";
-import { MEAL_LABELS, formatLocalDate, formatDateJa } from "@homegohan/shared";
+import { MEAL_LABELS, addDaysToDate, formatLocalDate, formatDateJa, todayLocal } from "@homegohan/shared";
 // 区分の短い名前 (人数の表の 朝 / 昼 / 夜) は Web の区分の見た目の表から引く (#1665)
 import { SERVINGS_MEAL_SHORT_LABELS } from "@/lib/meal-type-visuals";
-import { useShoppingStore, useServingsConfigStore } from "../../_state";
+import { useShoppingStore, useServingsConfigStore, SHOPPING_RANGE_WEEK_DAYS } from "../../_state";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const colors = {
@@ -52,20 +52,13 @@ export function ShoppingRangeModal({
   const setServingsConfig = useServingsConfigStore((s) => s.setServingsConfig);
 
   // UX2-09: 各選択肢に具体的な日付範囲を併記する
-  const now = new Date();
-  const todayStr = formatLocalDate(now);
-  const tomorrowDate = new Date(now);
-  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-  const tomorrowStr = formatLocalDate(tomorrowDate);
-  const dayAfterDate = new Date(now);
-  dayAfterDate.setDate(dayAfterDate.getDate() + 2);
-  const dayAfterStr = formatLocalDate(dayAfterDate);
-  const daysEndDate = new Date(now);
-  daysEndDate.setDate(daysEndDate.getDate() + shoppingRange.daysCount - 1);
-  const daysEndStr = formatLocalDate(daysEndDate);
-  const weekEndDate = new Date(now);
-  weekEndDate.setDate(weekEndDate.getDate() + 6);
-  const weekEndStr = formatLocalDate(weekEndDate);
+  // 今日からの日付は、時計を 1 回だけ読んだ JST の今日から暦の計算だけでずらす (#2235 I3。買い物リストを作る範囲
+  // (page.tsx の calculateDateRange) と同じ求め方。端末のローカル時刻で日をずらすと、夏時間の切り替えの日に JST の日付が 1 日ずれうる)
+  const todayStr = todayLocal();
+  const tomorrowStr = addDaysToDate(todayStr, 1);
+  const dayAfterStr = addDaysToDate(todayStr, 2);
+  const daysEndStr = addDaysToDate(todayStr, shoppingRange.daysCount - 1);
+  const weekEndStr = addDaysToDate(todayStr, SHOPPING_RANGE_WEEK_DAYS - 1);
   const currentWeekStartStr = formatLocalDate(currentWeekStart);
   const currentWeekEndDate = new Date(currentWeekStart);
   currentWeekEndDate.setDate(currentWeekEndDate.getDate() + 6);

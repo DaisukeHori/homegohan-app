@@ -11,6 +11,7 @@ import {
   useServingsConfigStore,
   usePantryStore,
   useShoppingStore,
+  SHOPPING_RANGE_WEEK_DAYS,
   useFormDraftStore,
   convertV4ProgressToUIFormat,
   resumePendingGenerationAction,
@@ -35,7 +36,7 @@ import { useAiConsultationReceiver, type AiConsultationPlaceResult, type AiConsu
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, addDaysToDate, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
 // isUltimateModeWeeklyMenuRequest (究極モードの生成かの判定) は、Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609)
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
@@ -3693,8 +3694,9 @@ export default function WeeklyMenuPage() {
 
   // 買い物範囲から日付範囲を計算
   const calculateDateRange = useCallback(() => {
-    const today = new Date();
-    const todayStr = formatLocalDate(today);
+    // 今日からの日付は、時計を 1 回だけ読んだ JST の今日から暦の計算だけでずらす (#2235 I3。範囲を選ぶ欄
+    // (ShoppingRangeModal) が出す日付と同じ求め方。端末のローカル時刻で日をずらすと、夏時間の切り替えの日に JST の日付が 1 日ずれうる)
+    const todayStr = todayLocal();
     
     switch (shoppingRange.type) {
       case 'today':
@@ -3704,38 +3706,32 @@ export default function WeeklyMenuPage() {
           mealTypes: shoppingRange.todayMeals,
         };
       case 'tomorrow': {
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrow = addDaysToDate(todayStr, 1);
         return {
-          startDate: formatLocalDate(tomorrow),
-          endDate: formatLocalDate(tomorrow),
+          startDate: tomorrow,
+          endDate: tomorrow,
           mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
         };
       }
       case 'dayAfterTomorrow': {
-        const dayAfter = new Date(today);
-        dayAfter.setDate(dayAfter.getDate() + 2);
+        const dayAfter = addDaysToDate(todayStr, 2);
         return {
-          startDate: formatLocalDate(dayAfter),
-          endDate: formatLocalDate(dayAfter),
+          startDate: dayAfter,
+          endDate: dayAfter,
           mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
         };
       }
       case 'week': {
-        const weekEnd = new Date(today);
-        weekEnd.setDate(weekEnd.getDate() + 6);
         return {
           startDate: todayStr,
-          endDate: formatLocalDate(weekEnd),
+          endDate: addDaysToDate(todayStr, SHOPPING_RANGE_WEEK_DAYS - 1),
           mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
         };
       }
       case 'days': {
-        const endDay = new Date(today);
-        endDay.setDate(endDay.getDate() + shoppingRange.daysCount - 1);
         return {
           startDate: todayStr,
-          endDate: formatLocalDate(endDay),
+          endDate: addDaysToDate(todayStr, shoppingRange.daysCount - 1),
           mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
         };
       }

@@ -5,7 +5,7 @@ import { LIST_ORDERS, orderListBy } from "@/lib/api/list-order";
 import { toAnnouncement, toPlannedMeal } from "@/lib/converter";
 import { resolveDisplayName } from "@/lib/user-display";
 import { shouldRefetchHomeOnAuthChange, type HomeLastReadAuthUserId } from "@/lib/home-auth-refetch";
-import { formatLocalDate, pantryExpiringSoonUntil, PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from "@homegohan/shared";
+import { addDaysToDate, calendarDaysEndingAt, formatLocalDate, pantryExpiringSoonUntil, WEEKDAY_LABELS_JA, PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from "@homegohan/shared";
 import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
@@ -44,11 +44,11 @@ interface MonthlyStats {
   cookRate: number;
 }
 
-// Helper: 曜日を取得
-const getDayOfWeek = (dateStr: string): string => {
-  const days = ['日', '月', '火', '水', '木', '金', '土'];
-  return days[new Date(dateStr).getDay()];
-};
+// 記録の集計で読む日数 (どれも JST の今日 todayStr から addDaysToDate / calendarDaysEndingAt で数える。#2235 I3)
+/** 連続自炊の数を数えるために読む過去の日数 (今日の 30 日前から今日まで) */
+const COOKING_STREAK_LOOKBACK_DAYS = 30;
+/** 週間統計・今週のベスト料理の日数 (今日を含む過去 7 日) */
+const WEEKLY_STATS_DAYS = 7;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -483,9 +483,8 @@ export const useHomeData = () => {
   // read は呼んだ読み取り (readHomeData)。応答は自分の鍵に read.place で置く。下の記録の集計の取得も同じ (#2206 G1。古い応答を置かない)
   const fetchCookingStreak = async (userId: string, read: AiConsultationRead) => {
     try {
-      // 過去30日分のデータを取得（日付ベースモデル）
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      // 過去30日分のデータを取得（日付ベースモデル）。JST の今日 (todayStr) から暦の計算だけでずらす (#2235 I3。時計を読み直さない)
+      const thirtyDaysAgo = addDaysToDate(todayStr, -COOKING_STREAK_LOOKBACK_DAYS);
       
       const { data: daysData } = await supabase
         .from('user_daily_meals')
@@ -494,7 +493,7 @@ export const useHomeData = () => {
           planned_meals(mode, is_completed)
         `)
         .eq('user_id', userId)
-        .gte('day_date', formatLocalDate(thirtyDaysAgo))
+        .gte('day_date', thirtyDaysAgo)
         .lte('day_date', todayStr)
         .order('day_date', { ascending: false });
 
@@ -530,8 +529,9 @@ export const useHomeData = () => {
   // 週間統計（日付ベースモデル）
   const fetchWeeklyStats = async (userId: string, read: AiConsultationRead) => {
     try {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+      // 今日を含む過去 7 日 (#2235 I3)。JST の今日 (todayStr) から暦の計算だけで並べる。日ごとに new Date() を読むと、
+      // 0 時をまたぐ瞬間に日が飛ぶか重なり、端末のローカル時刻で日をずらすと夏時間の切り替えの日に 1 時間ずれる
+      const weekCells = calendarDaysEndingAt(todayStr, WEEKLY_STATS_DAYS);
       
       const { data: daysData } = await supabase
         .from('user_daily_meals')
@@ -540,7 +540,7 @@ export const useHomeData = () => {
           planned_meals(mode, is_completed, calories_kcal)
         `)
         .eq('user_id', userId)
-        .gte('day_date', formatLocalDate(sevenDaysAgo))
+        .gte('day_date', weekCells[0].date)
         .lte('day_date', todayStr)
         .order('day_date');
 
@@ -550,10 +550,8 @@ export const useHomeData = () => {
         let totalMeals = 0;
 
         // 7日分のデータを作成（データがない日も含む）
-        for (let i = 6; i >= 0; i--) {
-          const d = new Date();
-          d.setDate(d.getDate() - i);
-          const dateStr = formatLocalDate(d);
+        for (const cell of weekCells) {
+          const dateStr = cell.date;
           
           type DayWithMeals = { day_date: string; planned_meals: Pick<Tables<"planned_meals">, "mode" | "is_completed" | "calories_kcal">[] };
           const dayData = (daysData as DayWithMeals[]).find((dd) => dd.day_date === dateStr);
@@ -567,7 +565,8 @@ export const useHomeData = () => {
           
           days.push({
             date: dateStr,
-            dayOfWeek: getDayOfWeek(dateStr),
+            // 曜日は暦の計算で読む (#2235 I3。new Date(dateStr).getDay() は UTC の 0 時を端末のローカル時刻で読むので、UTC より西では前の日の曜日になる)
+            dayOfWeek: WEEKDAY_LABELS_JA[cell.dayOfWeek],
             cookRate,
             totalCalories,
             mealCount,
@@ -593,8 +592,10 @@ export const useHomeData = () => {
   // 月間統計（日付ベースモデル、完了した自炊のみカウント）
   const fetchMonthlyStats = async (userId: string, read: AiConsultationRead) => {
     try {
-      const firstOfMonth = new Date();
-      firstOfMonth.setDate(1);
+      // JST の今日 (todayStr) の月の 1 日 (#2235 I3)。端末のローカル時刻の月で 1 日にすると、端末のタイムゾーンが日本でないときに
+      // 月の変わり目の前後で別の月・別の日になる
+      const [thisYear, thisMonth] = todayStr.split('-');
+      const firstOfMonth = `${thisYear}-${thisMonth}-01`;
       
       const { data: daysData } = await supabase
         .from('user_daily_meals')
@@ -603,7 +604,7 @@ export const useHomeData = () => {
           planned_meals(mode, is_completed)
         `)
         .eq('user_id', userId)
-        .gte('day_date', formatLocalDate(firstOfMonth))
+        .gte('day_date', firstOfMonth)
         .lte('day_date', todayStr);
 
       if (daysData) {
@@ -748,8 +749,8 @@ export const useHomeData = () => {
   // 今週のベスト料理（日付ベースモデル）
   const fetchBestMealThisWeek = async (userId: string, read: AiConsultationRead) => {
     try {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+      // 今日を含む過去 7 日の最初の日 (#2235 I3。JST の今日 (todayStr) から暦の計算だけでずらす)
+      const sevenDaysAgo = addDaysToDate(todayStr, -(WEEKLY_STATS_DAYS - 1));
       
       const bestMealQuery = supabase
         .from('planned_meals')
@@ -761,7 +762,7 @@ export const useHomeData = () => {
           )
         `)
         .eq('user_daily_meals.user_id', userId)
-        .gte('user_daily_meals.day_date', formatLocalDate(sevenDaysAgo))
+        .gte('user_daily_meals.day_date', sevenDaysAgo)
         .eq('is_completed', true)
         .not('image_url', 'is', null)
         // 行は toPlannedMeal (引数は any) に渡すだけなので、結果の型を行の形に置き換える。select の結合の型のまま

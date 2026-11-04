@@ -22,6 +22,12 @@ interface ShoppingListProgress {
   percentage: number;
 }
 
+/**
+ * 買い物リストの範囲「1週間分」の日数 (今日を含む 7 日)。範囲を選ぶ欄 (ShoppingRangeModal) の日付の表示と、
+ * 買い物リストを作る範囲 (page.tsx の calculateDateRange) が同じ日数を使う (#2235 I3)
+ */
+export const SHOPPING_RANGE_WEEK_DAYS = 7;
+
 const defaultShoppingRange: ShoppingRangeSelection = {
   type: 'week',
   todayMeals: ['breakfast', 'lunch', 'dinner'],
