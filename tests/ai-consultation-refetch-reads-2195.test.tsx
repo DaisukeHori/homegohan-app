@@ -38,7 +38,7 @@
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ReadRecorder,
   expectEmptyRefetchMatchesFreshMount,
@@ -394,6 +394,18 @@ async function checkEmptyRefetch(c: PageCase) {
 }
 
 // ─── ページごとの応答 ───────────────────────────────────────────────
+
+/**
+ * テストの時計の始まり (#2227 H6)。今日 (TODAY) を作ってからページを描くまでの間に日付が変わると (実時間で UTC の 0 時をまたいで
+ * 流すと)、/health・/health/streaks は TODAY と別の日を読み・出すので、実時間に依らず日付をまたがない時刻から時計を始める。
+ * UTC 3 時 = JST 12 時なので、実行環境が UTC でも JST でも同じ日 (2026-11-04)。読み取りの順序・時間切れのため、時計は実時間で進める
+ * (shouldAdvanceTime)。このファイルの 1 回の実行 (数十秒) で日付はまたがない
+ */
+const TEST_CLOCK_START = '2026-11-04T03:00:00.000Z';
+vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true, now: new Date(TEST_CLOCK_START) });
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const localDate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;

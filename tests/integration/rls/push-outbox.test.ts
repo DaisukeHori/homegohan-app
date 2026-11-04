@@ -20,8 +20,8 @@
  * 段 B (worker) の部品: createOutboxStore().loadEligibility (src/lib/push/outbox-store.ts) が、送る条件の材料
  * (user_profiles と notification_preferences) を実 DB から読み、notification_preferences の行が無い利用者に既定を入れる。
  *
- * claim_push_outbox / claim_push_receipts は表の全体から古い順に取るので、このテストの行は next_attempt_at / sent_at を
- * 2000 年にして先頭に来るようにし、取る件数を自分の行の数にする。行は利用者の削除 (CASCADE) で片付ける。
+ * claim_push_outbox / claim_push_receipts は表の全体から古い順に取るので、このテストの行は next_attempt_at / sent_at を 2000 年にして先頭に来るようにする。
+ * 戻りの並びは古い順を約束しないので比べない (まとめて取る行は集合と件数で、古い順は上限 1 の繰り返しで確かめる。#2227 H5)。行は利用者の削除 (CASCADE) で片付ける。
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/rls/push-outbox.test.ts
@@ -642,16 +642,16 @@ describe('#1136 claim_push_receipts / record_push_receipt', () => {
     const [okId, errorId, pendingId] = ids;
 
     // 送ったばかりの行は取らない (sent_at が 15 分以内)
-    const fresh = ((await claimReceipts('w-receipt', ids.length)).data ?? []) as OutboxRow[];
+    const fresh = ((await claimReceipts('w-receipt', ids.length + RECEIPT_CLAIM_HEADROOM)).data ?? []) as OutboxRow[];
     expect(fresh.filter((r) => ids.includes(r.id))).toEqual([]);
 
-    // 15 分以上たった行は古い順に取る
+    // 15 分以上たった行は 1 回の claim で上限までまとめて取る。戻りの並びは sent_at の順を約束しないので、自分の行の集合と件数で
+    // 比べる (claimReceiptsAllAtOnce。古い順は末尾の節の claimReceiptsOldestFirst が上限 1 の繰り返しで確かめる。#2227 H5)
     for (const id of ids) await updateRows([id], { sent_at: oldTimestamp() });
-    const claimed = ((await claimReceipts('w-receipt', ids.length)).data ?? []) as OutboxRow[];
-    expect(claimed.map((r) => r.id)).toEqual(ids);
+    const claimed = await claimReceiptsAllAtOnce('w-receipt', ids);
     for (const row of claimed) expect(row.worker_id).toBe('w-receipt');
     // リース中は取り直さない
-    const again = ((await claimReceipts('w-receipt-2', ids.length)).data ?? []) as OutboxRow[];
+    const again = ((await claimReceipts('w-receipt-2', ids.length + RECEIPT_CLAIM_HEADROOM)).data ?? []) as OutboxRow[];
     expect(again.filter((r) => ids.includes(r.id))).toEqual([]);
 
     // ok / error は記録して確認を終える (error は 128 文字で切る)
@@ -677,7 +677,7 @@ describe('#1136 claim_push_receipts / record_push_receipt', () => {
     });
 
     // 確認を終えた行は取らず、まだの行は次の回でまた取る。24 時間を超えたら missing で終える
-    const next = ((await claimReceipts('w-receipt', ids.length)).data ?? []) as OutboxRow[];
+    const next = ((await claimReceipts('w-receipt', ids.length + RECEIPT_CLAIM_HEADROOM)).data ?? []) as OutboxRow[];
     expect(next.filter((r) => ids.includes(r.id)).map((r) => r.id)).toEqual([pendingId]);
     expect((await recordReceipt(pendingId, 'w-receipt', 'missing', null)).data).toBe(true);
     expect((await rowById(pendingId))?.receipt_status).toBe('missing');
@@ -961,5 +961,92 @@ describe('#1136 createOutboxStore (段 B)', () => {
     expect(await store.deleteToken(deviceId)).toBe(true);
     expect(await store.deleteToken(deviceId)).toBe(false);
     expect(await rowsOf(userId)).toEqual([]);
+  });
+});
+
+// ================================================================
+// receipt の claim の戻りの並び (#2227 H5)
+//   この節はファイルの末尾に置く (前の節の行番号を設計書 docs/design/cross/20-terms-privacy-text.md が参照しているため、ずらさない)
+// ================================================================
+/**
+ * receipt の claim の上限に足す余裕 (自分の行の数 + これ)。claim_push_receipts は表の全体から古い順に取るので、このファイルの前の it が
+ * 取ったまま残した行 (リースが切れると 2000 年の sent_at で先頭に来る) や並行のファイルの行が上限の枠を使っても、自分の行が全部入るようにする。
+ * まとめて取る検査 (claimReceiptsAllAtOnce) と、自分の行が入る・入らないを見る claim (D の fresh / again / next など) の両方で使う
+ */
+const RECEIPT_CLAIM_HEADROOM = 20;
+/** seedReceiptsOutOfPhysicalOrder が作る行の数 (最も古い行を表の末尾へ移したとき、並びの食い違いが出る 2 行より多くする) */
+const OUT_OF_ORDER_RECEIPT_ROWS = 3;
+
+/**
+ * receipt を 1 回の claim で上限 (p_limit) までまとめて取ることを確かめる。上限を自分の行の数 + 余裕にして 1 回だけ呼び、
+ * 戻りの件数が上限以下で、自分の行に絞った集合が ids と一致すること (並びは比べない) を見る。取った自分の行 (リースつき) を返す
+ */
+async function claimReceiptsAllAtOnce(workerId: string, ids: string[]): Promise<OutboxRow[]> {
+  const limit = ids.length + RECEIPT_CLAIM_HEADROOM;
+  const { data, error } = await claimReceipts(workerId, limit);
+  if (error) throw new Error(`claim_push_receipts: ${error.message}`);
+  const rows = (data ?? []) as OutboxRow[];
+  expect(rows.length).toBeLessThanOrEqual(limit);
+  const own = rows.filter((r) => ids.includes(r.id));
+  expect(own.map((r) => r.id).sort()).toEqual([...ids].sort());
+  return own;
+}
+
+/**
+ * receipt を古い順に取ることを、上限 1 の claim を自分の行の数だけ繰り返して確かめる (毎回その時点で最も古い自分の行が来る)。
+ * claim_push_receipts の戻り (UPDATE ... FROM picked RETURNING) の並びは ORDER BY sent_at を約束しない
+ * (計画によっては表の物理的な並びで返る。#2227 H5: CI で先頭の行が末尾に回って赤になった) ので、
+ * 上限を自分の行の数にして戻りの並びを比べる形にはしない。取った行 (リースつき) を sentOrder の順に返す
+ */
+async function claimReceiptsOldestFirst(workerId: string, sentOrder: string[]): Promise<OutboxRow[]> {
+  const taken: OutboxRow[] = [];
+  for (const expectedId of sentOrder) {
+    const { data, error } = await claimReceipts(workerId, 1);
+    if (error) throw new Error(`claim_push_receipts: ${error.message}`);
+    const rows = (data ?? []) as OutboxRow[];
+    expect(rows.map((r) => r.id)).toEqual([expectedId]);
+    taken.push(rows[0]);
+  }
+  return taken;
+}
+
+/**
+ * 送った (sent) 行を OUT_OF_ORDER_RECEIPT_ROWS 個作り、sent_at を 2000 年の古い順にしたうえで、CI で赤になったときの形を作る:
+ * 最も古い行だけを書き直し、行の版を表の末尾へ移す (sent_at は変えない)。行の id を sent_at の古い順に返す
+ */
+async function seedReceiptsOutOfPhysicalOrder(label: string, workerId: string): Promise<string[]> {
+  const userId = await newUser(label);
+  const ids: string[] = [];
+  for (let n = 1; n <= OUT_OF_ORDER_RECEIPT_ROWS; n++) {
+    const row = await seedClaimed(userId, `${label}-${n}`, workerId);
+    expect((await complete(row.id, workerId, `ticket-${label}-${n}`)).data).toBe(true);
+    ids.push(row.id);
+  }
+  for (const id of ids) await updateRows([id], { sent_at: oldTimestamp() });
+  const [oldestId] = ids;
+  await updateRows([oldestId], { updated_at: new Date().toISOString() });
+  return ids;
+}
+
+describe('#1136 claim_push_receipts の戻りの並び (#2227 H5)', () => {
+  it('表の物理的な並びが sent_at の順と違っても、receipt は古い順に取る (戻りの並びには頼らない)', async () => {
+    const ids = await seedReceiptsOutOfPhysicalOrder('receipt-order', 'w-receipt-order');
+
+    const claimed = await claimReceiptsOldestFirst('w-receipt-order', ids);
+    for (const row of claimed) expect(row).toMatchObject({ status: 'sent', worker_id: 'w-receipt-order', receipt_checked_at: null });
+    // 全部リース中なので、別の worker は自分の行を 1 つも取らない
+    const again = ((await claimReceipts('w-receipt-order-2', ids.length + RECEIPT_CLAIM_HEADROOM)).data ?? []) as OutboxRow[];
+    expect(again.filter((r) => ids.includes(r.id))).toEqual([]);
+  });
+
+  it('表の物理的な並びが sent_at の順と違っても、1 回の claim で上限までの自分の行を全部取る (並びは比べない)', async () => {
+    const ids = await seedReceiptsOutOfPhysicalOrder('receipt-batch', 'w-receipt-batch');
+
+    const claimed = await claimReceiptsAllAtOnce('w-receipt-batch', ids);
+    expect(claimed).toHaveLength(ids.length);
+    for (const row of claimed) expect(row).toMatchObject({ status: 'sent', worker_id: 'w-receipt-batch', receipt_checked_at: null });
+    // 全部リース中なので、別の worker は自分の行を 1 つも取らない
+    const again = ((await claimReceipts('w-receipt-batch-2', ids.length + RECEIPT_CLAIM_HEADROOM)).data ?? []) as OutboxRow[];
+    expect(again.filter((r) => ids.includes(r.id))).toEqual([]);
   });
 });
