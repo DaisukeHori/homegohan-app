@@ -229,24 +229,6 @@ async function claimReceipts(workerId: string, limit: number, who: SupabaseClien
   });
 }
 
-/**
- * receipt を古い順に取ることを、上限 1 の claim を自分の行の数だけ繰り返して確かめる (毎回その時点で最も古い自分の行が来る)。
- * claim_push_receipts の戻り (UPDATE ... FROM picked RETURNING) の並びは ORDER BY sent_at を約束しない
- * (計画によっては表の物理的な並びで返る。#2227 H5: CI で先頭の行が末尾に回って赤になった) ので、
- * 上限を自分の行の数にして戻りの並びを比べる形にはしない。取った行 (リースつき) を sentOrder の順に返す
- */
-async function claimReceiptsOldestFirst(workerId: string, sentOrder: string[]): Promise<OutboxRow[]> {
-  const taken: OutboxRow[] = [];
-  for (const expectedId of sentOrder) {
-    const { data, error } = await claimReceipts(workerId, 1);
-    if (error) throw new Error(`claim_push_receipts: ${error.message}`);
-    const rows = (data ?? []) as OutboxRow[];
-    expect(rows.map((r) => r.id)).toEqual([expectedId]);
-    taken.push(rows[0]);
-  }
-  return taken;
-}
-
 async function recordReceipt(
   id: string,
   workerId: string,
@@ -663,7 +645,8 @@ describe('#1136 claim_push_receipts / record_push_receipt', () => {
     const fresh = ((await claimReceipts('w-receipt', ids.length)).data ?? []) as OutboxRow[];
     expect(fresh.filter((r) => ids.includes(r.id))).toEqual([]);
 
-    // 15 分以上たった行は古い順に取る (戻りの並びに頼らず、上限 1 で 1 行ずつ確かめる)
+    // 15 分以上たった行は古い順に取る。claim の戻りの並びは sent_at の順を約束しないので、並びは比べず
+    // 上限 1 で 1 行ずつ取って毎回最も古い行が来ることで確かめる (claimReceiptsOldestFirst。#2227 H5)
     for (const id of ids) await updateRows([id], { sent_at: oldTimestamp() });
     const claimed = await claimReceiptsOldestFirst('w-receipt', ids);
     for (const row of claimed) expect(row.worker_id).toBe('w-receipt');
@@ -703,28 +686,6 @@ describe('#1136 claim_push_receipts / record_push_receipt', () => {
     // 状態の値の誤りは 22023
     const bogus = await srAdmin.rpc('record_push_receipt', { p_id: okId, p_worker_id: 'w-receipt', p_status: 'bogus', p_error: null });
     expect(bogus.error?.code).toBe('22023');
-  });
-});
-
-describe('#1136 claim_push_receipts の戻りの並び (#2227 H5)', () => {
-  it('表の物理的な並びが sent_at の順と違っても、receipt は古い順に取る (戻りの並びには頼らない)', async () => {
-    const userId = await newUser('receipt-order');
-    const ids: string[] = [];
-    for (const label of ['receipt-order-1', 'receipt-order-2', 'receipt-order-3']) {
-      const row = await seedClaimed(userId, label, 'w-receipt-order');
-      expect((await complete(row.id, 'w-receipt-order', `ticket-${label}`)).data).toBe(true);
-      ids.push(row.id);
-    }
-    for (const id of ids) await updateRows([id], { sent_at: oldTimestamp() });
-    // CI で赤になったときの形を作る: 最も古い行だけを書き直し、行の版を表の末尾へ移す (sent_at は変えない)
-    const [oldestId] = ids;
-    await updateRows([oldestId], { updated_at: new Date().toISOString() });
-
-    const claimed = await claimReceiptsOldestFirst('w-receipt-order', ids);
-    for (const row of claimed) expect(row).toMatchObject({ status: 'sent', worker_id: 'w-receipt-order', receipt_checked_at: null });
-    // 全部リース中なので、別の worker は自分の行を 1 つも取らない
-    const again = ((await claimReceipts('w-receipt-order-2', ids.length)).data ?? []) as OutboxRow[];
-    expect(again.filter((r) => ids.includes(r.id))).toEqual([]);
   });
 });
 
@@ -1003,29 +964,46 @@ describe('#1136 createOutboxStore (段 B)', () => {
   });
 });
 
-// H5-PROBE (一時。直す前の形が赤になるかを数えるだけ。次のコミットで消す)
-describe('H5-PROBE', () => {
-  it('H5-PROBE 直す前の形 (上限 = 行の数で戻りの並びを比べる) の食い違いを数える', async () => {
-    const PROBE_ROUNDS = 15;
-    const userId = await newUser('h5-probe');
-    const counts = { disorder: 0, plain: 0 };
-    for (let round = 0; round < PROBE_ROUNDS; round++) {
-      for (const mode of ['disorder', 'plain'] as const) {
-        const ids: string[] = [];
-        for (const n of [1, 2, 3]) {
-          const row = await seedClaimed(userId, `h5-${round}-${mode}-${n}`, 'w-h5');
-          expect((await complete(row.id, 'w-h5', `t-${round}-${mode}-${n}`)).data).toBe(true);
-          ids.push(row.id);
-        }
-        for (const id of ids) await updateRows([id], { sent_at: oldTimestamp() });
-        if (mode === 'disorder') await updateRows([ids[0]], { updated_at: new Date().toISOString() });
-        const claimed = ((await claimReceipts('w-h5', ids.length)).data ?? []) as OutboxRow[];
-        const got = claimed.map((r) => r.id);
-        if (JSON.stringify(got) !== JSON.stringify(ids)) counts[mode] += 1;
-        const { error } = await srAdmin.from('push_outbox').delete().in('id', ids);
-        if (error) throw new Error(error.message);
-      }
+// ================================================================
+// receipt の claim の戻りの並び (#2227 H5)
+//   この節はファイルの末尾に置く (前の節の行番号を設計書 docs/design/cross/20-terms-privacy-text.md が参照しているため、ずらさない)
+// ================================================================
+/**
+ * receipt を古い順に取ることを、上限 1 の claim を自分の行の数だけ繰り返して確かめる (毎回その時点で最も古い自分の行が来る)。
+ * claim_push_receipts の戻り (UPDATE ... FROM picked RETURNING) の並びは ORDER BY sent_at を約束しない
+ * (計画によっては表の物理的な並びで返る。#2227 H5: CI で先頭の行が末尾に回って赤になった) ので、
+ * 上限を自分の行の数にして戻りの並びを比べる形にはしない。取った行 (リースつき) を sentOrder の順に返す
+ */
+async function claimReceiptsOldestFirst(workerId: string, sentOrder: string[]): Promise<OutboxRow[]> {
+  const taken: OutboxRow[] = [];
+  for (const expectedId of sentOrder) {
+    const { data, error } = await claimReceipts(workerId, 1);
+    if (error) throw new Error(`claim_push_receipts: ${error.message}`);
+    const rows = (data ?? []) as OutboxRow[];
+    expect(rows.map((r) => r.id)).toEqual([expectedId]);
+    taken.push(rows[0]);
+  }
+  return taken;
+}
+
+describe('#1136 claim_push_receipts の戻りの並び (#2227 H5)', () => {
+  it('表の物理的な並びが sent_at の順と違っても、receipt は古い順に取る (戻りの並びには頼らない)', async () => {
+    const userId = await newUser('receipt-order');
+    const ids: string[] = [];
+    for (const label of ['receipt-order-1', 'receipt-order-2', 'receipt-order-3']) {
+      const row = await seedClaimed(userId, label, 'w-receipt-order');
+      expect((await complete(row.id, 'w-receipt-order', `ticket-${label}`)).data).toBe(true);
+      ids.push(row.id);
     }
-    console.log(`H5-PROBE-RESULT rounds=${PROBE_ROUNDS} disorder_mismatch=${counts.disorder} plain_mismatch=${counts.plain}`);
+    for (const id of ids) await updateRows([id], { sent_at: oldTimestamp() });
+    // CI で赤になったときの形を作る: 最も古い行だけを書き直し、行の版を表の末尾へ移す (sent_at は変えない)
+    const [oldestId] = ids;
+    await updateRows([oldestId], { updated_at: new Date().toISOString() });
+
+    const claimed = await claimReceiptsOldestFirst('w-receipt-order', ids);
+    for (const row of claimed) expect(row).toMatchObject({ status: 'sent', worker_id: 'w-receipt-order', receipt_checked_at: null });
+    // 全部リース中なので、別の worker は自分の行を 1 つも取らない
+    const again = ((await claimReceipts('w-receipt-order-2', ids.length)).data ?? []) as OutboxRow[];
+    expect(again.filter((r) => ids.includes(r.id))).toEqual([]);
   });
 });
