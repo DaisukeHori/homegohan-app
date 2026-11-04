@@ -84,7 +84,7 @@ export interface ReplyActionState extends PreviousRequestActionRead {
   /**
    * 実行できた行 (executed) の実行の結果 (ai_action_logs.result。サーバーの messages の route が保存した、
    * finalData の actionResult.result と同じもの)。実行できた行が無い・読めないときは null。
-   * 献立の生成 3 種類では { requestId, status: 'processing' } で、Web の取り直し (src/hooks/useAiConsultationDataRefetch.ts) は
+   * 献立の生成 3 種類では { requestId, status: 'processing' } で、Web の取り直し (src/hooks/useAiConsultationReceiver.ts) は
    * これを見て生成が終わるまで見張り、終わったらもう一度取り直す (finalData を受け取れた経路と同じ detail にする)
    */
   result: unknown;

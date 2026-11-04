@@ -11,7 +11,7 @@
  *     生成中の依頼の監視が完了で取り直していた)
  *
  * 決まり:
- *   - 受け手の共通の hook (src/hooks/useAiConsultationDataRefetch.ts) が、通知の detail.result が生成の受付
+ *   - 受け手の共通の hook (src/hooks/useAiConsultationReceiver.ts) が、通知の detail.result が生成の受付
  *     ({ requestId, status: 'processing' }) なら、その依頼を watchAiConsultationGeneration で終わるまで見張り、
  *     終わったらもう一度取り直す (取り直しの番兵 isAiConsultationRefetchBlocked は完了のときにも効かせる)。
  *     各ページに見張りを書かない

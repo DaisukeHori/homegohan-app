@@ -11,13 +11,9 @@
  * .then でつないだ書き込みは数える (旧 7 と違う)。受け手の外のファイルの関数の中の送信は数えない (§9.1)
  *
  * 設計書の正本は docs/design/cross/26-ai-consultation-refetch-receivers.md (§6.10・§7.7・§9.1〜§9.3)。
- * 段 A〜E (受け手を旧の hook から新しい hook へ移す間) の決まり (§16 の段 A):
- *   - 受け手は「新しい hook を使うファイル」なので、段 A では 0 件 (P1〜P6 は見分けの空振りを防ぐ it が受け持つ)
- *   - P5 は移行済みの受け手 (= 受け手) だけを見る。src/hooks・src/lib/ai にも広げるのは段 F
- *   - READ_PATH_BOUNDARIES・READ_ONLY_SENDS・WRITE_WINDOW_EXEMPTIONS の「一覧の行が当てはまる関数・送信を持たないなら赤」は、
- *     移行済みの受け手に掛かる行だけを検査する (file を持つ行はそのファイルが受け手になってから。READ_ONLY_SENDS の行は、§9.1 で
- *     その行き先を持つ受け手 (READ_ONLY_SEND_OWNERS) が 1 つでも受け手になってから)。全行を検査するのは段 F
- *   - RECEIVER_EXPECTATIONS は段ごとの見出しの下に、その段の受け手の行を足す (並行する段の取り込みで同じ行を触らない)
+ * 受け手は全部この hook に移した (§16 の段 F。旧の hook src/hooks/useAiConsultationDataRefetch.ts と旧の番兵は消した):
+ *   - P5 は受け手と src/hooks・src/lib/ai の全部のファイルを見る
+ *   - READ_PATH_BOUNDARIES・READ_ONLY_SENDS・WRITE_WINDOW_EXEMPTIONS は全行を検査する (行が当てはまる関数・送信を持たないなら赤)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,6 +28,8 @@ const SRC_ROOT = 'src';
 const SOURCE_FILE = /\.(ts|tsx)$/;
 
 const RECEIVER_HOOK_FILE = 'src/hooks/useAiConsultationReceiver.ts';
+/** 消した旧の受け手の hook のファイル (#2206 G1 段 F。P5 の it が、戻っていないことを見る) */
+const LEGACY_RECEIVER_HOOK_FILE = 'src/hooks/useAiConsultationDataRefetch.ts';
 const RECEIVER_HOOK = 'useAiConsultationReceiver';
 const READ_METHOD = 'read';
 const BEGIN_WRITE_METHOD = 'beginWrite';
@@ -106,30 +104,20 @@ const WRITE_WINDOW_EXEMPTIONS: ReadonlyArray<{ file: string; fn: string; url: st
     reason: '止まった生成の依頼の掃除 (#1494)。画面の値を変える書き込みでなく、取り直しと重なっても戻る表示が無い',
   },
 ];
-/**
- * 段 A〜E だけで使う: READ_ONLY_SENDS の行き先を持つ受け手 (§9.1。R-A・R-C は献立表、R-B は /pantry と献立表、R-D は useHomeData.ts)。
- * READ_ONLY_SENDS の行の古さは、ここに書いた受け手が 1 つでも受け手 (新しい hook を使うファイル) になってから検査する。段 F で消し、全行を検査する
- */
-const READ_ONLY_SEND_OWNERS: Readonly<Record<string, readonly string[]>> = {
-  '/api/ai/hint': ['src/app/(main)/menus/weekly/page.tsx'],
-  '/api/ai/analyze-fridge': ['src/app/(main)/pantry/page.tsx', 'src/app/(main)/menus/weekly/page.tsx'],
-  '/api/ai/nutrition/feedback': ['src/app/(main)/menus/weekly/page.tsx'],
-  '/api/auth/session-sync': ['src/hooks/useHomeData.ts'],
-};
-/** P5: 受け手と src/hooks・src/lib/ai に無い識別子 (段 F で有効。段 A〜E は移行済みの受け手だけ) */
+/** P5: 受け手と src/hooks・src/lib/ai に無い識別子 */
+/** P5 が受け手のほかに見るディレクトリ (受け手の部品の置き場。src/hooks は hook のファイル自身を含む) */
+const LEGACY_SCAN_DIRS: readonly string[] = ['src/hooks', 'src/lib/ai'];
 const LEGACY_IDENTIFIERS: readonly string[] = [
   'useAiConsultationDataRefetch', 'useAiConsultationRefetchKey', 'useAiConsultationRefetchRun', 'useAiConsultationLoading',
   'useAiConsultationPendingWrites', 'useAiConsultationFetchStream', 'isLatest', 'deferIfHeld', 'beginFetch', 'refetchKey',
   'notifyWriteSettled', 'writeInFlightRef',
 ];
 /**
- * P6: 受け手ごとの数の表 (§9.3 が正本。段ごとに自分の段の行を足す。段 A は空、段 F で 21 行)。
+ * P6: 受け手ごとの数の表 (§9.3 が正本。21 行。行は受け手を移した段 (§16) の見出しの下)。
  * minPlaceCalls = §9 の鍵の欄の数 (置く鍵 + 読み込み中だけの鍵。place の呼び出しの下限)・writes = §9.1 のそのファイルの書き込みの数 (P2 が数えた数と等しい)。
  * 表に無い受け手のファイル・表にあって受け手でないファイルは赤。読み取りの経路の根は各ファイル 1 つ以上
  */
 const RECEIVER_EXPECTATIONS: Readonly<Record<string, { readonly minPlaceCalls: number; readonly writes: number }>> = {
-  // 段 B の例: 'src/app/(main)/pantry/page.tsx': { minPlaceCalls: 1, writes: 4 },
-
   // 段 B
   'src/app/(main)/badges/page.tsx': { minPlaceCalls: 1, writes: 0 },
   'src/app/(main)/comparison/page.tsx': { minPlaceCalls: 1, writes: 0 },
@@ -170,14 +158,12 @@ interface GuardLists {
   boundaries: typeof READ_PATH_BOUNDARIES;
   readOnlySends: typeof READ_ONLY_SENDS;
   exemptions: typeof WRITE_WINDOW_EXEMPTIONS;
-  readOnlySendOwners: typeof READ_ONLY_SEND_OWNERS;
 }
 
 const CANONICAL_LISTS: GuardLists = {
   boundaries: READ_PATH_BOUNDARIES,
   readOnlySends: READ_ONLY_SENDS,
   exemptions: WRITE_WINDOW_EXEMPTIONS,
-  readOnlySendOwners: READ_ONLY_SEND_OWNERS,
 };
 
 /** 受け手のファイルごとに数えたもの (P6) */
@@ -193,7 +179,7 @@ interface ReceiverCounts {
 interface ReceiverGuardReport {
   /** P1〜P5 の違反 ('<ファイル>:<行>: …') */
   violations: string[];
-  /** 一覧 (READ_PATH_BOUNDARIES・READ_ONLY_SENDS・WRITE_WINDOW_EXEMPTIONS) の古さの違反 (移行済みの受け手に掛かる行だけ) */
+  /** 一覧 (READ_PATH_BOUNDARIES・READ_ONLY_SENDS・WRITE_WINDOW_EXEMPTIONS) の古さの違反 (全行) */
   listViolations: string[];
   /** 受け手のファイル → 数 */
   counts: Map<string, ReceiverCounts>;
@@ -851,14 +837,12 @@ function checkReceivers(sources: readonly ReceiverSource[], lists: GuardLists = 
   const discardedContainers: string[] = [];
   const readOnlyMatches = new Set<string>();
   const exemptionMatches = new Set<string>();
-  const receiverFiles = new Set<string>();
   const boundaryHits = new Map<string, Set<string>>();
   const fileFunctions = new Map<string, Map<string, FunctionNode[]>>();
 
   for (const entry of sources) {
     if (!isReceiverSource(entry)) continue;
     const { file, source } = entry;
-    receiverFiles.add(file);
     const sf = parse(file, source);
     fileFunctions.set(file, namedFunctions(sf));
     const receivers = receiverNames(file, sf, violations);
@@ -875,9 +859,8 @@ function checkReceivers(sources: readonly ReceiverSource[], lists: GuardLists = 
     counts.set(file, { roots: roots.length, placeCalls: placeCallCount(sf), writes });
   }
 
-  // 一覧の古さ (段 A〜E は移行済みの受け手に掛かる行だけ。§16 の段 A)
+  // 一覧の古さ (全行。行のファイルが受け手でなければ、関数は受け手のファイルに無いので赤)
   for (const row of lists.boundaries) {
-    if (!receiverFiles.has(row.file)) continue;
     if (!(fileFunctions.get(row.file)?.has(row.fn) ?? false)) {
       listViolations.push(`READ_PATH_BOUNDARIES の ${row.file} の ${row.fn} がファイルに無い (一覧を直す)`);
     } else if (!(boundaryHits.get(row.file)?.has(row.fn) ?? false)) {
@@ -885,12 +868,9 @@ function checkReceivers(sources: readonly ReceiverSource[], lists: GuardLists = 
     }
   }
   for (const row of lists.readOnlySends) {
-    const owners = lists.readOnlySendOwners[row.url] ?? [];
-    if (!owners.some((owner) => receiverFiles.has(owner))) continue;
     if (!readOnlyMatches.has(row.url)) listViolations.push(`READ_ONLY_SENDS の ${row.url} に当たる送信が受け手に無い (一覧を直す)`);
   }
   for (const row of lists.exemptions) {
-    if (!receiverFiles.has(row.file)) continue;
     if (!exemptionMatches.has(`${row.file}#${row.fn}#${row.url}`)) {
       listViolations.push(`WRITE_WINDOW_EXEMPTIONS の ${row.file} の ${row.fn} (${row.url}) に当たる書き込みが無い (一覧を直す)`);
     }
@@ -943,6 +923,21 @@ function receiverSources(): ReceiverSource[] {
     .filter(isReceiverSource);
 }
 
+/** P5 が受け手のほかに見るファイル (LEGACY_SCAN_DIRS の全部の .ts / .tsx) */
+function legacyScanSources(): ReceiverSource[] {
+  return LEGACY_SCAN_DIRS.flatMap((dir) => listSourceFiles(dir)).map((file) => ({
+    file,
+    source: fs.readFileSync(path.join(ROOT, file), 'utf8'),
+  }));
+}
+
+/** P5: 受け手でないファイル (src/hooks・src/lib/ai。hook のファイル自身を含む) の旧 API の識別子。受け手は checkReceivers が見る */
+function legacyIdentifiersOutsideReceivers(sources: readonly ReceiverSource[]): string[] {
+  return sources
+    .filter((entry) => !isReceiverSource(entry))
+    .flatMap(({ file, source }) => legacyIdentifiers(file, parse(file, source)));
+}
+
 describe('受け手は place の中だけで置き、書き込みは窓の中だけ (#2206 G1)', () => {
   const sources = receiverSources();
   const report = checkReceivers(sources);
@@ -959,10 +954,19 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
     expect(expectationViolations(report.counts, RECEIVER_EXPECTATIONS)).toEqual([]);
   });
 
+  it('P5: src/hooks・src/lib/ai のファイルにも旧 API の識別子が無い (旧の hook のファイルも無い)', () => {
+    // 走査の空振り (ディレクトリの名前の書き間違いで 0 本のまま緑) を防ぐ: どのディレクトリも 1 本以上のファイルを持ち、hook のファイルを含む
+    const scanned = legacyScanSources();
+    for (const dir of LEGACY_SCAN_DIRS) {
+      expect(scanned.some(({ file }) => file.startsWith(`${dir}/`)), dir).toBe(true);
+    }
+    expect(scanned.map(({ file }) => file)).toContain(RECEIVER_HOOK_FILE);
+    expect(fs.existsSync(path.join(ROOT, LEGACY_RECEIVER_HOOK_FILE))).toBe(false);
+    expect(legacyIdentifiersOutsideReceivers(scanned)).toEqual([]);
+  });
+
   it('READ_PATH_BOUNDARIES・READ_ONLY_SENDS・WRITE_WINDOW_EXEMPTIONS の行は、どれも当てはまる関数・送信を持つ (古い一覧は赤)', () => {
-    // 段 A〜E は移行済みの受け手に掛かる行だけを検査する (§16 の段 A)。READ_ONLY_SEND_OWNERS は READ_ONLY_SENDS の全行の行き先を持つ
-    expect(READ_ONLY_SENDS.map((row) => row.url).filter((url) => (READ_ONLY_SEND_OWNERS[url] ?? []).length === 0)).toEqual([]);
-    expect(Object.keys(READ_ONLY_SEND_OWNERS).sort()).toEqual(READ_ONLY_SENDS.map((row) => row.url).sort());
+    // 全行を検査する (受け手は全部移した。§16 の段 F)
     expect(report.listViolations).toEqual([]);
   });
 
@@ -971,7 +975,7 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
     const HOOK_FILE = 'src/hooks/useX.ts';
     const header = `import { ${RECEIVER_HOOK} } from '@/hooks/useAiConsultationReceiver';`;
     /** 空の一覧 (各 it が足す) */
-    const EMPTY_LISTS: GuardLists = { boundaries: [], readOnlySends: [], exemptions: [], readOnlySendOwners: {} };
+    const EMPTY_LISTS: GuardLists = { boundaries: [], readOnlySends: [], exemptions: [] };
     const check = (source: string, lists: GuardLists = EMPTY_LISTS, file: string = PAGE_FILE) =>
       checkReceivers([{ file, source: `${header}\n${source}` }], lists);
 
@@ -1149,8 +1153,10 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
       );
       expect(otherFunction.violations).toEqual([expect.stringContaining('otherFunction の書き込み')]);
       expect(otherFunction.listViolations).toEqual([expect.stringContaining('WRITE_WINDOW_EXEMPTIONS の src/app/(main)/x/page.tsx の checkPendingRequests')]);
-      // 例外の行の受け手が移行していない (受け手でない) なら、行の古さは段 A〜E では検査しない
-      expect(checkReceivers([{ file: 'src/app/(main)/y/page.tsx', source: 'export default function Y() { return null; }' }], lists).listViolations).toEqual([]);
+      // 例外の行のファイルが受け手でない (useAiConsultationReceiver を呼ばない) ときも、当てはまる書き込みが無いので赤
+      expect(checkReceivers([{ file: 'src/app/(main)/y/page.tsx', source: 'export default function Y() { return null; }' }], lists).listViolations).toEqual([
+        expect.stringContaining('WRITE_WINDOW_EXEMPTIONS の src/app/(main)/x/page.tsx の checkPendingRequests'),
+      ]);
     });
 
     it('.finally(endWrite) と .finally(() => { endWrite(); }) で閉じる窓は赤にしない', () => {
@@ -1174,7 +1180,6 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
       const lists: GuardLists = {
         ...EMPTY_LISTS,
         readOnlySends: [{ url: '/api/ai/hint', reason: '検査の例' }],
-        readOnlySendOwners: { '/api/ai/hint': [PAGE_FILE] },
       };
       const source = `function Page() {
         const receiver = ${RECEIVER_HOOK}(async (read) => undefined);
@@ -1188,7 +1193,7 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
       expect(readOnly.counts.get(PAGE_FILE)?.writes).toBe(0);
       const other = check(source.replaceAll('DESTINATION', '/api/meals/'), lists);
       expect(other.violations).toEqual([expect.stringMatching(/page\.tsx:5: askHint の書き込み aiFetch\(\/api\/meals\/\) が beginWrite の窓の外/)]);
-      // 一覧の行き先を持つ受け手が移行したのに、その行き先への送信が無ければ赤 (古い一覧)
+      // その行き先への送信がどの受け手にも無ければ赤 (古い一覧)
       expect(other.listViolations).toEqual([expect.stringContaining('READ_ONLY_SENDS の /api/ai/hint に当たる送信が受け手に無い')]);
     });
 
@@ -1244,6 +1249,34 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
         expect.stringMatching(/page\.tsx:4: 旧 API の useAiConsultationPendingWrites/),
         expect.stringMatching(/page\.tsx:5: 旧 API の isLatest/),
       ]);
+    });
+
+    it('旧 API の識別子が src/hooks・src/lib/ai のファイルに残っていれば、受け手でなくても赤 (hook のファイル自身も見る)', () => {
+      const legacyHook = {
+        file: LEGACY_RECEIVER_HOOK_FILE,
+        source: 'export function useAiConsultationDataRefetch(refetch) { return { beginFetch: () => ({ isLatest: () => true }) }; }',
+      };
+      expect(legacyIdentifiersOutsideReceivers([legacyHook])).toEqual([
+        expect.stringMatching(/useAiConsultationDataRefetch\.ts:1: 旧 API の useAiConsultationDataRefetch/),
+        expect.stringMatching(/useAiConsultationDataRefetch\.ts:1: 旧 API の beginFetch/),
+        expect.stringMatching(/useAiConsultationDataRefetch\.ts:1: 旧 API の isLatest/),
+      ]);
+      expect(
+        legacyIdentifiersOutsideReceivers([
+          { file: RECEIVER_HOOK_FILE, source: 'export function useAiConsultationReceiver() { const writeInFlightRef = null; return writeInFlightRef; }' },
+        ]),
+      ).toEqual([
+        // 宣言と return の 2 か所
+        expect.stringMatching(/useAiConsultationReceiver\.ts:1: 旧 API の writeInFlightRef/),
+        expect.stringMatching(/useAiConsultationReceiver\.ts:1: 旧 API の writeInFlightRef/),
+      ]);
+      // コメントの名前は数えない (識別子だけを見る)・受け手は checkReceivers が見るので、ここでは二重に数えない
+      expect(
+        legacyIdentifiersOutsideReceivers([
+          { file: 'src/lib/ai/x.ts', source: '/** useAiConsultationDataRefetch は消した */\nexport const X = 1;' },
+          { file: HOOK_FILE, source: `${header}\nexport const useX = () => { const receiver = ${RECEIVER_HOOK}(async () => undefined); const refetchKey = 1; };` },
+        ]),
+      ).toEqual([]);
     });
 
     it('直した形は赤にしない', () => {

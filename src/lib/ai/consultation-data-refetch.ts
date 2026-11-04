@@ -9,7 +9,7 @@
  *     buildReloadCurrentPageScript)。Web だけが取り残されていた
  *
  * 決まり:
- *   - データを出すページは useAiConsultationDataRefetch (src/hooks/useAiConsultationDataRefetch.ts) でこの通知を受け、
+ *   - データを出すページは useAiConsultationReceiver (src/hooks/useAiConsultationReceiver.ts。#2206 G1) でこの通知を受け、
  *     そのページの既存の取得の関数を呼んで取り直す。ページ全体の reload はしない
  *   - 入力の部品・開いているモーダルがページにある間は取り直さない (isAiConsultationRefetchBlocked)。取り直しで
  *     編集の途中の値 (取得した値から作る入力欄など) を上書きしないため。モバイルの AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR と
@@ -20,7 +20,7 @@
  *     以前は捨てて、閉じたあとも古い表示のままだった)。見張りは受け手の共通の hook が DOM の変化
  *     (AI_CONSULTATION_DEFERRED_REFETCH_OBSERVED_ATTRIBUTES) で行う
  *   - 取り直しでは読み込み中の表示を出さないので、応答を待つあいだも入力欄・モーダルを開くボタンが出ている。受け手は取り直しの応答を
- *     置く前にもう一度番兵を見て (取り直しの札の deferIfHeld)、その間に開いたモーダル・打ち始めた入力があれば置かずに、止めた通知と
+ *     置く前にもう一度番兵を見て (受け手の place。#2206 G1)、その間に開いたモーダル・打ち始めた入力があれば置かずに、止めた通知と
  *     同じく外れたときに 1 回取り直す (#2201 U1)
  *   - モーダルは role="dialog" (または aria-modal="true") で見分ける。受け手のページのモーダルはこれを持たせる:
  *     中に入力の部品が無い状態 (マイページの編集の競技タブ・削除の確認など) でも、開いている間は取り直さないため
@@ -103,7 +103,7 @@ export function isAiConsultationRefetchBlocked(root: ParentNode): boolean {
 
 /**
  * 番兵で止めた通知を、番兵が外れたときに取り直すために見張る属性 (#2201 U2)。
- * 受け手の共通の hook (src/hooks/useAiConsultationDataRefetch.ts) は、止めた通知がある間だけ DOM の変化 (要素の出入りと、
+ * 受け手の共通の hook (src/hooks/useAiConsultationReceiver.ts) は、止めた通知がある間だけ DOM の変化 (要素の出入りと、
  * この属性の変化) を見て、番兵 (isAiConsultationRefetchBlocked) が外れたら 1 回だけ取り直す。
  * 並びは、番兵の見分けに使う属性 (モーダルの role・aria-modal・open、編集できる要素の contenteditable、input の type、
  * 吹き出しと何も変えていない入力欄の部品の印) と同じ。どれかが変わると番兵の答えが変わりうる

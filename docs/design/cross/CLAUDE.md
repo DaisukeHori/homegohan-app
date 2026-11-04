@@ -30,6 +30,7 @@
 | `23-planned-meals-score-integrity.md` | `planned_meals` の `veg_score` / `is_completed` / `completed_at` をサーバの計算値だけにする (列の権限・完了の RPC・写真の解析の service_role) | #2025 |
 | `24-freeze-notify-mail.md` | 運営の凍結の通知メール (凍結した本人へ `account_frozen` を送信待ちに積む・画面のチェックと任意のメッセージ・監査と応答に結果) | #2026 |
 | `25-recipe-comments-select-scope.md` | 公開レシピのコメントの読み取りの範囲を絞る (`recipe_comments` の SELECT を「そのコメントのレシピを読める人」と「書いた本人」だけに。migration と戻し口・契約テスト・結合テスト) | #2166 X1 |
+| `26-ai-consultation-refetch-receivers.md` | Web (とモバイル) の AI 相談の取り直しの受け手の契約と一本化 (`useAiConsultationReceiver`・`place` の中だけで置く・書き込みの窓・`html[data-ai-consultation-writes]`) | #2206 G1 |
 
 10・11 は欠番 (13a は分冊前の 13 の番号を引き継いでいる)。
 

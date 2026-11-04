@@ -110,36 +110,12 @@ export async function fetchFamilyMemberNamesResult(
 /**
  * 解決済みの名前を受け取る (ブラウザから呼ぶ)。戻り値は member id → 名前 (名前が決まった人だけ)。
  * 名前の補完は表示の改善なので、取得に失敗しても例外を投げず空の Map を返す (画面は display_name のまま出す)。
- * 取り直しで、読めなかったときに前の名前を残すときは fetchFamilyMemberNamesResult と keepShownFamilyMemberNames を使う
  */
 export async function fetchFamilyMemberNames(
   fetchImpl: typeof fetch = fetch,
 ): Promise<Map<string, string>> {
   const result = await fetchFamilyMemberNamesResult(fetchImpl);
   return result.ok ? result.names : new Map<string, string>();
-}
-
-/**
- * 取り直しで名前の API を読めなかったときに当てる名前 (#2201 U1): 読み直した行のうち display_name の無い人に、
- * いま画面に出している名前 (shown。前に名前の API が当てた名前を含む) を当てる。
- * display_name のある人は読み直した display_name のまま (名前の API も display_name を先に使う。buildFamilyMemberNames)。
- * 以前は読めないと空の Map になり、出ていた名前が「名前未設定」に落ちていた
- */
-export function keepShownFamilyMemberNames(
-  rows: readonly { id: string; display_name: string | null }[],
-  shown: readonly { id: string; display_name: string | null }[],
-): Map<string, string> {
-  const shownNames = new Map<string, string>();
-  for (const member of shown) {
-    if (member.display_name !== null) shownNames.set(member.id, member.display_name);
-  }
-  const names = new Map<string, string>();
-  for (const row of rows) {
-    if (normalizeName(row.display_name) !== null) continue;
-    const name = shownNames.get(row.id);
-    if (name !== undefined) names.set(row.id, name);
-  }
-  return names;
 }
 
 /** 画面の一覧に、解決済みの名前を当てる (名前が決まっていない人は display_name のまま) */

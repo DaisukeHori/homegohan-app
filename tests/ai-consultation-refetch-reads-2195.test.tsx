@@ -20,7 +20,7 @@
  * 待つあいだは書き込みを送らない (読み直しの応答があとから届いて、先に済んだ書き込みの結果を古い値で上書きしないため) ことも確かめる。
  * 除外の alwaysBlockedWhileShown のページ (/family/representative-transfer) は、AI が書く値を出している間に番兵が止めることを確かめる。
  *
- * #2201 U1 + U2 (受け手の共通の hook src/hooks/useAiConsultationDataRefetch.ts の決まり) も受け手ごとに確かめる:
+ * #2201 U1 + U2 (受け手の共通の hook の決まり。#2206 G1 で src/hooks/useAiConsultationReceiver.ts に移した) も受け手ごとに確かめる:
  *   - 取り直しの失敗 (500・通信の失敗・Supabase の error) では今の表示を残す (以前は「読み込めませんでした」・「見つかりませんでした」・
  *     「名前未設定」に置き換え、/health は読み込み中のまま止まった)
  *   - 取り直しの応答を待つあいだも、画面全体を読み込み中の表示に置き換えない
@@ -29,8 +29,9 @@
  *   - 取り直しの応答を待つあいだに打った値・開いた欄・始めた書き込みを、届いた応答で上書きしない (置かなかった応答のぶん、
  *     外れたら 1 回取り直す。共通の hook の札の deferIfHeld)
  *
- * #2206 G1: 新しい受け手の hook (src/hooks/useAiConsultationReceiver.ts) へ移したページ (RECEIVER_MIGRATED_PAGES) は、移すと期待の変わる
- * 3 つ (開いたときの読み込みの最中の取り直しの失敗・書き込みのある受け手のボタンの止め方・栄養目標の前の回の失敗) を新しい期待で確かめる。
+ * #2206 G1: 受け手を新しい hook (src/hooks/useAiConsultationReceiver.ts) へ移して期待の変わった 3 つ (開いたときの読み込みの最中の
+ * 取り直しの失敗・書き込みのある受け手のボタンの止め方・栄養目標の前の回の失敗) は、新しい期待で確かめる (取り直しは開いたときの
+ * 読み込みの役を引き継がない・書き込みは窓で守り、取り直しの間にボタンを止めない)。
  *
  * 「空の応答」は、AI が書く表から読む応答を空にしたもの (AI が書かない表の応答は中身のあるままにする)。
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -764,41 +765,6 @@ const caseOf = (page: string): PageCase => {
   return c;
 };
 
-/**
- * 新しい受け手の hook (src/hooks/useAiConsultationReceiver.ts) へ移したページ (AI_CONSULTATION_REFETCH_PAGES のキー。#2206 G1)。
- * 移すと期待の変わる describe・it (§17 G-8 の (a)・(b)・(d)) は、ここにあるページは新しい期待・無いページは今の期待で確かめる。
- * 段 B・C は自分の段の見出しの下に自分のページを足すだけ (並行する段の取り込みで同じ行を触らない)。段 F で集合と今の期待の側を消す
- */
-const RECEIVER_MIGRATED_PAGES: ReadonlySet<string> = new Set<string>([
-  // 段 B
-  '/comparison',
-  '/pantry',
-  '/health/goals',
-  '/health/graphs',
-  '/health/streaks',
-  '/badges',
-  '/meals/[id]',
-  '/profile',
-  '/profile/nutrition-targets',
-  '/health/blood-tests',
-  '/health/checkups/[id]',
-
-  // 段 C
-  '/family/dashboard',
-  '/family/members',
-  '/family/members/[id]',
-  '/family/transfer-accept/[proposal_id]',
-  '/org/transfer-accept/[proposal_id]',
-  '/health',
-]);
-
-describe('移行済みの受け手の集合 (#2206 G1)', () => {
-  it('集合のページは、どれもこのファイルで描くページ (書き間違えて今の期待のまま確かめない)', () => {
-    const known = new Set(CASES.map((c) => c.page));
-    expect([...RECEIVER_MIGRATED_PAGES].filter((page) => !known.has(page))).toEqual([]);
-  });
-});
-
 describe('受け手のページの取り直しは、開いたとき・パネルが読むもの全部を読み直す (#2195 V1)', () => {
   for (const c of CASES) {
     it(`${c.page}`, async () => {
@@ -955,14 +921,11 @@ interface WriteGuardCase {
   writeRequest: string;
   /** 取り直しが必ず読むもの (読み取りの鍵) */
   refetchRead: string;
-  /** 取り直しの応答を、hold が解けるまで止める */
-  holdRefetch: (hold: Promise<void>) => void;
 }
 
 /**
  * 書き込みの窓の間に来た AI 相談の成功では取り直さず、書き込みが終わったら 1 回取り直す (#2201 U2)。そのあとの成功でも取り直す。
- * 新しい受け手の hook へ移したページ (RECEIVER_MIGRATED_PAGES) は、取り直しの間に書き込みのボタンを止めない (順序と書き込みの窓で
- * 守る。#2206 G1 §5.3 の 4) ので、これだけを確かめる。移す前のページは checkWriteAndRefetchDoNotOverlap がこれに続けてボタンの止め方も確かめる
+ * 取り直しの間に書き込みのボタンを止める前提は無い (順序と書き込みの窓で守る。#2206 G1 §5.3 の 4)
  */
 async function checkWriteWindowDefersRefetch(w: WriteGuardCase) {
   vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -990,44 +953,6 @@ async function checkWriteWindowDefersRefetch(w: WriteGuardCase) {
   expect([...recorder.take()], '書き込みが済んだあとに取り直さない').toContain(w.refetchRead);
 }
 
-/**
- * 書き込みと AI 相談の成功の取り直しを重ねない:
- *   1. 書き込みを始めた直後 (ボタンが止まる再描画の前) に AI 相談が成功しても取り直さない
- *   2. 書き込みが済んだら、止めた成功のぶん 1 回取り直す (#2201 U2)。そのあとの成功でも取り直す
- *   3. 取り直しを始めた直後 (再描画の前) に押しても書き込みを送らず、取り直しの応答を待つあいだはボタンを止める
- *   4. 取り直しが済んだあとは書き込みを送れる
- */
-async function checkWriteAndRefetchDoNotOverlap(w: WriteGuardCase) {
-  // 1・2 (と、そのあとの成功でも取り直すこと)
-  await checkWriteWindowDefersRefetch(w);
-
-  const refetch = deferred();
-  w.holdRefetch(refetch.promise);
-  server.requests = [];
-  await act(async () => {
-    dispatchAiConsultationSucceeded();
-    w.writeButton().click();
-  });
-  await settle();
-  expect(server.requests, '取り直しの応答を待つあいだに書き込みを送った').not.toContain(w.writeRequest);
-  expect(w.writeButton().disabled, '取り直しの応答を待つあいだに書き込みのボタンが止まっていない').toBe(true);
-  refetch.resolve();
-  await settle();
-
-  expect(w.writeButton().disabled, '取り直しが済んだあとも書き込みのボタンが止まったまま').toBe(false);
-  await act(async () => {
-    w.writeButton().click();
-  });
-  await settle();
-  expect(server.requests, '取り直しが済んだあとに書き込みを送れない').toContain(w.writeRequest);
-}
-
-const holdNamesApi = (hold: Promise<void>) => {
-  server.fetchHolds.set(`GET ${FAMILY_NAMES_API}`, hold);
-};
-const holdProposal = (hold: Promise<void>) => {
-  server.tableHolds.set('ownership_transfer_proposals', hold);
-};
 /** ほかの人 (大人) の詳細を開く (除名のボタンを出す。モックは絞り込みを見ないので、family_members はその 1 行にする) */
 const OTHER_MEMBER_DETAIL_CASE: PageCase = {
   ...caseOf('/family/members/[id]'),
@@ -1079,7 +1004,6 @@ const WRITE_GUARDS: WriteGuardCase[] = [
     },
     writeRequest: 'POST /api/family/leave',
     refetchRead: `GET ${FAMILY_NAMES_API}`,
-    holdRefetch: holdNamesApi,
   },
   {
     name: '/family/members の除名',
@@ -1087,7 +1011,6 @@ const WRITE_GUARDS: WriteGuardCase[] = [
     writeButton: () => buttonByText('除名'),
     writeRequest: `POST /api/family/members/${OTHER_MEMBER_ID}/remove`,
     refetchRead: `GET ${FAMILY_NAMES_API}`,
-    holdRefetch: holdNamesApi,
   },
   {
     name: '/family/members/[id] の共有の設定の切り替え',
@@ -1099,7 +1022,6 @@ const WRITE_GUARDS: WriteGuardCase[] = [
     },
     writeRequest: 'PATCH /api/family/members/me/share',
     refetchRead: `GET ${FAMILY_NAMES_API}`,
-    holdRefetch: holdNamesApi,
   },
   {
     name: '/family/members/[id] の除名',
@@ -1111,7 +1033,6 @@ const WRITE_GUARDS: WriteGuardCase[] = [
     },
     writeRequest: `POST /api/family/members/${OTHER_MEMBER_ID}/remove`,
     refetchRead: `GET ${FAMILY_NAMES_API}`,
-    holdRefetch: holdNamesApi,
   },
   {
     name: '/family/transfer-accept/[proposal_id] の承諾',
@@ -1119,7 +1040,6 @@ const WRITE_GUARDS: WriteGuardCase[] = [
     writeButton: () => buttonByText('承諾する (代表者になる)'),
     writeRequest: `POST /api/family/representative-transfer/${PROPOSAL_ID}/accept`,
     refetchRead: 'from:ownership_transfer_proposals',
-    holdRefetch: holdProposal,
   },
   {
     name: '/family/transfer-accept/[proposal_id] の拒否',
@@ -1127,7 +1047,6 @@ const WRITE_GUARDS: WriteGuardCase[] = [
     writeButton: () => buttonByText('拒否する'),
     writeRequest: `POST /api/family/representative-transfer/${PROPOSAL_ID}/decline`,
     refetchRead: 'from:ownership_transfer_proposals',
-    holdRefetch: holdProposal,
   },
   {
     name: '/org/transfer-accept/[proposal_id] の承諾',
@@ -1135,7 +1054,6 @@ const WRITE_GUARDS: WriteGuardCase[] = [
     writeButton: () => buttonByText('承諾'),
     writeRequest: `POST /api/org/owner-transfer/${PROPOSAL_ID}/accept`,
     refetchRead: 'from:ownership_transfer_proposals',
-    holdRefetch: holdProposal,
   },
   {
     name: '/org/transfer-accept/[proposal_id] の拒否',
@@ -1143,17 +1061,14 @@ const WRITE_GUARDS: WriteGuardCase[] = [
     writeButton: () => buttonByText('拒否'),
     writeRequest: `POST /api/org/owner-transfer/${PROPOSAL_ID}/decline`,
     refetchRead: 'from:ownership_transfer_proposals',
-    holdRefetch: holdProposal,
   },
 ];
 
 describe('書き込みのある受け手は、書き込みと AI 相談の成功の取り直しを重ねない (#2195 V1)', () => {
   for (const w of WRITE_GUARDS) {
     it(w.name, async () => {
-      // 新しい受け手の hook へ移したページは、書き込みの窓の間に来た成功で取り直さず、終わったら 1 回取り直す (取り直しの間にボタンを
-      // 止める前提は無くなる。#2206 G1 §17 G-8 (b))。移す前のページは今の期待 (取り直しの間はボタンを止める) も確かめる
-      if (RECEIVER_MIGRATED_PAGES.has(w.page.page)) await checkWriteWindowDefersRefetch(w);
-      else await checkWriteAndRefetchDoNotOverlap(w);
+      // 書き込みの窓の間に来た成功で取り直さず、終わったら 1 回取り直す (取り直しの間にボタンを止める前提は無い。#2206 G1 §17 G-8 (b))
+      await checkWriteWindowDefersRefetch(w);
     });
   }
 });
@@ -1343,61 +1258,26 @@ const REFETCH_FAILURES = ['http', 'network'] as const;
 const refetchFailureLabel = (failure: (typeof REFETCH_FAILURES)[number]) =>
   failure === 'http' ? '500・Supabase の error' : '通信の失敗 (fetch の reject)';
 
-// 移す前のページの期待 (取り直しが開いたときの読み込みの役を引き継ぐ)。新しい受け手の hook へ移したページは下の #2206 G1 の describe。移す前のページが無くなったら describe を置かない (空の describe は vitest が失敗にする)
-// 開いたときの読み込みのうち取り直さないものがあるページは、開いたときの失敗と同じ画面にならない (取り直さない読み込みは読める)
-const LEGACY_CASES = CASES.filter((x) => x.mountReadsNotRefetched === undefined && !RECEIVER_MIGRATED_PAGES.has(x.page));
-if (LEGACY_CASES.length > 0) {
-  describe('開いたときの読み込みの最中に届いた成功の取り直しが失敗したら、開いたときに失敗したのと同じ画面を出す (失敗を隠さない。#2201 U1)', () => {
-    const FAILURES = REFETCH_FAILURES;
-    for (const c of LEGACY_CASES) {
-      for (const failure of FAILURES) {
-        it(`${c.page}: ${refetchFailureLabel(failure)}`, async () => {
-          setServer(c.full);
-          await renderOnly(c);
-          const opened = screenSignature(container);
-          await freshRoot();
-          server.failure = failure;
-          await renderOnly(c);
-          server.failure = null;
-          const failedOpen = screenSignature(container);
-          expect(failedOpen, `${c.page} の開いたときの失敗の画面が、読めたときと同じ (検査が空振りしている)`).not.toBe(opened);
-          await freshRoot();
+// 取り直しは開いたときの読み込みの役を引き継がず、失敗では何も置かない。開いたときの読み込みは、取り直しに追い越されても自分の応答を置く (#2206 G1 S-2)
+describe('開いたときの読み込みの最中に届いた成功の取り直しが失敗しても、開いたときの読み込みの応答を置く (空のまま残らない。#2206 G1)', () => {
+  for (const c of CASES) {
+    for (const failure of REFETCH_FAILURES) {
+      it(`${c.page}: ${refetchFailureLabel(failure)}`, async () => {
+        setServer(c.full);
+        await renderOnly(c);
+        const opened = screenSignature(container);
+        await freshRoot();
 
-          const releaseMount = await openWhileAiConsultationSucceeds(c, failure);
-          expect(screenSignature(container), `${c.page} の取り直しの失敗を隠した (開いたときに失敗したのと違う画面)`).toBe(failedOpen);
-          // 先に始めた開いたときの読み込みの応答 (読めた) が後から届いても置かない (最後に始めた取得の応答だけを置く)
-          await releaseMount();
-          expect(screenSignature(container)).toBe(failedOpen);
-        });
-      }
+        const releaseMount = await openWhileAiConsultationSucceeds(c, failure);
+        // 取り直しの失敗は何も置かない (開いたときの読み込みの応答を待つ読み込み中の表示のまま)
+        expect(screenSignature(container), `${c.page} の取り直しの失敗が、開いたときの読み込みの応答を待たずに画面を置いた`).not.toBe(opened);
+        // 先に始めた開いたときの読み込みの応答 (読めた) が後から届いたら、それを置く
+        await releaseMount();
+        expect(screenSignature(container), `${c.page} が、取り直しの失敗のあとに届いた開いたときの読み込みの応答を置かない (空のまま残る)`).toBe(opened);
+      });
     }
-  });
-}
-
-// 新しい受け手の hook へ移したページの期待 (#2206 G1 S-2。取り直しは開いたときの読み込みの役を引き継がず、失敗では何も置かない。
-// 開いたときの読み込みは、取り直しに追い越されても自分の応答を置く)。移したページが無い間は describe を置かない
-const MIGRATED_CASES = CASES.filter((x) => RECEIVER_MIGRATED_PAGES.has(x.page));
-if (MIGRATED_CASES.length > 0) {
-  describe('開いたときの読み込みの最中に届いた成功の取り直しが失敗しても、開いたときの読み込みの応答を置く (空のまま残らない。#2206 G1)', () => {
-    for (const c of MIGRATED_CASES) {
-      for (const failure of REFETCH_FAILURES) {
-        it(`${c.page}: ${refetchFailureLabel(failure)}`, async () => {
-          setServer(c.full);
-          await renderOnly(c);
-          const opened = screenSignature(container);
-          await freshRoot();
-
-          const releaseMount = await openWhileAiConsultationSucceeds(c, failure);
-          // 取り直しの失敗は何も置かない (開いたときの読み込みの応答を待つ読み込み中の表示のまま)
-          expect(screenSignature(container), `${c.page} の取り直しの失敗が、開いたときの読み込みの応答を待たずに画面を置いた`).not.toBe(opened);
-          // 先に始めた開いたときの読み込みの応答 (読めた) が後から届いたら、それを置く
-          await releaseMount();
-          expect(screenSignature(container), `${c.page} が、取り直しの失敗のあとに届いた開いたときの読み込みの応答を置かない (空のまま残る)`).toBe(opened);
-        });
-      }
-    }
-  });
-}
+  }
+});
 
 describe('名前の API だけを読めなかった取り直しは、出ている名前を残す (#2201 U1)', () => {
   for (const page of ['/family/members', '/family/dashboard', '/family/members/[id]']) {
@@ -2417,76 +2297,41 @@ describe('/health: 日を選び直したら、前に選んだ日の記録をパ�
 /** /profile/nutrition-targets の栄養目標の読み取り */
 const NUTRITION_TARGETS_REQUEST = 'GET /api/nutrition/targets';
 
-// 移す前のページの期待 (取り直しが開いたときの読み込みの役を引き継ぐ)。新しい受け手の hook へ移したら下の #2206 G1 の describe
-if (!RECEIVER_MIGRATED_PAGES.has('/profile/nutrition-targets')) {
-  describe('/profile/nutrition-targets: 前の回の栄養目標の読み取りが後から失敗で届いても、あとの回が出した失敗の表示を消さない (#2201 U1)', () => {
-    it('開いたときの読み込みの栄養目標の応答 (500) が、その読み込み中に来た成功の回の失敗のあとに届く', async () => {
-      const c = caseOf('/profile/nutrition-targets');
-      const targetsRequest = NUTRITION_TARGETS_REQUEST;
-      // 比べる先: 開いたときにログインを確かめられなかった画面
-      setServer(c.full);
-      server.failure = 'network';
-      await renderOnly(c);
-      server.failure = null;
-      const failedOpen = screenSignature(container);
-      await freshRoot();
+describe('/profile/nutrition-targets: 開いたときの読み込みの最中に来た取り直しが失敗しても、開いたときの読み込みの応答を置く (#2206 G1)', () => {
+  it("開いたときの読み込みの最中に来た取り直しが失敗しても、開いたときの読み込みの応答 (栄養目標は 500) を置く (読めたプロフィールを出し、栄養目標は '-'。失敗の画面にしない)", async () => {
+    const c = caseOf('/profile/nutrition-targets');
+    // 比べる先 1: 開いたときにログインを確かめられなかった画面 (失敗の画面。これにしない)
+    setServer(c.full);
+    server.failure = 'network';
+    await renderOnly(c);
+    server.failure = null;
+    const failedOpen = screenSignature(container);
+    await freshRoot();
+    // 比べる先 2: 開いたときに栄養目標だけ 500 だった画面 (読めたプロフィールを出し、栄養目標は '-')
+    server.failedRequests.add(NUTRITION_TARGETS_REQUEST);
+    await renderOnly(c);
+    const targetsFailedOpen = screenSignature(container);
+    expect(targetsFailedOpen, '栄養目標だけ読めなかった画面が失敗の画面と同じ (検査が空振りしている)').not.toBe(failedOpen);
+    await freshRoot();
 
-      // 開いたときの読み込みは、栄養目標の読み取りの応答 (500) を待つ
-      const targetsRead = deferred();
-      server.fetchHolds.set(targetsRequest, targetsRead.promise);
-      server.failedRequests.add(targetsRequest);
-      await renderOnly(c);
-      expect(server.requests, '開いたときの読み込みが栄養目標を読んでいない (検査が空振りしている)').toContain(targetsRequest);
-      server.fetchHolds.delete(targetsRequest);
+    // 開いたときの読み込みは、栄養目標の読み取りの応答 (500) を待つ
+    const targetsRead = deferred();
+    server.fetchHolds.set(NUTRITION_TARGETS_REQUEST, targetsRead.promise);
+    await renderOnly(c);
+    expect(server.requests, '開いたときの読み込みが栄養目標を読んでいない (検査が空振りしている)').toContain(NUTRITION_TARGETS_REQUEST);
+    server.fetchHolds.delete(NUTRITION_TARGETS_REQUEST);
 
-      // その間に来た成功の回 (開いたときの読み込みの役を引き継ぐ) は、ログインを確かめられずに失敗の表示を出す
-      server.failure = 'network';
-      await notifyAiConsultationSucceeded();
-      server.failure = null;
-      expect(screenSignature(container), 'あとの回の失敗の表示が出ていない (検査が空振りしている)').toBe(failedOpen);
+    // その間に来た取り直しは、ログインを確かめられずに失敗する (取り直しは何も置かない)
+    server.failure = 'network';
+    await notifyAiConsultationSucceeded();
+    server.failure = null;
+    expect(screenSignature(container), '取り直しの失敗で失敗の画面を出した').not.toBe(failedOpen);
 
-      targetsRead.resolve();
-      await settle();
-      expect(screenSignature(container), '前の回の栄養目標の失敗の応答が、あとの回の失敗の表示を消した').toBe(failedOpen);
-    });
+    targetsRead.resolve();
+    await settle();
+    expect(screenSignature(container), '開いたときの読み込みの応答 (栄養目標は 500) を置かない').toBe(targetsFailedOpen);
   });
-} else {
-  describe('/profile/nutrition-targets: 開いたときの読み込みの最中に来た取り直しが失敗しても、開いたときの読み込みの応答を置く (#2206 G1)', () => {
-    it("開いたときの読み込みの最中に来た取り直しが失敗しても、開いたときの読み込みの応答 (栄養目標は 500) を置く (読めたプロフィールを出し、栄養目標は '-'。失敗の画面にしない)", async () => {
-      const c = caseOf('/profile/nutrition-targets');
-      // 比べる先 1: 開いたときにログインを確かめられなかった画面 (失敗の画面。これにしない)
-      setServer(c.full);
-      server.failure = 'network';
-      await renderOnly(c);
-      server.failure = null;
-      const failedOpen = screenSignature(container);
-      await freshRoot();
-      // 比べる先 2: 開いたときに栄養目標だけ 500 だった画面 (読めたプロフィールを出し、栄養目標は '-')
-      server.failedRequests.add(NUTRITION_TARGETS_REQUEST);
-      await renderOnly(c);
-      const targetsFailedOpen = screenSignature(container);
-      expect(targetsFailedOpen, '栄養目標だけ読めなかった画面が失敗の画面と同じ (検査が空振りしている)').not.toBe(failedOpen);
-      await freshRoot();
-
-      // 開いたときの読み込みは、栄養目標の読み取りの応答 (500) を待つ
-      const targetsRead = deferred();
-      server.fetchHolds.set(NUTRITION_TARGETS_REQUEST, targetsRead.promise);
-      await renderOnly(c);
-      expect(server.requests, '開いたときの読み込みが栄養目標を読んでいない (検査が空振りしている)').toContain(NUTRITION_TARGETS_REQUEST);
-      server.fetchHolds.delete(NUTRITION_TARGETS_REQUEST);
-
-      // その間に来た取り直しは、ログインを確かめられずに失敗する (取り直しは何も置かない)
-      server.failure = 'network';
-      await notifyAiConsultationSucceeded();
-      server.failure = null;
-      expect(screenSignature(container), '取り直しの失敗で失敗の画面を出した').not.toBe(failedOpen);
-
-      targetsRead.resolve();
-      await settle();
-      expect(screenSignature(container), '開いたときの読み込みの応答 (栄養目標は 500) を置かない').toBe(targetsFailedOpen);
-    });
-  });
-}
+});
 
 describe('/health: 取り直しの fetch が reject しても、読み込み中のまま止まらず今の表示を残す (#2201 U1)', () => {
   it('ログインは確かめられ、記録の読み取りの通信だけが失敗する', async () => {
