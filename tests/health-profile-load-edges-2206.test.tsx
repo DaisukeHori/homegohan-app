@@ -23,8 +23,8 @@ const USER_ID = '22060000-0000-4000-8000-0000000000aa';
 
 /** サーバーの答え (テストごとに置き換える) */
 const server = vi.hoisted(() => ({
-  /** '<メソッド> <道>' → 応答を作る関数。無い道は 404 */
-  fetchHandlers: new Map<string, () => Response>(),
+  /** '<メソッド> <道>' → 応答を作る関数 (Promise を返すと、それが決まるまで応答を待たせる)。無い道は 404 */
+  fetchHandlers: new Map<string, () => Response | Promise<Response>>(),
   /** 表 → Supabase の読み取りの答え (single なら最初の行) */
   tables: {} as Record<string, { rows: Record<string, unknown>[]; error: unknown }>,
   /** getUser の振る舞い。'ok' はログイン済み、'throw' は投げる */
@@ -141,6 +141,24 @@ const failed = () => json({ error: 'down' }, SERVER_ERROR_STATUS);
 const rejected = () => (): Response => {
   throw new TypeError('Failed to fetch');
 };
+/**
+ * 応答を待たせる (読み込み中の画面を確かめるため)。handler を fetchHandlers に置き、release で応答 (respond の答え) を返す。
+ * 呼ばれる前に release しても、呼ばれたときにすぐ返す
+ */
+function held(respond: () => Response) {
+  let releaseHeld: (() => void) | null = null;
+  let released = false;
+  const handler = () =>
+    new Promise<Response>((resolve) => {
+      releaseHeld = () => resolve(respond());
+      if (released) releaseHeld();
+    });
+  const release = () => {
+    released = true;
+    releaseHeld?.();
+  };
+  return { handler, release };
+}
 
 function installServer() {
   vi.stubGlobal(
@@ -339,6 +357,8 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
   const WEIGHT_GOAL = { id: 'goal-h3', goal_type: 'weight', target_value: 60 };
   /** 目標との比較のカードの文 (最新の値が無いときに出すと、目標の値そのものを「あと」として出す) */
   const TARGET_COMPARISON = '目標まであと';
+  /** 目標との比較のカードの見出し (目標の値)。目標は読めているので、カードを出せばこの文が出る */
+  const TARGET_LABEL = `目標体重: ${WEIGHT_GOAL.target_value}kg`;
 
   const shownWeight = (weight: number) => weight.toFixed(1);
   const recordsOf = (weight: number) => json({ records: [{ record_date: TODAY, weight }] });
@@ -371,6 +391,8 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
         expect(container.querySelector('[role="alert"]')?.textContent, '知らせが role="alert" で読み上げられない').toContain(LOAD_FAILED);
         expect(buttonContaining(RELOAD_LABEL), '再読み込みのボタンが無い').toBeDefined();
         expect(container.textContent, '最新の値が無いのに目標との比較を出した').not.toContain(TARGET_COMPARISON);
+        expect(server.requests, '目標を読みに行っていない (カードが出ないことを確かめられていない)').toContain(GOALS);
+        expect(container.textContent, '読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
       });
     }
   }
@@ -386,6 +408,7 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
     expect(server.requests, '再読み込みのボタンで記録を読み直していない').toContain(RECORDS);
     expect(container.textContent, '読み直せたのに、読み込めなかった知らせが残った').not.toContain(LOAD_FAILED);
     expect(container.textContent).toContain(shownWeight(RELOADED_WEIGHT));
+    expect(container.textContent, '読み直せたのに、目標との比較のカードを出さない').toContain(TARGET_LABEL);
   });
 
   it('再読み込みでもまた読めなければ、知らせを出したまま (空のグラフにしない)', async () => {
@@ -396,6 +419,7 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
     expect(server.requests, '再読み込みのボタンで記録を読み直していない (検査が空振りしている)').toContain(RECORDS);
     expect(container.textContent).toContain(LOAD_FAILED);
     expect(container.textContent).not.toContain(NO_DATA);
+    expect(container.textContent, '再読み込みでも読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
   });
 
   it('知らせを出しているときに取り直しが記録を読めたら、知らせを消して線を出す', async () => {
@@ -418,6 +442,7 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
     await notifyAiConsultationSucceeded();
     expect(server.requests, '取り直していない (検査が空振りしている)').toContain(RECORDS);
     expect(container.textContent).toContain(LOAD_FAILED);
+    expect(container.textContent, '取り直しでも読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
   });
 
   it('記録が本当に無い (読めて 0 件) ときは、これまでどおり「データがありません」を出す (読み込めなかった知らせは出さない)', async () => {
@@ -426,6 +451,111 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
     expect(server.requests).toContain(RECORDS);
     expect(container.textContent).toContain(NO_DATA);
     expect(container.textContent).not.toContain(LOAD_FAILED);
+  });
+});
+
+describe('/health/graphs: 目標との比較のカードは、読み込み中・読めなかったときは出さず、最新の値が無いときは「目標まであと」を出さない (#2235 I4)', () => {
+  const RECORDS = 'GET /api/health/records';
+  const CHECKUPS = 'GET /api/health/checkups';
+  const GOALS = 'GET /api/health/goals';
+  const MONTH_WEIGHT = 65;
+  const RELOADED_WEIGHT = 66.2;
+  const WEEK_WEIGHT = 70.4;
+  const TARGET_WEIGHT = 60;
+  const NO_DATA = 'データがありません';
+  const LOAD_FAILED = '記録を読み込めませんでした';
+  const RELOAD_LABEL = '再読み込み';
+  const WEEK_LABEL = '1週間';
+  const WEIGHT_GOAL = { id: 'goal-i4', goal_type: 'weight', target_value: TARGET_WEIGHT };
+  /** 目標との比較のカードの見出し (目標の値)。カードそのものが出ているかはこの文で見る (「目標まであと」は最新の値が無いと出ないので、カードの有無を見張れない) */
+  const TARGET_LABEL = `目標体重: ${TARGET_WEIGHT}kg`;
+  /** 目標との比較のカードの「あと」の文 (最新の値が無いときに出すと、目標の値そのものを「あと」として出す) */
+  const TARGET_COMPARISON = '目標まであと';
+  /** 最新の値 weight のときの「あと」の文 (ページと同じく小数 1 桁) */
+  const remainingOf = (weight: number) => `${TARGET_COMPARISON} ${Math.abs(weight - TARGET_WEIGHT).toFixed(1)}kg`;
+  /** 最新の値が無いまま 0 との差で出した「あと」の文 (直す前の形) */
+  const REMAINING_FROM_ZERO = `${TARGET_COMPARISON} ${TARGET_WEIGHT.toFixed(1)}kg`;
+
+  const recordsOf = (weight: number) => json({ records: [{ record_date: TODAY, weight }] });
+  /** グラフの読み込み中の印 (スピナー) */
+  const spinner = () => container.querySelector('.animate-spin');
+
+  beforeEach(() => {
+    server.fetchHandlers.set(RECORDS, recordsOf(MONTH_WEIGHT));
+    server.fetchHandlers.set(CHECKUPS, json({ checkups: [] }));
+    server.fetchHandlers.set(GOALS, json({ goals: [WEIGHT_GOAL] }));
+  });
+
+  it('記録を読めた後は、最新の値との差で「目標まであと」を出す (出さなくしすぎていない)', async () => {
+    await mount(<HealthGraphsPage />);
+    expect(container.textContent).toContain(TARGET_LABEL);
+    expect(container.textContent).toContain(remainingOf(MONTH_WEIGHT));
+  });
+
+  it('読めなかった後に再読み込みを押した読み込み中は、目標の値そのものを「目標まであと」として出さない', async () => {
+    server.fetchHandlers.set(RECORDS, failed());
+    await mount(<HealthGraphsPage />);
+    expect(container.textContent, '読めなかった知らせが出ていない (検査が空振りしている)').toContain(LOAD_FAILED);
+    expect(container.textContent, '読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
+
+    const reload = held(recordsOf(RELOADED_WEIGHT));
+    server.fetchHandlers.set(RECORDS, reload.handler);
+    server.requests = [];
+    await click(buttonContaining(RELOAD_LABEL), RELOAD_LABEL);
+    expect(server.requests, '再読み込みのボタンで記録を読み直していない (検査が空振りしている)').toContain(RECORDS);
+    expect(spinner(), '読み込み中の印が出ていない (読み込み中を確かめられていない)').not.toBeNull();
+    expect(container.textContent, '再読み込みの読み込み中に、最新の値が無いまま目標の値を「目標まであと」として出した').not.toContain(TARGET_COMPARISON);
+    expect(container.textContent).not.toContain(REMAINING_FROM_ZERO);
+    expect(container.textContent, '再読み込みの読み込み中に目標との比較のカードを出した').not.toContain(TARGET_LABEL);
+
+    reload.release();
+    await settle();
+    expect(spinner(), '読み終わったのに読み込み中の印が残った').toBeNull();
+    expect(container.textContent, '読み直せたのに、最新の値との差を出さない').toContain(remainingOf(RELOADED_WEIGHT));
+  });
+
+  it('再読み込みの読み込み中に、もう一度読めなくても「目標まであと」を出さない (知らせに戻る)', async () => {
+    server.fetchHandlers.set(RECORDS, failed());
+    await mount(<HealthGraphsPage />);
+    expect(container.textContent, '読めなかった知らせが出ていない (検査が空振りしている)').toContain(LOAD_FAILED);
+    expect(container.textContent, '読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
+
+    const reload = held(failed());
+    server.fetchHandlers.set(RECORDS, reload.handler);
+    await click(buttonContaining(RELOAD_LABEL), RELOAD_LABEL);
+    expect(spinner(), '読み込み中の印が出ていない (検査が空振りしている)').not.toBeNull();
+    expect(container.textContent).not.toContain(TARGET_COMPARISON);
+    expect(container.textContent, '再読み込みの読み込み中に目標との比較のカードを出した').not.toContain(TARGET_LABEL);
+
+    reload.release();
+    await settle();
+    expect(container.textContent).toContain(LOAD_FAILED);
+    expect(container.textContent).not.toContain(TARGET_COMPARISON);
+    expect(container.textContent, 'もう一度読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
+  });
+
+  it('期間を切り替えた読み込み中は、前の期間の最新の値で「目標まであと」を出さない', async () => {
+    await mount(<HealthGraphsPage />);
+    expect(container.textContent, '前の期間の差が出ていない (検査が空振りしている)').toContain(remainingOf(MONTH_WEIGHT));
+
+    const week = held(recordsOf(WEEK_WEIGHT));
+    server.fetchHandlers.set(RECORDS, week.handler);
+    await click(buttonContaining(WEEK_LABEL), WEEK_LABEL);
+    expect(spinner(), '読み込み中の印が出ていない (検査が空振りしている)').not.toBeNull();
+    expect(container.textContent, '期間を切り替えた読み込み中に、前の期間の値で「目標まであと」を出した').not.toContain(TARGET_COMPARISON);
+    expect(container.textContent, '期間を切り替えた読み込み中に目標との比較のカードを出した').not.toContain(TARGET_LABEL);
+
+    week.release();
+    await settle();
+    expect(container.textContent).toContain(remainingOf(WEEK_WEIGHT));
+  });
+
+  it('記録が本当に無い (読めて 0 件) ときは、目標体重は出しても、目標の値そのものを「目標まであと」として出さない', async () => {
+    server.fetchHandlers.set(RECORDS, json({ records: [] }));
+    await mount(<HealthGraphsPage />);
+    expect(container.textContent, '「データがありません」が出ていない (検査が空振りしている)').toContain(NO_DATA);
+    expect(container.textContent, '記録が無くても、目標体重は出す').toContain(TARGET_LABEL);
+    expect(container.textContent, '最新の値が無いのに、目標の値そのものを「目標まであと」として出した').not.toContain(TARGET_COMPARISON);
   });
 });
 
