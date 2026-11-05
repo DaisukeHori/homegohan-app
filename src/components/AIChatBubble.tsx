@@ -402,6 +402,25 @@ const LOCKED_QUICK_ACTION_OPACITY = 0.5;
 const BUSY_BUTTON_OPACITY = 0.7;
 
 /**
+ * 1日献立の作成の最中に、作成の依頼の状態を状態の確認 (GET /api/ai/menu/weekly/status) で読み直す間隔 (ミリ秒。#2254 M1)。
+ * 作成の完了・失敗は主に依頼の行の変化 (Realtime) で知るが、Realtime は切れていた間 (タブを裏に回した・通信が途切れた) の変化を
+ * 送り直さない。取りこぼすと作成の最中の止め (『相談を終了』・新しい相談・相談の切り替え・開き直しの読み直し) が下りないので、
+ * その保険として読み直す (チャットを開いたとき・タブが前に戻ったときにも読み直す)。主の経路は Realtime なので、週の画面の
+ * 状態の確認のポーリング (3 秒) より疎にする (作成は数十秒かかる。取りこぼしても、この間隔 1 回分の待ちで止めが下りる)。
+ * 状態の確認は進まなくなった依頼 (src/lib/weekly-menu-request-stale.ts) を失敗にするので、作成が止まったときも止めが下りる。
+ * 予約は setInterval で、作成の最中だけ置き、終わったとき・部品を外すときに effect の後始末で取り消す
+ */
+export const DAY_MENU_STATUS_RECHECK_INTERVAL_MS = 30_000;
+
+/** 作成の依頼の状態を読み直したら失敗 (または依頼の行が無い) で、文が無いときに出す文 (フック useV4MenuGeneration の既定の文と同じ) */
+const DAY_MENU_FAILED_FALLBACK_MESSAGE = '生成に失敗しました';
+
+/** 状態の確認 (GET /api/ai/menu/weekly/status) の応答の状態のうち、作成が終わった (Realtime の変化をもう待たない) もの */
+const DAY_MENU_REQUEST_COMPLETED_STATUS = 'completed';
+/** 失敗 (進まなくなって失敗にした行・利用者の中止を含む) と、依頼の行が無い (not_found) */
+const DAY_MENU_REQUEST_FAILED_STATUSES: ReadonlySet<string> = new Set(['failed', 'not_found']);
+
+/**
  * JST の暦日 day (YYYY-MM-DD) を offsetDays 日ずらした暦日 (#2235 I8)。暦の計算 (addDaysToDate) だけで求めるので、端末の
  * タイムゾーンに左右されない (以前は端末の 0 時の Date を setDate でずらしてから JST の日付にしていて、端末が JST より東だと
  * 1 日戻った)。描画中に呼ぶので投げない: ずらした先が暦の計算で扱える範囲の外なら null (addDaysToDate が投げるのは、範囲の外と
@@ -507,7 +526,9 @@ export default function AIChatBubble() {
   // で作成中の一文が消え、完了・実行の結果の一文だけが新しい相談の画面に出た。#2245 K1 が直した向き (閉じる応答待ちの間の作成) の逆)。
   // 同意の確認を待つ間は入れない (その間に閉じるを押したら閉じる側が勝ち、作成・実行をしない。#2245 K1)。
   // 作成の最中をフックの isGenerating で見ないのは、依頼が失敗した (onError) あともフックの isGenerating が真のまま残り、閉じるが
-  // ずっと押せなくなるため (作成の最中は、ここで始まりと終わり (完了・失敗) を自分で持つ)。
+  // ずっと押せなくなるため (作成の最中は、ここで始まりと終わり (完了・失敗) を自分で持つ)。終わりは Realtime の完了・失敗の通知のほか、
+  // 依頼の状態の読み直し (recheckDayMenuRequest。チャットを開いたとき・タブが前に戻ったとき・DAY_MENU_STATUS_RECHECK_INTERVAL_MS ごと)
+  // でも見つける (Realtime は切れていた間の変化を送り直さないので、通知だけを待つと、取りこぼしたときに止めがずっと下りない)。
   // 『新しい相談を始める』・相談の切り替えも同じ理由でこの間は止め、チャットを開き直したときの会話の読み直し (openChat) もしない
   // (どれも会話を置き換えるので、作成中の一文が消え、完了・結果の一文が別の相談の画面に出る (開き直しは同じ相談の画面で消える)。#2254 M1)。
   // ref でも持つのは、ボタンを止める描画を待たずに今の値を見て、同じ描画のうちの押下も止めるため (closingSessionRef と同じ形)。
@@ -518,19 +539,43 @@ export default function AIChatBubble() {
   const dayMenuInFlightRef = useRef(false);
   const [actionRequestsInFlight, setActionRequestsInFlight] = useState(0);
   const actionRequestsInFlightRef = useRef(0);
+  // 作成の最中の依頼の id (状態を読み直すため) と、その進捗の購読の解除 (#2254 M1。作成が終わったら外す)
+  const dayMenuRequestIdRef = useRef<string | null>(null);
+  const dayMenuUnsubscribeRef = useRef<(() => void) | null>(null);
+  /** 1日献立の作成の最中にする (作成中の一文を足すとき。終わりは settleDayMenuRequest) */
   const markDayMenuInFlight = (inFlight: boolean) => {
     dayMenuInFlightRef.current = inFlight;
     setIsDayMenuInFlight(inFlight);
+  };
+  /**
+   * 1日献立の作成が終わった (完了・失敗・依頼が始まらなかった・進捗を追えない): 止めを下ろし、進捗の購読を外す (#2254 M1)。
+   * 作成の最中でなければ何もせず false を返す (終わりは Realtime の通知と状態の読み直しの両方から届きうるので、完了・失敗の一文を
+   * 2 度足さない)。終わるのも画面の操作 (完了・失敗の一文を今の画面に足す): 一覧を待っている開く (openChat) に、この画面の会話を
+   * 読み直させない (読み直すと会話がサーバーの写しで置き換わり、作成中・完了の一文が消える)
+   */
+  const settleDayMenuRequest = (): boolean => {
+    if (!dayMenuInFlightRef.current) return false;
+    markDayMenuInFlight(false);
+    dayMenuRequestIdRef.current = null;
+    const unsubscribe = dayMenuUnsubscribeRef.current;
+    dayMenuUnsubscribeRef.current = null;
+    unsubscribe?.();
+    startViewOperation();
+    return true;
   };
   /** 提案の実行の応答待ちを 1 件始める (終わったら必ず endActionRequest を 1 回呼ぶ) */
   const beginActionRequest = () => {
     actionRequestsInFlightRef.current += 1;
     setActionRequestsInFlight(actionRequestsInFlightRef.current);
   };
-  /** 提案の実行の応答待ちが 1 件終わった */
+  /**
+   * 提案の実行の応答待ちが 1 件終わった。終わるのも画面の操作 (#2254 M1。結果の一文を今の画面に足したあと。一覧を待っている開く
+   * (openChat) に、この画面の会話を読み直させない。settleDayMenuRequest と同じ)
+   */
   const endActionRequest = () => {
     actionRequestsInFlightRef.current -= 1;
     setActionRequestsInFlight(actionRequestsInFlightRef.current);
+    startViewOperation();
   };
   /** 1日献立の作成の最中か・提案の実行の応答待ちが 1 件でもあるか (今の値。#2254 M1) */
   const resultRequestInFlight = () => dayMenuInFlightRef.current || actionRequestsInFlightRef.current > 0;
@@ -570,52 +615,123 @@ export default function AIChatBubble() {
   };
   const [v4Progress, setV4Progress] = useState<string | null>(null);
 
+  /**
+   * 1日献立の作成が完了した (Realtime の通知・状態の読み直しのどちらからも呼ぶ)。止めを下ろして完了の一文を足す。
+   * 作成の最中でなければ (もう一方の経路が先に終わりを見つけた) 何もしない (#2254 M1)
+   */
+  const completeDayMenu = () => {
+    if (!settleDayMenuRequest()) return;
+    setV4Progress(null);
+    notifyMenuGenerated();
+    // 成功メッセージをチャットに追加
+    setMessages(prev => [...prev, {
+      id: `v4-success-${Date.now()}`,
+      role: 'assistant',
+      content: '✅ 献立の作成が完了しました！献立表で確認できます。',
+      createdAt: new Date().toISOString(),
+    }]);
+    // 他のコンポーネントに通知
+    window.dispatchEvent(new CustomEvent('mealPlanUpdated', {
+      detail: { actionType: 'generate_day_menu' }
+    }));
+  };
+  /**
+   * 1日献立の作成が失敗した (依頼の失敗・進捗の失敗。Realtime の通知・状態の読み直しのどちらからも呼ぶ)。止めを下ろして失敗の一文を
+   * 足す。作成の最中でなければ (もう一方の経路が先に終わりを見つけた) 何もしない (#2254 M1)
+   */
+  const failDayMenu = (error: string) => {
+    if (!settleDayMenuRequest()) return;
+    setV4Progress(null);
+    // 生成を受け付けたあとに、サーバーが同意の判定で止めた (未同意。T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内する。
+    // 同期で止められたとき (generateDayMenu の catch) と同じ一文だけを出し、失敗の文は出さない
+    if (handleStoredAiConsentFailure(error)) {
+      setMessages(prev => [...prev, {
+        id: `v4-consent-${Date.now()}`,
+        role: 'assistant',
+        content: V4_CONSENT_REQUIRED_CHAT_NOTE,
+        createdAt: new Date().toISOString(),
+      }]);
+      return;
+    }
+    setMessages(prev => [...prev, {
+      id: `v4-error-${Date.now()}`,
+      role: 'assistant',
+      content: `❌ 献立の作成に失敗しました: ${error}`,
+      createdAt: new Date().toISOString(),
+    }]);
+  };
+
   // V4 献立生成フック
   const {
     isGenerating: isGeneratingDayMenu,
     generate: generateV4,
     subscribeToProgress,
+    cancelGeneration: resetDayMenuGeneration,
   } = useV4MenuGeneration({
-    onGenerationComplete: () => {
-      // 作成が終わった: 『相談を終了』をまた押せる (#2254 M1)
-      markDayMenuInFlight(false);
-      setV4Progress(null);
-      notifyMenuGenerated();
-      // 成功メッセージをチャットに追加
-      setMessages(prev => [...prev, {
-        id: `v4-success-${Date.now()}`,
-        role: 'assistant',
-        content: '✅ 献立の作成が完了しました！献立表で確認できます。',
-        createdAt: new Date().toISOString(),
-      }]);
-      // 他のコンポーネントに通知
-      window.dispatchEvent(new CustomEvent('mealPlanUpdated', {
-        detail: { actionType: 'generate_day_menu' }
-      }));
-    },
-    onError: (error) => {
-      // 作成が失敗した (依頼の失敗・進捗の失敗): 『相談を終了』をまた押せる (#2254 M1)
-      markDayMenuInFlight(false);
-      setV4Progress(null);
-      // 生成を受け付けたあとに、サーバーが同意の判定で止めた (未同意。T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内する。
-      // 同期で止められたとき (下の catch) と同じ一文だけを出し、失敗の文は出さない
-      if (handleStoredAiConsentFailure(error)) {
-        setMessages(prev => [...prev, {
-          id: `v4-consent-${Date.now()}`,
-          role: 'assistant',
-          content: V4_CONSENT_REQUIRED_CHAT_NOTE,
-          createdAt: new Date().toISOString(),
-        }]);
-        return;
-      }
-      setMessages(prev => [...prev, {
-        id: `v4-error-${Date.now()}`,
-        role: 'assistant',
-        content: `❌ 献立の作成に失敗しました: ${error}`,
-        createdAt: new Date().toISOString(),
-      }]);
-    },
+    onGenerationComplete: completeDayMenu,
+    onError: failDayMenu,
   });
+
+  /**
+   * 作成の最中の依頼の状態を、状態の確認 (GET /api/ai/menu/weekly/status) で読み直す (#2254 M1)。Realtime の完了・失敗の通知を
+   * 取りこぼした (タブを裏に回した・通信が途切れた) ときに、止め (『相談を終了』・新しい相談・相談の切り替え・開き直しの読み直し) を
+   * 下ろすための保険。終わっていれば (完了・失敗・依頼の行が無い) 通知が届いたときと同じ処理をし、フックの作成中の印も下ろす
+   * (フックの印は Realtime の通知でしか下りないので、そのままだと『1日献立変更』も押せないまま)。まだ作成中なら何もしない。
+   * 読めなかったとき (401・500・通信の失敗) も何もしない (次の読み直しに任せる)
+   */
+  const recheckDayMenuRequest = async () => {
+    const requestId = dayMenuRequestIdRef.current;
+    if (!dayMenuInFlightRef.current || requestId === null) return;
+    try {
+      const res = await fetch(`/api/ai/menu/weekly/status?requestId=${encodeURIComponent(requestId)}`);
+      if (!res.ok) return;
+      const body: unknown = await res.json();
+      const { status, errorMessage } = (body !== null && typeof body === 'object' ? body : {}) as {
+        status?: unknown;
+        errorMessage?: unknown;
+      };
+      // 読む間に終わりが届いた (止めを下ろした)・別の作成に変わった: 何もしない
+      if (dayMenuRequestIdRef.current !== requestId) return;
+      if (status === DAY_MENU_REQUEST_COMPLETED_STATUS) {
+        resetDayMenuGeneration();
+        completeDayMenu();
+      } else if (typeof status === 'string' && DAY_MENU_REQUEST_FAILED_STATUSES.has(status)) {
+        resetDayMenuGeneration();
+        failDayMenu(typeof errorMessage === 'string' && errorMessage !== '' ? errorMessage : DAY_MENU_FAILED_FALLBACK_MESSAGE);
+      }
+    } catch (e) {
+      console.error('Failed to recheck day menu request:', e);
+    }
+  };
+  // 読み直しを effect (予約・タブの戻り) から呼ぶための、最新の描画の関数 (#2254 M1)
+  const recheckDayMenuRequestRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    recheckDayMenuRequestRef.current = () => {
+      void recheckDayMenuRequest();
+    };
+  });
+  // 作成の最中は、DAY_MENU_STATUS_RECHECK_INTERVAL_MS ごとと、タブが前に戻ったときに依頼の状態を読み直す (#2254 M1。
+  // 作成が終わったら (isDayMenuInFlight が偽になったら)・部品を外すときに後始末で取り消す)
+  useEffect(() => {
+    if (!isDayMenuInFlight) return;
+    const recheck = () => recheckDayMenuRequestRef.current();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') recheck();
+    };
+    const timer = setInterval(recheck, DAY_MENU_STATUS_RECHECK_INTERVAL_MS);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [isDayMenuInFlight]);
+  // 部品を外すときに、作成の最中の進捗の購読を外す (#2254 M1)
+  useEffect(() => {
+    return () => {
+      dayMenuUnsubscribeRef.current?.();
+      dayMenuUnsubscribeRef.current = null;
+    };
+  }, []);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -646,7 +762,8 @@ export default function AIChatBubble() {
     setCurrentSessionId(sessionId);
   };
   // 最新の画面の操作の番号 (#2254 M1。モバイルの AIAdvisorSheet の viewGenRef と同じ決まり)。チャットを開く (openChat)・新しい相談を
-  // 作る (createNewSession)・出す相談を変える (showSessionId) たびに 1 つ進める。開く・作るは始めたときの番号を持ち、一覧・作成の応答が
+  // 作る (createNewSession)・出す相談を変える (showSessionId)・1日献立の作成と提案の実行を始める・終える (作成中・完了・結果の一文を
+  // 今の画面に足す。settleDayMenuRequest・endActionRequest) たびに 1 つ進める。開く・作るは始めたときの番号を持ち、一覧・作成の応答が
   // 返ったときに番号が進んでいれば、出す相談と会話を変えない (最後の操作が勝つ)。以前は開く側が閉包の古い currentSessionId を見て、
   // 一覧を待つ間に始めた新しい相談・選んだ相談を、一覧を読んだ時点の相談で上書きした
   const viewGenRef = useRef(0);
@@ -882,6 +999,9 @@ export default function AIChatBubble() {
     setIsOpen(true);
     setHasUnread(false);
     try {
+      // 1日献立の作成の最中に開いた: 依頼の状態を読み直す (#2254 M1。Realtime の完了・失敗の通知を取りこぼしていたら、ここで終わりを
+      // 見つけて止めを下ろし、完了・失敗の一文を足す。終わるのも画面の操作なので、下の一覧のあとに会話を読み直さない)
+      if (dayMenuInFlightRef.current) void recheckDayMenuRequest();
       // 相談を閉じる (/close) の応答待ちの間は、会話を読み込まない (#2245 K1。閉じる側が応答のあと一覧を読み直し、新しい相談を出す。
       // ここで読み込むと、閉じたあとの新しい相談の画面を、遅れて返った閉じた相談の会話や一覧で上書きしうる)。開くだけはする
       if (closingSessionRef.current) return;
@@ -898,7 +1018,7 @@ export default function AIChatBubble() {
       if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
       // 1日献立の作成の最中・提案の実行の応答待ちの最中 (チャットを閉じて開き直した): 出す相談を変えず、会話も読み直さない (#2254 M1。
       // 読み直すと会話がサーバーの写しで置き換わり、作成中の一文が消える。画面はもうその相談の会話を出している)。
-      // 一覧を待つ間に作成・実行を始めたとき (終わったあとも) は、始めたのが画面の操作なので上の番号で止まる
+      // 一覧を待つ間に作成・実行を始めた・終わった (完了・失敗・結果の一文を足した) ときは、始める・終わるのが画面の操作なので上の番号で止まる
       if (resultRequestInFlight()) return;
 
       // 既存のアクティブセッションがあればそれを使う、なければ新規作成
@@ -1751,18 +1871,23 @@ export default function AIChatBubble() {
 
       // 進捗を購読
       if (result?.requestId) {
-        subscribeToProgress(result.requestId, (progress) => {
+        // 依頼の id を持つ (Realtime の通知を取りこぼしたときに、状態を読み直して終わりを見つけるため。#2254 M1)
+        dayMenuRequestIdRef.current = result.requestId;
+        const unsubscribe = subscribeToProgress(result.requestId, (progress) => {
           if (progress.message) {
             setV4Progress(progress.message);
           }
         });
+        // 作成が終わったら購読を外す (settleDayMenuRequest。状態の読み直しで終わりを見つけたあとに、遅れた通知で一文を足さない)
+        dayMenuUnsubscribeRef.current = typeof unsubscribe === 'function' ? unsubscribe : null;
       } else {
         // 進捗を追えない (完了・失敗が届かない): 『相談を終了』の止めを下ろす (#2254 M1。ずっと止めない)
-        markDayMenuInFlight(false);
+        settleDayMenuRequest();
       }
     } catch (e: any) {
-      // 依頼が失敗した (同意で止められたときも): 作成は始まっていないので『相談を終了』の止めを下ろす (#2254 M1)
-      markDayMenuInFlight(false);
+      // 依頼が失敗した (同意で止められたときも): 作成は始まっていないので『相談を終了』の止めを下ろす (#2254 M1。依頼の失敗は
+      // フックの onError (failDayMenu) が先に下ろしているので、ここで下ろすのは同意で止められたとき)
+      settleDayMenuRequest();
       if (e instanceof AiConsentRequiredError) {
         // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する。作成中の表示を打ち消しておく
         setMessages(prev => [...prev, {
