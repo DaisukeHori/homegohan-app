@@ -61,6 +61,8 @@ const h = vi.hoisted(() => ({
   uploads: [] as string[],
   removes: [] as string[][],
   removeError: null as { message: string } | null,
+  /** Storage の remove が投げる例外 (接続の失敗など。返り値の error ではなく例外で落ちる経路) */
+  removeThrows: null as Error | null,
   generateCalls: 0,
   generateError: null as Error | null,
   /** userId = withUser(…) で作ったロガーが出したときの利用者 (app_logs の user_id 列。#2245 K5)。withUser を通さないログは null */
@@ -171,6 +173,7 @@ vi.mock('@supabase/supabase-js', () => ({
         getPublicUrl: (path: string) => ({ data: { publicUrl: `${PUBLIC_URL_BASE}${path}` } }),
         remove: async (paths: string[]) => {
           h.removes.push([...paths]);
+          if (h.removeThrows) throw h.removeThrows;
           return { data: h.removeError ? null : paths.map((name) => ({ name })), error: h.removeError };
         },
       }),
@@ -272,6 +275,7 @@ beforeEach(async () => {
   h.uploads = [];
   h.removes = [];
   h.removeError = null;
+  h.removeThrows = null;
   h.generateCalls = 0;
   h.generateError = null;
   h.logs = [];
@@ -361,6 +365,8 @@ describe('(1) 料理を失敗の印にできなかったとき (#1553)', () => {
     expect(errors[0].message).toContain('生成中 (pending) のまま');
     expect(errors[0].error).toBeInstanceOf(MealDishWriteExhaustedError);
     expect(errors[0].metadata).toMatchObject({ jobId: JOB_ID, plannedMealId: MEAL_ID, dishIndex: 0, jobStatus: 'failed' });
+    // ジョブの持ち主を withUser で app_logs の user_id 列に入れる (運営が利用者で絞ったときに出てくる。#2254 M3)
+    expect(errors[0].userId).toBe(USER_ID);
   });
 
   it('印を付けられたときは、last_error はジョブの理由のまま・error のログも残さない', async () => {
@@ -391,6 +397,22 @@ describe('(1) 料理を失敗の印にできなかったとき (#1553)', () => {
       '料理を失敗の印にできず、生成中 (pending) のまま残りました',
       '料理が生成中のまま残ったことを、ジョブの last_error に書けませんでした',
     ]);
+    // どちらもジョブの持ち主の user_id 列に入る (#2254 M3)
+    expect(errors.map((log) => log.userId)).toEqual([USER_ID, USER_ID]);
+  });
+
+  it('持ち主の分からないジョブ (user_id が null) の失敗のログも残す (user_id 列は空のまま。#2254 M3)', async () => {
+    h.generateError = new Error('boom');
+    anotherWriterAfterEveryRead(2);
+    // 同意の判定は作り物で通すので、持ち主が分からないジョブも印の書き込みまで進む
+    Object.assign(job(), { user_id: null });
+
+    await runWorker();
+
+    const errors = h.logs.filter((log) => log.level === 'error');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('生成中 (pending) のまま');
+    expect(errors[0].userId).toBeNull();
   });
 });
 
@@ -492,7 +514,26 @@ describe('(3) 書かなかった画像を Storage から消す (#1553)', () => {
     const warns = h.logs.filter((log) => log.level === 'warn');
     expect(warns).toHaveLength(1);
     expect(warns[0].metadata).toMatchObject({ jobId: JOB_ID, error: 'storage unavailable', why: 'meal_deleted' });
+    // ジョブの持ち主の user_id 列に入る (#2254 M3)
+    expect(warns[0].userId).toBe(USER_ID);
     expect(h.logs.filter((log) => log.level === 'error')).toEqual([]);
+  });
+
+  it('remove が投げたとき (接続の失敗など) も、ジョブの結果は変えず、持ち主の user_id 列に warn だけ残す (#2254 M3)', async () => {
+    h.onMealRead = (n) => {
+      if (n === 1) h.meal = null;
+    };
+    h.removeThrows = new Error('socket hang up');
+
+    const [outcome] = await runWorker();
+
+    expect(outcome).toEqual({ jobId: JOB_ID, status: 'cancelled', message: 'meal was deleted' });
+    expect(h.removes).toHaveLength(1);
+    const warns = h.logs.filter((log) => log.level === 'warn');
+    expect(warns).toHaveLength(1);
+    expect(warns[0].message).toBe('書かなかった料理の画像を Storage から消せませんでした');
+    expect(warns[0].metadata).toMatchObject({ jobId: JOB_ID, error: 'socket hang up', why: 'meal_deleted' });
+    expect(warns[0].userId).toBe(USER_ID);
   });
 
   it('組み立てたパスがそのジョブのものと確かめられないとき (献立の ID に区切り文字) は消さず、warn だけ', async () => {
@@ -511,6 +552,8 @@ describe('(3) 書かなかった画像を Storage から消す (#1553)', () => {
     const warns = h.logs.filter((log) => log.level === 'warn');
     expect(warns).toHaveLength(1);
     expect(warns[0].metadata).toMatchObject({ jobId: JOB_ID, uploadPath: h.uploads[0], why: 'meal_deleted' });
+    // ジョブの持ち主の user_id 列に入る (#2254 M3)
+    expect(warns[0].userId).toBe(USER_ID);
   });
 
   it('書けたときは消さない', async () => {

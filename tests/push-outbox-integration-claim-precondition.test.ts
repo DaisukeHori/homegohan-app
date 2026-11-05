@@ -8,6 +8,9 @@
  * #2245 K6 の欠陥: createOutboxStore の検査の store.claimQueued(workerId, 1, …) → toEqual([row.id]) の前に (b) が無かった。
  * また、前回の実行が途中で止まって残った 2000 年の行を消さなかった (afterEach は今回 seed した行だけを消す) ので、
  * ファイルの先頭で前回の残りを消す beforeAll (purgeLeftoverRows) が、このファイルが積む全部の種類 (LEFTOVER_KINDS) を消すことも確かめる。
+ * #2254 M4: weekly_menu_requests にも 2000 年の行 (attempt_limit_exceeded の検査の行) を積むので、その行が目印 (prompt) を持ち、
+ * 前回の残りを消す beforeAll (purgeLeftoverMenuRequests) がこのファイルの全部の目印 (LEFTOVER_REQUEST_PROMPTS) を消すことと、
+ * claim_menu_request (表の全体から最も古い取れる行を 1 件取る) の戻りの行を比べないことも確かめる。
  *
  * 結合テストの中身を実 DB で動かす検査ではない (それは結合テストそのもの)。ソースを読み、claim の呼び出しの形を数える。
  */
@@ -137,6 +140,25 @@ describe('#2245 K6 push-outbox の結合テストの claim は表に残ったほ
     const enqueuedKinds = [...new Set([...source.matchAll(/p_kind: ([A-Z_]+)\b/g)].map((m) => m[1]))];
     expect(enqueuedKinds.sort()).toEqual(['OTHER_TEST_KIND', 'TEST_KIND']);
     expect(enqueuedKinds.filter((k) => !listed.has(k))).toEqual([]);
+  });
+
+  it('weekly_menu_requests の 2000 年の行は目印を持ち、ファイルの先頭で前回の残りを消す。claim_menu_request の戻りの行は比べない (#2254 M4)', () => {
+    expect(source).toMatch(/^beforeAll\(async \(\) => \{\n\s*await purgeLeftoverMenuRequests\(LEFTOVER_REQUEST_PROMPTS\);\n\}/m);
+    expect(source).toMatch(/^async function purgeLeftoverMenuRequests\(prompts: readonly string\[\] = \[OLD_REQUEST_PROMPT\]\): Promise<void> \{/m);
+    // weekly_menu_requests の行は insertRequest だけが積み、created_at を指定した (2000 年にした) 行には目印を入れる
+    expect([...source.matchAll(/from\('weekly_menu_requests'\)\s*\.insert\(/g)]).toHaveLength(1);
+    expect(source).toContain('...(seed.createdAt ? { created_at: seed.createdAt, prompt: OLD_REQUEST_PROMPT } : {}),');
+    // このファイルが prompt に入れる目印 (prompt: 名前) は、どれも beforeAll が消す目印 (LEFTOVER_REQUEST_PROMPTS) に入っている
+    const leftover = /^const LEFTOVER_REQUEST_PROMPTS: readonly string\[\] = \[([^\]]*)\];$/m.exec(source);
+    expect(leftover).not.toBeNull();
+    const listed = new Set((leftover?.[1] ?? '').split(',').map((s) => s.trim()).filter((s) => s.length > 0));
+    const prompts = [...new Set([...source.matchAll(/prompt: ([A-Z_]+)\b/g)].map((m) => m[1]))];
+    expect(prompts.sort()).toEqual(['OLD_REQUEST_PROMPT', 'OTHER_REQUEST_PROMPT']);
+    expect(prompts.filter((p) => !listed.has(p))).toEqual([]);
+    // claim_menu_request は表の全体から最も古い取れる行を取る (自分の行とは限らない) ので、戻りの行を受け取らず error だけを見る
+    const menuClaims = source.split('\n').filter((l) => l.includes("rpc('claim_menu_request'"));
+    expect(menuClaims).toHaveLength(1);
+    expect(menuClaims[0]).toMatch(/^\s*const \{ error \} = await srAdmin\.rpc\('claim_menu_request', /);
   });
 
   it('判定器は、前提を確かめない上限 1 の claim と、自分の行の数だけの claim を違反として拾う', () => {

@@ -315,7 +315,7 @@ async function insertRequest(userId: string, seed: RequestSeed): Promise<string>
       status: seed.status ?? 'processing',
       target_slots: seed.targetSlots === undefined ? null : seed.targetSlots,
       attempt_count: seed.attemptCount ?? 0,
-      ...(seed.createdAt ? { created_at: seed.createdAt } : {}),
+      ...(seed.createdAt ? { created_at: seed.createdAt, prompt: OLD_REQUEST_PROMPT } : {}), // 目印は前回の残りを消すため (#2254 M4。ファイルの末尾)
     })
     .select('id')
     .single();
@@ -1318,5 +1318,70 @@ describe('#1136 前回の実行の残りを消す (#2245 K6)', () => {
     await purgeLeftoverRows(LEFTOVER_KINDS);
     expect(await rowById(otherKind.id)).toBeNull();
     expect(await rowById(current.id)).toMatchObject({ kind: TEST_KIND, status: 'queued' });
+  });
+});
+
+// ================================================================
+// 前回の実行の残りを消す: weekly_menu_requests (#2254 M4)
+//   この節もファイルの末尾に置く (上の節と同じく、前の節の行番号をずらさないため。insertRequest はこの節の目印を呼ばれたときに読む)
+// ================================================================
+/**
+ * insertRequest が created_at を指定した (oldTimestamp の 2000 年にした) weekly_menu_requests の行に入れる prompt の目印。
+ * 2000 年の行は claim_menu_request の並び (表の全体の created_at の古い順) の先頭に来る。積んだあと、利用者の削除 (afterAll の CASCADE)
+ * の前に実行が止まると行が残り、次の実行の claim_menu_request (このファイルと tests/integration/rls/claim-menu-request-lease.test.ts)
+ * の最初の UPDATE (回数を使い切った queued の行を failed にする) が、残った行を failed に変え、トリガーが残った利用者の端末へ
+ * weekly_menu_failed を積む (attempt_limit_exceeded の検査の行は attempt_count が 3 なので、取られる行にはならない)。
+ * afterAll は今回の利用者の行だけを消すので、前回の残りは次の実行の beforeAll がこの目印で消す。トリガーの payload は prompt を読まないので、
+ * 目印は検査の値を変えない
+ */
+const OLD_REQUEST_PROMPT = 'rls-1136-push-outbox-old-request';
+/**
+ * 既定の purgeLeftoverMenuRequests (OLD_REQUEST_PROMPT だけ) が消さないことを確かめるための、ほかの目印 (ほかのテストの行の代わり)。
+ * このファイルの purge のテストだけが入れる目印なので、その前回の残りは beforeAll (LEFTOVER_REQUEST_PROMPTS) が消す
+ */
+const OTHER_REQUEST_PROMPT = 'rls-1136-push-outbox-other-request';
+/** このファイルが weekly_menu_requests の prompt に入れる目印の全部。beforeAll は、これらの目印の前回の残りを消す */
+const LEFTOVER_REQUEST_PROMPTS: readonly string[] = [OLD_REQUEST_PROMPT, OTHER_REQUEST_PROMPT];
+
+/**
+ * 前回の実行が途中で止まって残った、このファイルの目印 (prompts) の weekly_menu_requests の行を消す。status は問わない
+ * (残った queued の行は、ほかのファイルの claim_menu_request が failed に変えうる)。目印はこのファイルだけが使うので、
+ * ほかのテストの行・本物の依頼の行は消さない。prompts の既定は OLD_REQUEST_PROMPT だけ (purge のテストが、ほかの目印の行を消さないことを
+ * 確かめる形)。beforeAll は LEFTOVER_REQUEST_PROMPTS を渡す
+ */
+async function purgeLeftoverMenuRequests(prompts: readonly string[] = [OLD_REQUEST_PROMPT]): Promise<void> {
+  const { error } = await srAdmin.from('weekly_menu_requests').delete().in('prompt', [...prompts]);
+  if (error) throw new Error(`delete leftover weekly_menu_requests: ${error.message}`);
+}
+
+beforeAll(async () => {
+  await purgeLeftoverMenuRequests(LEFTOVER_REQUEST_PROMPTS);
+});
+
+/** 行の id ごとの prompt (表に無い行は入らない) */
+async function requestPromptsOf(ids: string[]): Promise<Record<string, string | null>> {
+  const { data, error } = await srAdmin.from('weekly_menu_requests').select('id, prompt').in('id', ids);
+  if (error) throw new Error(`select weekly_menu_requests: ${error.message}`);
+  return Object.fromEntries(((data ?? []) as Array<{ id: string; prompt: string | null }>).map((r) => [r.id, r.prompt]));
+}
+
+describe('#1136 前回の実行の残りを消す: weekly_menu_requests (#2254 M4)', () => {
+  it('insertRequest が created_at を指定した行は目印 (OLD_REQUEST_PROMPT) を持ち、purgeLeftoverMenuRequests は既定ではその行だけを消して、ほかの目印の行と created_at を指定しない行は残す。beforeAll の形 (LEFTOVER_REQUEST_PROMPTS) はほかの目印の行も消す', async () => {
+    // 前回の実行が残した形: attempt_limit_exceeded の検査と同じく created_at を 2000 年にした行 (claim_menu_request が触らない pending にする)
+    const userId = await newUser('purge-request');
+    const oldId = await insertRequest(userId, { status: 'pending', createdAt: oldTimestamp() });
+    // 残す行: created_at を指定しない (今の時刻の) 行と、ほかの目印の 2000 年の行
+    const currentId = await insertRequest(userId, { status: 'pending' });
+    const otherId = await insertRequest(userId, { status: 'pending', createdAt: oldTimestamp() });
+    expect((await srAdmin.from('weekly_menu_requests').update({ prompt: OTHER_REQUEST_PROMPT }).eq('id', otherId)).error).toBeNull();
+    const ids = [oldId, currentId, otherId];
+    expect(await requestPromptsOf(ids)).toEqual({ [oldId]: OLD_REQUEST_PROMPT, [currentId]: null, [otherId]: OTHER_REQUEST_PROMPT });
+
+    await purgeLeftoverMenuRequests();
+    expect(await requestPromptsOf(ids)).toEqual({ [currentId]: null, [otherId]: OTHER_REQUEST_PROMPT });
+
+    // beforeAll の形は、この purge のテストが残しうるほかの目印の行も消す。created_at を指定しない行は残す
+    await purgeLeftoverMenuRequests(LEFTOVER_REQUEST_PROMPTS);
+    expect(await requestPromptsOf(ids)).toEqual({ [currentId]: null });
   });
 });

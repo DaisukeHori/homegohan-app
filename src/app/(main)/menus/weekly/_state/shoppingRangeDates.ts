@@ -55,7 +55,10 @@ export interface ShoppingRangeDates {
 }
 
 export interface ShoppingRangeBasis {
-  /** 時計を 1 回だけ読んだ時刻。この時刻の JST の今日 (formatLocalDate) から暦の計算だけで数える */
+  /**
+   * 時計を 1 回だけ読んだ時刻。この時刻の JST の今日 (formatLocalDate) から暦の計算だけで数える。
+   * 買い物リストを作る範囲 (page.tsx の calculateDateRange) には、範囲を選ぶ欄が日付を出すのに読んだ時刻を渡す (#2254 M2)
+   */
   now: Date;
   /** 「○日分」の日数 (clampShoppingRangeDays で丸めてから使う) */
   daysCount: number;
@@ -74,8 +77,8 @@ export interface ShoppingRangeBasis {
  * 「表示中の週」の範囲 (週の始まりの日を含む 7 日)。始まりと終わりがどちらも isCalendarDate (CALENDAR_DATE_MIN 〜 CALENDAR_DATE_MAX の
  * 実在する YYYY-MM-DD) のときだけ範囲を返し、そうでなければ null (#2245 K4)。
  * 範囲を選ぶ欄 (ShoppingRangeModal) は描画のたびにこの範囲を求めるので、投げない。週の始まりが暦の計算で扱える範囲の端
- * (9999-12-27 以降) だと addDaysToDate が RangeError を投げ、1000 年より前の年は formatLocalDate が 4 桁で書かない ("100-12-27") ので
- * YYYY-MM-DD として読めない。終わりも確かめるのは、買い物リストを作る依頼 (/api/shopping-list/regenerate) が両端を isCalendarDate で
+ * (9999-12-27 以降) だと addDaysToDate が RangeError を投げ、CALENDAR_DATE_MIN より前の週 ("0100-12-27" など) は isCalendarDate を通らない
+ * (#2245 K4 のときは formatLocalDate が 1000 年より前の年を 4 桁で書かず ("100-12-27")、YYYY-MM-DD として読めなかった。#2254 M2 で 4 桁にした)。終わりも確かめるのは、買い物リストを作る依頼 (/api/shopping-list/regenerate) が両端を isCalendarDate で
  * 確かめ、範囲の外の日を 400 で断るため (欄に出しても作れない範囲を出さない)
  */
 function currentWeekRangeDates(currentWeekStart: Date): ShoppingRangeDates | null {

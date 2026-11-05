@@ -109,6 +109,22 @@ function saveLogInBackground(entry: LogEntry): void {
 }
 
 /**
+ * ログの 1 行を、水準に合った console のメソッドで出す (Supabase の関数ログの水準になる)。
+ * error → console.error・warn → console.warn・debug / info → console.log (Next.js 側の src/lib/db-logger.ts の writeConsole と同じ)。
+ * 無印のロガーと withUser(userId) のロガーの両方がこれを通す (#2254 M3。以前の withUser のロガーは水準に関わらず
+ * console.log で出していたので、同じ warn でも関数ログでは info の水準になっていた。app_logs の level は前から変わらない)
+ */
+function writeConsole(level: LogLevel, ...args: unknown[]): void {
+  if (level === 'error') {
+    console.error(...args);
+  } else if (level === 'warn') {
+    console.warn(...args);
+  } else {
+    console.log(...args);
+  }
+}
+
+/**
  * Edge Function用のロガー
  */
 export function createLogger(functionName: string, requestId?: string) {
@@ -123,14 +139,8 @@ export function createLogger(functionName: string, requestId?: string) {
     const timestamp = new Date().toISOString();
     const logLine = `[${timestamp}] [${level.toUpperCase()}] [${functionName}] ${message}`;
     
-    // コンソール出力
-    if (level === 'error') {
-      console.error(logLine, metadata || '');
-    } else if (level === 'warn') {
-      console.warn(logLine, metadata || '');
-    } else {
-      console.log(logLine, metadata || '');
-    }
+    // コンソール出力 (水準に合ったメソッドで。#2254 M3)
+    writeConsole(level, logLine, metadata || '');
     
     // DB保存（非同期、待たない。保存が終わるまで関数は止めさせない (#1909)）
     saveLogInBackground({
@@ -170,7 +180,8 @@ export function createLogger(functionName: string, requestId?: string) {
       
       const userLog = (level: LogLevel, message: string, metadata?: Record<string, unknown>) => {
         const timestamp = new Date().toISOString();
-        console.log(`[${timestamp}] [${level.toUpperCase()}] [${functionName}] [user:${userId}] ${message}`, metadata || '');
+        // 無印のロガーと同じく、水準に合った console のメソッドで出す (warn は console.warn。#2254 M3)
+        writeConsole(level, `[${timestamp}] [${level.toUpperCase()}] [${functionName}] [user:${userId}] ${message}`, metadata || '');
         
         saveLogInBackground({
           ...userEntry,

@@ -51,9 +51,10 @@ function extractFunctionBody(source: string, startMarker: string): string {
 
 describe('page.tsx: UX2-02 残り11箇所の alert() 廃止 (#1050 round-2)', () => {
   it('regenerateShoppingList: catch が alert ではなく setSuccessMessage(type: error, onRetry) を使うこと', () => {
-    const body = extractFunctionBody(pageSource, 'const regenerateShoppingList = async () => {');
+    // 範囲は欄が日付を出した時刻 (rangeShownAt) から求め、もう一度試すときも同じ範囲で作る (#2254 M2)
+    const body = extractFunctionBody(pageSource, 'const regenerateShoppingList = async (rangeShownAt: Date) => {');
     expect(stripLineComments(body)).not.toMatch(/alert\(/);
-    expect(body).toMatch(/setSuccessMessage\(\{[\s\S]*?type: 'error'[\s\S]*?onRetry: \(\) => regenerateShoppingList\(\)/);
+    expect(body).toMatch(/setSuccessMessage\(\{[\s\S]*?type: 'error'[\s\S]*?onRetry: \(\) => regenerateShoppingList\(rangeShownAt\)/);
   });
 
   it('handleGenerateSingleMeal (単品AI生成): response-not-ok/catch どちらも alert ではなく setSuccessMessage(type: error, onRetry) を使うこと', () => {
