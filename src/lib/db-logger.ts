@@ -8,7 +8,12 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { waitUntil } from '@vercel/functions';
-import { sanitizeLogEntry, sanitizeMetadata } from '../../supabase/functions/_shared/log-sanitizer';
+import {
+  FOREIGN_KEY_RETRY_CONSOLE_MESSAGE,
+  entryForForeignKeyRetry,
+  sanitizeLogEntry,
+  sanitizeMetadata,
+} from '../../supabase/functions/_shared/log-sanitizer';
 // 何も import しないファイル。ここから読んでも、ブラウザ・Edge のバンドルに余計なものは入らない
 import { getSupabaseServiceConfig, isMissingEnvError } from './env-required';
 
@@ -94,9 +99,19 @@ async function saveLog(entry: LogEntry): Promise<void> {
     // #1044 (F6-20) / #1171: 保存前に message / error_message / error_stack / metadata の
     // 秘密情報マスキングと文字数の切り詰めを行い、uuid でない user_id は NULL にする
     const { error } = await supabase.from('app_logs').insert(sanitizeLogEntry(entry));
+    if (!error) return;
 
-    if (error) {
+    // #2259 P3: user_id が auth.users に無い (外部キー違反) なら、user_id を外して 1 回だけ入れ直す
+    // (元の user_id は metadata に残す)。それ以外の失敗は従来どおり console にだけ残す
+    const retryEntry = entryForForeignKeyRetry(error, entry);
+    if (!retryEntry) {
       console.error('Failed to save log to DB:', error);
+      return;
+    }
+    console.warn(FOREIGN_KEY_RETRY_CONSOLE_MESSAGE, error);
+    const retry = await supabase.from('app_logs').insert(sanitizeLogEntry(retryEntry));
+    if (retry.error) {
+      console.error('Failed to save log to DB:', retry.error);
     }
   } catch (e) {
     console.error('Failed to save log to DB:', e);

@@ -297,3 +297,48 @@ export function sanitizeLogEntry(entry: SanitizableLogEntry): SanitizedLogEntry 
     return failedLogEntry(entry);
   }
 }
+
+// ── 外部キー (app_logs.user_id → auth.users) で落ちた行の書き直し (#2259 P3) ─────────
+
+/** Postgres の外部キー違反のエラーコード (foreign_key_violation)。PostgREST はこれを error.code に入れて返す */
+export const FOREIGN_KEY_VIOLATION_CODE = '23503';
+
+/**
+ * user_id を外して保存し直した行で、元の user_id を残す metadata のキー。
+ * app_logs.user_id は auth.users への外部キー (app_logs_user_id_fkey) なので、auth.users に無い利用者
+ * (退会して消えた利用者など) の id を入れた行は insert ごと落ちる。user_id 列を空にして入れ直し、
+ * どの利用者のログだったかはこのキーで追えるようにする。
+ */
+export const UNLINKED_USER_ID_METADATA_KEY = 'user_id_not_in_auth_users';
+
+/** insert の error が外部キー違反 (23503) か */
+export function isForeignKeyViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === FOREIGN_KEY_VIOLATION_CODE;
+}
+
+/**
+ * app_logs への insert が error で落ちたとき、user_id を外して 1 回だけ入れ直すログ 1 行を返す (#2259 P3)。
+ * 入れ直すのは、外部キー違反 (23503) で、かつ insert した行に user_id が入っていたとき
+ * (= entry.user_id が uuid の形。sanitizeLogEntry が残す user_id と同じ判定) だけ。それ以外は null (入れ直さない)。
+ * app_logs の外部キーは user_id の 1 本だけなので、user_id のある行の 23503 は user_id が auth.users に無いことを表す。
+ *
+ * 返すのはサニタイズ前の形 (呼び出し元は従来どおり sanitizeLogEntry に通してから insert する。配線の契約は
+ * tests/log-sanitizer.test.ts)。user_id は省き (NULL になる)、元の user_id を metadata の UNLINKED_USER_ID_METADATA_KEY に入れる。
+ * このキーは metadata の先頭に置く (metadata が大きくて sanitizeMetadata が _preview に切り詰めても、プレビューの頭に残る)。
+ * 引数は書き換えない。user_id は uuid の形に限るので、metadata に入れても秘密は増えない。
+ */
+export function entryForForeignKeyRetry(error: unknown, entry: SanitizableLogEntry): SanitizableLogEntry | null {
+  if (!isForeignKeyViolation(error)) return null;
+  const unlinkedUserId = toUserId(entry.user_id);
+  if (unlinkedUserId === undefined) return null;
+  const metadata: Record<string, unknown> = { [UNLINKED_USER_ID_METADATA_KEY]: unlinkedUserId, ...entry.metadata };
+  // 元の metadata に同じ名前のキーがあっても、入れ直した理由の user_id で上書きする (位置は先頭のまま)
+  metadata[UNLINKED_USER_ID_METADATA_KEY] = unlinkedUserId;
+  const retryEntry: SanitizableLogEntry = { ...entry, metadata };
+  delete retryEntry.user_id;
+  return retryEntry;
+}
+
+/** 外部キー違反で user_id を外して入れ直すときに、console (関数ログ) に残す文 (Next.js と Edge で同じ文) */
+export const FOREIGN_KEY_RETRY_CONSOLE_MESSAGE =
+  'app_logs: user_id が auth.users に無いため (外部キー違反)、user_id を外して保存し直す:';
