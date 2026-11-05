@@ -21,7 +21,8 @@ const MOCK_AUTH_USER_ID = vi.hoisted(() => 'user-2254-m2');
 
 /**
  * Supabase のモック。問い合わせの答えは await された時点で決める (respond)。今日の献立の読み取り (user_daily_meals を day_date の eq で
- * 1 日だけ読む) は failTodayPlan の間だけエラーを返す。期限の近い食材 (pantry_items) は pantryRows を返す。ほかの表は空
+ * 1 日だけ読む) は failTodayPlan の間だけエラーを返し、日ごとの行の一覧は空の一覧を返す。期限の近い食材 (pantry_items) は pantryRows を返す。
+ * ほかの表は空
  */
 const supabaseMock = vi.hoisted(() => ({
   failTodayPlan: false,
@@ -32,9 +33,13 @@ vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
   const TODAY_PLAN_ERROR = { data: null, error: { message: '今日の献立の読み取りの失敗 (検査の置き換え)' }, count: 0 };
   type Filter = { method: string; args: unknown[] };
+  /** 献立の日ごとの行の一覧 (週の集計・連続自炊・月の集計が読む) は空の一覧 (週の集計は 7 日を 0 件で置く) */
+  const EMPTY_LIST_RESULT = { data: [], error: null, count: 0 };
   const respond = (table: string, filters: Filter[]) => {
-    if (table === 'user_daily_meals' && supabaseMock.failTodayPlan && filters.some((f) => f.method === 'eq' && f.args[0] === 'day_date')) {
-      return TODAY_PLAN_ERROR;
+    if (table === 'user_daily_meals') {
+      const readsOneDay = filters.some((f) => f.method === 'eq' && f.args[0] === 'day_date');
+      if (!readsOneDay) return EMPTY_LIST_RESULT;
+      return supabaseMock.failTodayPlan ? TODAY_PLAN_ERROR : EMPTY_RESULT;
     }
     if (table === 'pantry_items') return { data: supabaseMock.pantryRows, error: null, count: supabaseMock.pantryRows.length };
     return EMPTY_RESULT;
