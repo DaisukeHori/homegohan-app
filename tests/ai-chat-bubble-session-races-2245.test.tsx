@@ -1641,8 +1641,8 @@ describe('#2254 M1 Realtime の完了・失敗の通知を取りこぼしても�
     expect(v4.cancelGeneration).not.toHaveBeenCalled();
   });
 
-  it('状態を読めなかった (500) ときは止めたまま (次の読み直しに任せる)', async () => {
-    handlers[STATUS_KEY] = async () => json(500, { error: 'internal' });
+  it('状態を読めなかった (500) ときは止めたまま (次の読み直しに任せる。本文に状態らしい値があっても読まない)', async () => {
+    handlers[STATUS_KEY] = async () => json(500, { error: 'internal', status: 'failed' });
     await openChat();
     await startDayMenuWithoutNotice();
 
