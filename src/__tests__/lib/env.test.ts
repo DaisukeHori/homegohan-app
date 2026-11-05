@@ -436,7 +436,7 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_ALERT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・CSP_REPORT_ONLY・DISH_FAVORITES_MAX_PER_USER・DSR_RESPONSE_DUE_DAYS・EMAIL_OUTBOX_*・EXPO_ACCESS_TOKEN・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・IAP_RECONCILE_*・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS・PUSH_OUTBOX_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_ALERT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・CSP_REPORT_ONLY・DISH_FAVORITES_MAX_PER_USER・DSR_RESPONSE_DUE_DAYS・EMAIL_OUTBOX_*・EXPO_ACCESS_TOKEN・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・IAP_RECONCILE_*・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・NEXT_PUBLIC_AI_CHAT_REQUEST_TIME_LIMIT_MS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS・PUSH_OUTBOX_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
@@ -472,6 +472,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       ['LEGAL_CONSENT_NOTICE', 'lib/legal-consent.ts'],
       // #1463 献立の単発追加の date_offset_days の上限。正の整数でなければ既定値にする読み方を 1 か所に置く
       ['MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS', 'src/lib/menu-plan-date-offset.ts'],
+      // #2259 P1 Web の AI 相談で、結果を待つ間に画面の操作を止める通信を待つ上限。1000 以上の整数でなければ既定値にする読み方を 1 か所に置く
+      ['NEXT_PUBLIC_AI_CHAT_REQUEST_TIME_LIMIT_MS', 'src/lib/ai/consultation-request-time-limit.ts'],
       // #1176 運営ロールの MFA の登録の猶予の終わり。形と実在する日時の確認 (不正なら猶予なしにして warn) を 1 か所に置く
       ['OPERATOR_MFA_ENFORCE_FROM', 'src/lib/auth/mfa/policy.ts'],
       // #1157 エラー急増の運用メール。未設定・不正な値の扱い (ログと応答の status) を cron の route 1 か所に置く

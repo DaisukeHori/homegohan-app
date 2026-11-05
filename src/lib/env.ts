@@ -116,6 +116,16 @@ export const PUBLIC_ENV_VARS = {
       'ビルド時に埋め込まれるので、変えたら再デプロイする',
     whenMissing: 'Apple のボタンを出さない (今までどおり)',
   },
+  NEXT_PUBLIC_AI_CHAT_REQUEST_TIME_LIMIT_MS: {
+    required: false,
+    description:
+      'Web の AI 相談で、結果を待つ間に画面の操作を止める通信 (1日献立の作成の依頼・提案の実行・『相談を終了』) を待つ上限 (ミリ秒。' +
+      '1000 以上の整数) (#2259 P1)。過ぎたら通信を打ち切って止めを下ろし、理由の一文を出す。ビルド時に埋め込まれるので、変えたら再デプロイする',
+    whenMissing:
+      'AI の route の maxDuration の最大 (300 秒) に通信の余裕 15 秒を足した 315000 ミリ秒 (AI_CHAT_REQUEST_TIME_LIMIT_DEFAULT_MS)。整数でない・1000 未満の値も既定',
+    // 読み方 (1000 以上の整数でなければ既定値) を 1 か所に置く
+    readOnlyBy: 'src/lib/ai/consultation-request-time-limit.ts',
+  },
 } as const satisfies Record<`NEXT_PUBLIC_${string}`, EnvVarSpec>;
 
 /** サーバー専用。ブラウザには出さない */
