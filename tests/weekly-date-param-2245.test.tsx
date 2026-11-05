@@ -7,7 +7,7 @@
  *     保存の知らせ (?saved=1) も確かめない日付を formatDateJa に渡し、2026-02-30 を「3月2日」と出した
  *   - 買い物の範囲を選ぶ欄 (ShoppingRangeModal) は描画のたびに「表示中の週」の範囲 (shoppingRangeDates の currentWeek) を求める。
  *     週の始まりが 9999-12-27 以降だと addDaysToDate が RangeError を投げ、1000 年より前の年は formatLocalDate が 4 桁で書かない
- *     ("100-12-27") ので同じく投げて、欄ごと落ちた。範囲の終わりが CALENDAR_DATE_MAX を超える週 (9998-12-28〜) は、欄に日付を出して
+ *     ("100-12-27") ので同じく投げて、欄ごと落ちた (formatLocalDate は #2254 M2 で 4 桁で書くようにした)。範囲の終わりが CALENDAR_DATE_MAX を超える週 (9998-12-28〜) は、欄に日付を出して
  *     選べたが、依頼の API (/api/shopping-list/regenerate) は範囲の外の日を 400 で断る
  *   - 買い物リストの作成 (regenerateShoppingList) は、作成中の表示を出したあとに try の外で範囲を求めていた
  *
@@ -135,7 +135,7 @@ const UNAVAILABLE_WEEK_LABEL = `表示中の週（${SHOPPING_RANGE_CURRENT_WEEK_
 /** 買い物リストを作る依頼の道 */
 const REGENERATE_PATH = '/api/shopping-list/regenerate';
 
-let fetchCalls: { path: string; method: string; range: string | null }[];
+let fetchCalls: { path: string; method: string; range: string | null; body: unknown }[];
 
 function jsonResponse(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -179,12 +179,17 @@ function mealPlansJson(startDate: string, endDate: string) {
 
 function installFakeServer() {
   fetchCalls = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: { method?: string }) => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: { method?: string; body?: unknown }) => {
     const url = new URL(typeof input === 'string' ? input : input.toString(), PAGE_ORIGIN);
     const method = (init?.method ?? 'GET').toUpperCase();
     const startDate = url.searchParams.get('startDate');
     const endDate = url.searchParams.get('endDate');
-    fetchCalls.push({ path: url.pathname, method, range: startDate !== null && endDate !== null ? `${startDate}..${endDate}` : null });
+    fetchCalls.push({
+      path: url.pathname,
+      method,
+      range: startDate !== null && endDate !== null ? `${startDate}..${endDate}` : null,
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : null,
+    });
     // 祝日の一覧 (外の API) は、この検査では祝日なし
     if (url.origin !== PAGE_ORIGIN) return jsonResponse({});
     switch (url.pathname) {
@@ -335,11 +340,20 @@ describe('/menus/weekly の ?date= は isCalendarDate を通ったときだけ�
     expect(nextButton(modal).disabled).toBe(false);
   });
 
-  it(`?date=${CALENDAR_DATE_MIN} (CALENDAR_DATE_MIN) は使う。その週の始まりは YYYY-MM-DD で書けない年なので、範囲を選ぶ欄は落ちずに「表示中の週」を選べなくする`, async () => {
+  it(`?date=${CALENDAR_DATE_MIN} (CALENDAR_DATE_MIN) は使う。その週の始まり (0100-12-27) は扱える日付の外なので、範囲を選ぶ欄は落ちずに「表示中の週」を選べなくする`, async () => {
     await renderWeeklyPage({ date: CALENDAR_DATE_MIN });
     const modal = await openShoppingRangeModal();
     expect(currentWeekOption(modal).textContent).toBe(UNAVAILABLE_WEEK_LABEL);
     expect(currentWeekOption(modal).disabled).toBe(true);
+  });
+
+  it('1000 年より前の正しい ?date= (0101-01-10) はその日の週を YYYY-MM-DD で読み、範囲を選ぶ欄はその週の 7 日を出す (#2254 M2)', async () => {
+    // 直す前は formatLocalDate が年を 4 桁で書かず、週の格子の 7 日を "101-01-10".."101-01-16" で読んで /api/meal-plans に断られた
+    await renderWeeklyPage({ date: '0101-01-10' });
+    expect(mealPlanRangesRead()).toContain('0101-01-10..0101-01-16');
+    const modal = await openShoppingRangeModal();
+    expect(currentWeekOption(modal).textContent).toBe('表示中の週（1月10日〜1月16日）');
+    expect(currentWeekOption(modal).disabled).toBe(false);
   });
 
   it('正しい ?date= (2026-12-31) はその日の週を開き、範囲を選ぶ欄はその週の 7 日を出す', async () => {
@@ -406,8 +420,13 @@ describe('shoppingRangeDates の表示中の週は、始まりと終わりが is
     },
     { weekStart: new Date(9998, 11, 25), expected: null, why: '終わりが CALENDAR_DATE_MAX の翌日 (直す前は範囲を返した)' },
     { weekStart: new Date(9999, 11, 27), expected: null, why: '終わりが暦の計算で扱える範囲の外 (直す前は RangeError)' },
-    { weekStart: new Date(1000, 0, 1), expected: { startDate: '1000-01-01', endDate: '1000-01-07' }, why: '4 桁で書ける最初の年' },
-    { weekStart: new Date(100, 11, 27), expected: null, why: 'formatLocalDate が 4 桁で書かない年 (直す前は RangeError)' },
+    { weekStart: new Date(1000, 0, 1), expected: { startDate: '1000-01-01', endDate: '1000-01-07' }, why: '1000 年 (#2245 K4 のときに 4 桁で書けた最初の年)' },
+    {
+      weekStart: new Date(101, 0, 3),
+      expected: { startDate: '0101-01-03', endDate: '0101-01-09' },
+      why: '101 年の週 (#2254 M2: formatLocalDate は 4 桁で書く。直す前は "101-01-03" と書いて null)',
+    },
+    { weekStart: new Date(100, 11, 27), expected: null, why: 'CALENDAR_DATE_MIN より前の週 (#2245 K4 の前は RangeError)' },
     { weekStart: new Date(Number.NaN), expected: null, why: '不正な Date (直す前は RangeError)' },
   ];
   for (const { weekStart, expected, why } of CASES) {
@@ -433,5 +452,31 @@ describe('shoppingRangeDates の表示中の週は、始まりと終わりが is
       endDate: TODAY,
       mealTypes: ['lunch'],
     });
+  });
+});
+
+describe('買い物リストを作る範囲は、範囲を選ぶ欄が日付を出した今日で求める (#2254 M2)', () => {
+  /** 範囲を選んだ時計 (JST 2026-11-02 (月) 23:59。表示中の週 11/2〜11/8 の初日で、献立はこの日にある) */
+  const BEFORE_MIDNIGHT = '2026-11-02T14:59:00.000Z';
+  /** 「次へ」と作成を押した時計 (JST 2026-11-03 (火) 00:01) */
+  const AFTER_MIDNIGHT = '2026-11-02T15:01:00.000Z';
+  const SHOWN_DAY = '2026-11-02';
+
+  it('欄を開いたまま 0 時をまたいで押しても、欄に出した日 (前の日) の範囲を送る (直す前は押した時刻の新しい日で求め、献立が無いと断った)', async () => {
+    vi.setSystemTime(new Date(BEFORE_MIDNIGHT));
+    useShoppingStore.getState().setShoppingRange({ type: 'today', todayMeals: ['dinner'], daysCount: 3 });
+    await renderWeeklyPage({});
+    const modal = await openShoppingRangeModal();
+    expect(modal.textContent, '欄が前の日を出していない (検査の前提が崩れた)').toContain('今日の分（11月2日）');
+
+    // 欄を描き直さないまま 0 時をまたぐ
+    vi.setSystemTime(new Date(AFTER_MIDNIGHT));
+    await click(nextButton(modal));
+    const servingsModal = requireElement(container.querySelector<HTMLElement>('[role="dialog"][aria-label="人数を確認"]'), '人数の確認の欄');
+    await click(requireElement(servingsModal.querySelector<HTMLButtonElement>('[data-testid="generate-shopping-list-button"]'), '作成のボタン'));
+
+    const requests = fetchCalls.filter((call) => call.path === REGENERATE_PATH);
+    expect(requests, '買い物リストを作る依頼を送っていない').toHaveLength(1);
+    expect(requests[0]!.body).toEqual({ startDate: SHOWN_DAY, endDate: SHOWN_DAY, mealTypes: ['dinner'] });
   });
 });
