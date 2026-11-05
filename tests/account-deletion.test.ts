@@ -18,6 +18,8 @@
  *   - 失敗の結果に、DB・Storage の生のエラー文を入れない。request_id と段階を持つ (HTTP の応答は route が #1172 の internalError で返す)
  *   - すでに消えているユーザーの deleteUser (404) は成功として扱う (やり直せる)
  *   - ログにメールアドレスを載せない。削除後のログに user_id を付けない
+ *   - 失敗のログ (account deletion failed at step: ...): deleteUser を呼ぶ前の失敗は user_id を付け (withUser)、呼んだあとの失敗
+ *     (deleteUser の失敗・例外、削除のあとの失敗) は付けない (#2265 Q4)
  *   - billing/01 §11: 段階 billing (check_blockers のあと・prepare の前) と billing_recheck (記録を始めたあと・deleteUser の直前)。
  *     どちらの失敗もそこで止める。顧客も Stripe の契約の行も無ければ、既定の実装は Stripe を呼ばない
  *   - mobile/08 §9.3: 段階 apple_revoke (billing_recheck のあと・deleteUser の前)。失効の報告は成功のログの apple に載る。
@@ -682,6 +684,65 @@ describe('deleteAccount: 失敗の扱い', () => {
     };
     const result = await deleteAccount({ userId: USER, admin, requestId: REQUEST_ID, logger: logs.logger });
     expect(result).toMatchObject({ ok: false, error: 'ACCOUNT_DELETE_FAILED', step: 'check_blockers' });
+  });
+});
+
+describe('deleteAccount: 失敗のログの user_id (#2265 Q4。deleteUser を呼んだあとは withUser を使わない)', () => {
+  const failureLogsOf = (entries: ReturnType<typeof makeLogger>['entries']) =>
+    entries.filter((entry) => entry.level === 'error' && entry.message.startsWith('account deletion failed at step: '));
+
+  it('deleteUser がエラーを返した (step: delete_user): 失敗のログに user_id を付けない', async () => {
+    world.deleteUser.error = { message: SECRET_DB_MESSAGE, status: 500, code: 'unexpected_failure' };
+    expect(await run()).toEqual(accountDeletionFailure(REQUEST_ID, 'delete_user'));
+
+    const failures = failureLogsOf(logs.entries);
+    expect(failures.map((entry) => [entry.message, entry.viaUser])).toEqual([['account deletion failed at step: delete_user', false]]);
+    expect(failures[0]?.metadata).toMatchObject({ step: 'delete_user', request_id: REQUEST_ID, error_code: 'unexpected_failure' });
+  });
+
+  it('deleteUser が例外を投げた (step: delete_user): 失敗のログに user_id を付けない', async () => {
+    const admin = makeAdmin(world);
+    admin.auth.admin.deleteUser = async () => {
+      world.calls.push('auth.deleteUser');
+      throw new Error('network down');
+    };
+    expect(await run({ admin })).toEqual(accountDeletionFailure(REQUEST_ID, 'delete_user'));
+    expect(world.calls).toContain('auth.deleteUser');
+
+    const failures = failureLogsOf(logs.entries);
+    expect(failures.map((entry) => [entry.message, entry.viaUser])).toEqual([['account deletion failed at step: delete_user', false]]);
+  });
+
+  it('削除のあと (成功のログ) で投げた: アカウントはもう消えているので、失敗のログに user_id を付けない', async () => {
+    const logger = {
+      ...logs.logger,
+      info: () => {
+        throw new Error('log sink is down');
+      },
+    } as unknown as AccountDeletionLogger;
+    expect(await run({ logger })).toEqual(accountDeletionFailure(REQUEST_ID, 'delete_user'));
+    expect(world.calls).toContain('auth.deleteUser');
+
+    const failures = failureLogsOf(logs.entries);
+    expect(failures.map((entry) => [entry.message, entry.viaUser])).toEqual([['account deletion failed at step: delete_user', false]]);
+  });
+
+  it('deleteUser を呼ぶ前の失敗 (step: billing_recheck・record): 今のまま user_id を付ける (まだ削除していない)', async () => {
+    world = makeWorld({ billingThrows: { billing_recheck: new Error(SECRET_DB_MESSAGE) } });
+    expect(await run()).toEqual(accountDeletionFailure(REQUEST_ID, 'billing_recheck'));
+    expect(world.calls).not.toContain('auth.deleteUser');
+    expect(failureLogsOf(logs.entries).map((entry) => [entry.message, entry.viaUser])).toEqual([
+      ['account deletion failed at step: billing_recheck', true],
+    ]);
+
+    world = makeWorld();
+    logs = makeLogger();
+    world.rpc.begin_account_deletion_record = { error: { message: SECRET_DB_MESSAGE, code: '23505' } };
+    expect(await run()).toEqual(accountDeletionFailure(REQUEST_ID, 'record'));
+    expect(world.calls).not.toContain('auth.deleteUser');
+    expect(failureLogsOf(logs.entries).map((entry) => [entry.message, entry.viaUser])).toEqual([
+      ['account deletion failed at step: record', true],
+    ]);
   });
 });
 
