@@ -9,6 +9,20 @@ import { weeklyMenuRequestErrorMessageForDisplay } from "@/lib/weekly-menu-reque
 import { requestProgressForDisplay } from "@/lib/request-progress-display";
 import { withinConsultationRequestTimeLimit } from "@/lib/ai/consultation-request-time-limit";
 
+/**
+ * 生成中の印 (localStorage の v4MenuGenerating) を下ろす。保存が禁止された環境 (localStorage への参照そのものが
+ * SecurityError で投げる) でも投げずに戻る (#2272 S2。#2265 Q2 で印の保存の失敗を握るようにしたので、その環境でも進捗の
+ * 購読まで進む。以前は完了・失敗の通知で removeItem が投げ、完了の反映 (onGenerationComplete)・失敗の通知 (onError)・
+ * 購読の解除 (unsubscribe) が走らなかった)。印は再読み込みのときに進捗を戻すためだけのもので、下ろせなくても作成は済んでいる
+ */
+function clearGeneratingMarker(): void {
+  try {
+    localStorage.removeItem("v4MenuGenerating");
+  } catch (storageError: unknown) {
+    console.warn("[useV4MenuGeneration] 生成中の印を消せませんでした:", storageError);
+  }
+}
+
 interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
   onGenerationComplete?: () => void;
@@ -146,7 +160,8 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
           
           if (newData.status === "completed" || newData.status === "failed") {
             setIsGenerating(false);
-            localStorage.removeItem("v4MenuGenerating");
+            // 印を下ろせなくても (保存の禁止)、下の完了の反映・失敗の通知・購読の解除は必ず走らせる (#2272 S2)
+            clearGeneratingMarker();
             
             if (newData.status === "completed") {
               options.onGenerationComplete?.();
@@ -168,7 +183,7 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
   const cancelGeneration = useCallback(() => {
     setIsGenerating(false);
     setRequestId(null);
-    localStorage.removeItem("v4MenuGenerating");
+    clearGeneratingMarker();
   }, []);
 
   // リクエストの現在の状態をDBから取得

@@ -519,6 +519,13 @@ function chatLoadFailureMessageOf(kind: ChatLoadFailureKind, timedOut: boolean):
   }
 }
 
+/**
+ * 新しい相談の作成 (createNewSession) の結果 (#2272 S2)。shown = 作れた相談を画面に出したか。sessionsReloaded = 作成の応答が
+ * 返らなかったあとの一覧の読み直しが読めたか (閉じたあと (showFreshSessionAfterClose) は、作成の前の一覧の読み直しが失敗していても、
+ * 作成の中で読み直せていれば一覧はもう新しいので、一覧の失敗の一文を足さない)
+ */
+type SessionCreateResult = { shown: boolean; sessionsReloaded: boolean };
+
 /** 一覧の読み込み (fetchSessions) の結果 (#2265 Q2。失敗を未認証と分け、時間切れかを持つ) */
 type SessionsLoad =
   | { kind: 'loaded'; sessions: Session[] }
@@ -526,8 +533,9 @@ type SessionsLoad =
   | { kind: 'failed'; timedOut: boolean };
 
 /**
- * 新しい相談の作成の応答が返らなかったあとに読み直した一覧 (sessions) から、作成を始める前の一覧に無かった、終了していない・
- * メッセージの無い相談を探す (#2265 Q2。作成はサーバーで済んでいることがある)。一覧は更新の新しい順なので、先頭の 1 つを選ぶ
+ * 新しい相談の作成の応答が返らなかったあとに読み直した一覧 (sessions) から、作成を始める前に見えていた相談 (knownIds。一覧に出た相談と、
+ * この画面で作れて出した相談。#2272 S2) に無い、終了していない・メッセージの無い相談を探す (#2265 Q2。作成はサーバーで済んでいることが
+ * ある)。一覧は更新の新しい順なので、先頭の 1 つを選ぶ
  */
 function sessionCreatedSince(sessions: readonly Session[], knownIds: ReadonlySet<string>): Session | undefined {
   return sessions.find((s) => !knownIds.has(s.id) && s.status !== 'closed' && s.messageCount === 0);
@@ -957,8 +965,9 @@ export default function AIChatBubble() {
   // 応答だけを置いたので、あとの読み込みが失敗すると、先の成功の一覧も捨てた)
   const sessionsRequestSeqRef = useRef(0);
   const placedSessionsRequestRef = useRef(0);
-  // 読み込めた一覧に出たことのある相談の id (#2265 Q2)。新しい相談の作成の応答が返らなかったときに、作成を始める前の写しと比べて、
-  // 読み直した一覧から作れていた相談を見つける (sessionCreatedSince)
+  // 読み込めた一覧に出たことのある相談と、この画面で作れて出した相談 (createNewSession の showCreatedSession。#2272 S2) の id
+  // (#2265 Q2)。新しい相談の作成の応答が返らなかったときに、作成を始める前の写しと比べて、読み直した一覧から作れていた相談を見つける
+  // (sessionCreatedSince)
   const listedSessionIdsRef = useRef(new Set<string>());
   // 最後に始めた会話の読み込み (fetchMessages) の番号と、相談ごとに最後に画面に置いた会話の読み込みの番号 (#2254 M1・#2259 P1)。
   // 会話を画面に置くのは、その相談を出していて、その相談の会話を置いた読み込みより後に始めた読み込みのときだけ (同じ相談の会話の
@@ -1364,17 +1373,24 @@ export default function AIChatBubble() {
   };
 
   // 新規セッション作成 (「新しい相談を始める」の押下 pressNewSession・チャットを開いたとき・相談を閉じたあとから呼ぶ)。
-  // 戻り値は作れた相談を画面に出したか (#2265 Q2。閉じたあと (showFreshSessionAfterClose) が、一覧の読み直しの失敗の一文を足すかを決める)
-  const createNewSession = async (): Promise<boolean> => {
+  // 戻り値は作れた相談を画面に出したかと、作成の中で一覧を読み直せたか (#2265 Q2・#2272 S2。閉じたあと (showFreshSessionAfterClose) が、
+  // 一覧の読み直しの失敗の一文を足すかを決める)
+  const createNewSession = async (): Promise<SessionCreateResult> => {
     // 作るのも画面の操作 (#2254 M1)。作成を待つ間にほかの画面の操作 (相談の切り替え・開き直し・別の新しい相談) があったら、
     // その画面を作った相談で上書きしない (最後の操作が勝つ。作った相談はサーバーに残り、次に一覧を読んだときに出る)
     const startedAt = startViewOperation();
     // 作成の結果を画面に置きうるのは、作成を待つ間にほかの画面の操作が無かったときだけ (#2259 P1。読み込み中の印の数え方)
     const loading = beginLoading(() => viewGenRef.current === startedAt);
-    // 作成を始める前に一覧で見えていた相談 (#2265 Q2。作成の応答が返らなかったときに、読み直した一覧から作れていた相談を見つける)
+    // 作成を始める前に一覧で見えていた・この画面で作れて出した相談 (#2265 Q2・#2272 S2。作成の応答が返らなかったときに、読み直した
+    // 一覧から作れていた相談を見つける)
     const knownSessionIds: ReadonlySet<string> = new Set(listedSessionIdsRef.current);
+    // 作成の応答が返らなかったあとの一覧の読み直しが読めたか (#2272 S2)
+    let sessionsReloaded = false;
     /** 作れた相談 (sessionId) を出し、ようこその一文の画面にする */
     const showCreatedSession = (sessionId: string) => {
+      // 作れた相談も見えていた相談に数える (#2272 S2。以前は一覧で見た相談だけを数えたので、この相談を一覧でまだ見ないうちに次の
+      // 作成の応答が返らないと、読み直した一覧からこの (空の) 相談を『作れていた相談』として選びえた)
+      listedSessionIdsRef.current.add(sessionId);
       showSessionId(sessionId);
       setMessages([]);
       setShowSessionList(false);
@@ -1401,16 +1417,24 @@ export default function AIChatBubble() {
           const sessionId: string = data.session.id;
           return { kind: 'created', sessionId } as const;
         }
+        // 未ログイン (401): 開く (openChat) の一覧の読み込みと同じく未ログインの扱いにする (#2272 S2。以前は『少し待ってから
+        // もう一度』の作成の失敗の一文を出した。ログインしないと作れない)
+        if (res.status === 401) return { kind: 'unauthenticated' } as const;
         return { kind: 'failed', unavailableMessage: await readAiChatUnavailableMessage(res) } as const;
       });
 
+      if (created.kind === 'unauthenticated') {
+        // 『ログインが必要です』の画面にする (一文は足さない。一覧の読み込み (fetchSessions) と同じく、画面の操作の番号に関わらない)
+        setIsAuthenticated(false);
+        return { shown: false, sessionsReloaded };
+      }
       if (created.kind === 'created') {
-        if (viewGenRef.current !== startedAt) return false;
+        if (viewGenRef.current !== startedAt) return { shown: false, sessionsReloaded };
         showCreatedSession(created.sessionId);
-        return true;
+        return { shown: true, sessionsReloaded };
       } else {
         // 作成を待つ間にほかの画面の操作があったら、その画面を変えない (一文も足さない)
-        if (viewGenRef.current !== startedAt) return false;
+        if (viewGenRef.current !== startedAt) return { shown: false, sessionsReloaded };
         // #1148: AI 相談の緊急停止中は、サーバーのやさしい文面を出す (入力しても送れないので、セッションは作らない)
         const unavailableMessage = created.unavailableMessage;
         if (unavailableMessage) {
@@ -1434,14 +1458,15 @@ export default function AIChatBubble() {
         // 相談の無い画面のまま送信も『相談を終了』も押せず、作れていた相談は次に一覧を読むまで出なかった)。読み直しも上限で待つ
         // (読み込み中の印はこの作成のものを立てたまま)
         const listed = await fetchSessions();
-        if (viewGenRef.current !== startedAt) return false;
+        sessionsReloaded = listed.kind === 'loaded';
+        if (viewGenRef.current !== startedAt) return { shown: false, sessionsReloaded };
         const made = listed.kind === 'loaded' ? sessionCreatedSince(listed.sessions, knownSessionIds) : undefined;
         if (made) {
           showCreatedSession(made.id);
-          return true;
+          return { shown: true, sessionsReloaded };
         }
       } else if (viewGenRef.current !== startedAt) {
-        return false;
+        return { shown: false, sessionsReloaded };
       }
       // 作れていた相談が見つからない・通信の失敗: 理由と次の手の一文を今の画面に出す (#2265 Q2。一覧の読み直しの失敗の一文は
       // 別に出さない (二重に出さない。この一文が開き直しを案内する))
@@ -1449,7 +1474,7 @@ export default function AIChatBubble() {
     } finally {
       endLoading(loading);
     }
-    return false;
+    return { shown: false, sessionsReloaded };
   };
 
   // 会話の続きの POST がアクションを自動で実行した結果 (SSE の finalData の actionResult) をチャットに出す。
@@ -2159,9 +2184,12 @@ export default function AIChatBubble() {
       // セッション一覧を更新
       const listed = await fetchSessions();
       // 新しいセッションを作成
-      const shown = await createNewSession();
-      // 作成も失敗したときは、作成の一文が開き直しを案内するので、一覧の一文は足さない (二重に出さない)
-      if (listed.kind === 'failed' && shown) showChatLoadFailure('sessions', listed.timedOut, true);
+      const created = await createNewSession();
+      // 作成も失敗したときは、作成の一文が開き直しを案内するので、一覧の一文は足さない (二重に出さない)。
+      // 作成の中で一覧を読み直せていたら (作成の応答が返らなかったあとの読み直し)、一覧はもう新しいので足さない (#2272 S2)
+      if (listed.kind === 'failed' && created.shown && !created.sessionsReloaded) {
+        showChatLoadFailure('sessions', listed.timedOut, true);
+      }
     };
     try {
       // 応答は AI_CHAT_REQUEST_TIME_LIMIT_MS を上限に待つ (#2259 P1。以前は上限が無く、応答が返らない間は閉じる応答待ちのまま、送信・
