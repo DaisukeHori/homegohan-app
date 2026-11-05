@@ -48,7 +48,7 @@ export async function POST(request: Request) {
   if (isAccountDeletionFailure(result)) {
     // 原因 (DB・Storage・Auth のエラー) は deleteAccount が同じ request_id で app_logs に残している。
     // ここでは 500 を返したことと段階だけを残す。userId は付けない
-    // (deleteUser の段階の失敗では auth.users の行がもう無いことがあり、app_logs.user_id の外部キーで記録が保存できないため)
+    // (deleteUser の段階の失敗では auth.users の行がもう無いことがある。行が無いと、付けても user_id 列には入らない (db-logger が外部キー違反で user_id を外して入れ直し、元の id を metadata の user_id_not_in_auth_users に残す。#2259 P3)。消えた利用者の id をログに残さないため)
     return internalError(ROUTE_NAME, new Error(`account deletion failed at step: ${result.step}`), {
       requestId: result.request_id,
       step: result.step,

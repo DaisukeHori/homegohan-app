@@ -12,7 +12,7 @@
  *
  * 直したあと:
  *   - formatLocalDate / formatCalendarDate は年を 0 埋めの 4 桁で書く (4 桁で書けない年は Date#toISOString と同じ符号つきの 6 桁。
- *     Edge Functions の formatJstDate と同じ形)
+ *     Edge Functions の formatJstDate と一致するのは 0〜9999 年だけ。formatJstDate は toISOString().slice(0, 10) なので 6 桁の年では切れる)
  *   - GET /api/meals は ?date= を isCalendarDate で確かめ、外れたら DB に触れずに 400 (GET /api/meal-plans と同じ文)
  *   - 運営の datetime-local は日本時間で読み書きする (src/lib/admin/jst-datetime-local.ts)
  *

@@ -3,7 +3,8 @@
  *
  * 問題 (直す前): supabase-js はタブを前に戻したときにも同じ利用者の SIGNED_IN を出すことがあり、ホームはそのたびにデータを読み直して
  * AI つきの栄養の分析を読み、LLM を呼んで安全弁 nutrition_advice_auto (上限に数えない枠) を使っていた。
- * 直したあと: SIGNED_IN は前回読んだ利用者と違うときだけ読み直す。SIGNED_OUT・USER_UPDATED はいつも、INITIAL_SESSION・TOKEN_REFRESHED は読み直さない。
+ * 直したあと: SIGNED_IN は、ホームの読み取りが自分で setSession している間は数えない (#2235 I2)。それ以外は、前回読んだ利用者がまだ無い・
+ * セッションに利用者が無い・前回と違うときに読み直す。SIGNED_OUT・USER_UPDATED はいつも、INITIAL_SESSION・TOKEN_REFRESHED は読み直さない。
  * 描画の検査は tests/ai-consultation-home-refetch-2195.test.tsx の「AI つきの栄養の分析を余分に読まない」
  */
 import type { AuthChangeEvent } from '@supabase/supabase-js';
