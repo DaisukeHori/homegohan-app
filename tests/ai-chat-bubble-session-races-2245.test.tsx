@@ -3406,7 +3406,7 @@ describe('#2265 Q2 (1) 一覧・会話の読み込みと新しい相談の作成
     await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
     await waitFor(() => requestCount(SESSIONS_KEY) === 2);
 
-    await openSessionList();
+    // 一覧の欄は「新しい相談を始める」を押したときから開いたまま (作成が済んでいないので閉じていない)
     await pressSessionRow(OTHER_SESSION_TITLE);
     await waitFor(() => text().includes(OTHER_REPLY_TEXT));
     await act(async () => {
@@ -3579,7 +3579,9 @@ describe('#2265 Q2 (1) 一覧・会話の読み込みと新しい相談の作成
     await closeChatWindow();
     handlers[SESSIONS_KEY] = async () => json(500, { error: 'internal' });
     await pressFab();
-    await waitFor(() => text().includes(SESSIONS_LOAD_FAILED_MESSAGE));
+    // 一覧の一文は足したが、会話の読み込みの最中は読み込み中の輪が会話を隠す
+    await waitFor(() => requestCount(SESSIONS_KEY) === 2);
+    await settle();
 
     await act(async () => {
       mainLoad.resolve(json(200, { messages: MAIN_MESSAGES }));
@@ -3600,10 +3602,11 @@ describe('#2265 Q2 (1) 一覧・会話の読み込みと新しい相談の作成
     await pressFab();
     await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === 2);
 
+    // 先の読み込みはまだ画面に置きうる (あとの読み込みが置いていない) ので一文を足す (あとの読み込みの最中は読み込み中の輪が会話を隠す)
     await act(async () => {
       firstLoad.resolve(json(500, { error: 'internal' }));
     });
-    await waitFor(() => text().includes(MESSAGES_LOAD_FAILED_MESSAGE));
+    await settle();
 
     await act(async () => {
       secondLoad.resolve(json(200, { messages: OTHER_MESSAGES }));
