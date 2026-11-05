@@ -5,12 +5,63 @@
  * DOM / React Native に依存しない純粋関数のみを置く。
  */
 
+/** 1 日のミリ秒 (暦日の差を日数にする・紀元の境目の前後の幅) */
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+/** 年を 4 桁で書ける最後の年 (ISO 8601 の YYYY。0〜9999 年は 0 埋めの 4 桁) */
+const ISO_FOUR_DIGIT_YEAR_MAX = 9999;
+/** 年の桁数 (YYYY) */
+const ISO_YEAR_DIGITS = 4;
+/** 4 桁で書けない年 (負の年・10000 年以降) の符号を除いた桁数 (Date#toISOString と同じ ±YYYYYY) */
+const ISO_EXPANDED_YEAR_DIGITS = 6;
+
+/**
+ * 年 (天文学的な年。紀元前 1 年は 0 年) を ISO 8601 の年の書き方にする (#2254 M2)。
+ * 0〜9999 年は 0 埋めの 4 桁 ("0101")、それ以外は Date#toISOString と同じ符号つきの 6 桁 ("+010000"・"-000001")。
+ * 4 桁で書けない年は YYYY-MM-DD の形にならないので、isCalendarDate を通らない。
+ */
+function formatIsoYear(year: number): string {
+  if (year >= 0 && year <= ISO_FOUR_DIGIT_YEAR_MAX) return String(year).padStart(ISO_YEAR_DIGITS, '0');
+  return `${year < 0 ? '-' : '+'}${String(Math.abs(year)).padStart(ISO_EXPANDED_YEAR_DIGITS, '0')}`;
+}
+
+/** toLocaleDateString('sv-SE') の書き方 (紀元の年・2 桁の月・2 桁の日。年は 0 埋めされず、紀元前でも紀元の印が付かない) */
+const SV_SE_DATE_PATTERN = /^(\d+)-(\d{2})-(\d{2})$/;
+/** 紀元 1 年 1 月 1 日 0 時 (UTC) の時刻 (Date.UTC は 0〜99 年を 1900 年代に読み替えるので、ISO 8601 の文字列から作る) */
+const COMMON_ERA_START_MS = Date.parse('0001-01-01T00:00:00Z');
+/** 12 月 (toLocaleDateString('sv-SE') の 2 桁の月) */
+const DECEMBER = '12';
+
+/**
+ * 時刻 date の現地の日付が紀元前か (#2254 M2)。month は toLocaleDateString('sv-SE') が返した現地の月。
+ * タイムゾーンの UTC からのずれは 1 日より小さい (実在する最大は 14 時間) ので、紀元 1 年 1 月 1 日 0 時 (UTC) の前後 1 日の外は
+ * 時刻だけで決まり、その内側の現地の日付は紀元前 1 年の 12 月末か紀元 1 年の 1 月初めなので、月で決まる。
+ */
+function isBeforeCommonEra(date: Date, month: string): boolean {
+  const time = date.getTime();
+  if (time < COMMON_ERA_START_MS - MS_PER_DAY) return true;
+  if (time >= COMMON_ERA_START_MS + MS_PER_DAY) return false;
+  return month === DECEMBER;
+}
+
 /**
  * 現地時刻（デフォルト Asia/Tokyo）の YYYY-MM-DD を返す。
  * UTC 偏移によるズレを防ぐためにロケール 'sv-SE' を使用する。
+ * 年は 0 埋めの 4 桁で書く (#2254 M2。toLocaleDateString('sv-SE') のままでは 1000 年より前の年を "101-01-02" と書き、
+ * isCalendarDate (CALENDAR_DATE_MIN = 0101-01-02 から) を通った日付の週の格子が YYYY-MM-DD にならなかった)。
+ * 4 桁で書けない年 (紀元前・10000 年以降) は Date#toISOString と同じ符号つきの 6 桁 (Edge Functions の formatJstDate と同じ形)。
+ * (Intl.DateTimeFormat の formatToParts は使わない。モバイルのアプリの JS エンジン (Hermes) の iOS では使えないことがある)
+ * 不正な Date (Invalid Date) は "Invalid Date" を返す (以前と同じ。投げない)。
  */
 export function formatLocalDate(date: Date = new Date(), timeZone = 'Asia/Tokyo'): string {
-  return date.toLocaleDateString('sv-SE', { timeZone });
+  const text = date.toLocaleDateString('sv-SE', { timeZone });
+  const match = SV_SE_DATE_PATTERN.exec(text);
+  if (!match) return text;
+  const [, eraYearText, month, day] = match;
+  const eraYear = Number(eraYearText);
+  // 紀元前 n 年は、天文学的な年 (ISO 8601 の年) では 1 - n 年
+  const year = isBeforeCommonEra(date, month) ? 1 - eraYear : eraYear;
+  return `${formatIsoYear(year)}-${month}-${day}`;
 }
 
 /**
@@ -45,7 +96,8 @@ export function todayCalendarDate(timeZone = 'Asia/Tokyo'): Date {
  * (瞬間をこの関数に渡すと、端末のタイムゾーンの日付になる)。
  */
 export function formatCalendarDate(date: Date): string {
-  const y = date.getFullYear();
+  // 年は formatLocalDate と同じく 0 埋めの 4 桁 (#2254 M2。1000 年より前の年を 3 桁以下で書かない)
+  const y = formatIsoYear(date.getFullYear());
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
   return `${y}-${m}-${d}`;
@@ -59,9 +111,6 @@ export function addDays(date: Date, days: number): Date {
   result.setDate(result.getDate() + days);
   return result;
 }
-
-/** 1 日のミリ秒 (暦日の差を日数にする) */
-const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
 /**
  * 現地時刻（デフォルト Asia/Tokyo）の「今日」から dateStr (YYYY-MM-DD) までの残日数。

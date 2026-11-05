@@ -8,7 +8,7 @@ import { useHomeData } from "@/hooks/useHomeData";
 import { AiSkippedNotice } from "@/components/consent/AiSkippedNotice";
 import { Icons } from "@/components/icons";
 import { OrgChallengeEntry } from "@/components/org-challenges/OrgChallengeEntry";
-import { todayLocal, parseLocalDate, jstDayStartTimestamp } from "@/lib/date-utils";
+import { todayLocal, daysUntilFrom, jstDayStartTimestamp } from "@/lib/date-utils";
 import { MEAL_LABELS, STATUS_COLOR_TOKENS, type MealType } from "@homegohan/shared";
 import { MEAL_TYPE_HOME_THEME } from "@/lib/meal-type-visuals";
 import { 
@@ -97,8 +97,10 @@ export default function HomePage() {
     suggestion,
     cookingStreak,
     weeklyStats,
+    weeklyStatsToday,
     monthlyStats,
     expiringItems,
+    expiringItemsToday,
     shoppingRemaining,
     badgeCount,
     latestBadge,
@@ -116,8 +118,12 @@ export default function HomePage() {
   // AI 相談の提案の実行で献立・記録が変わったときの取り直しは useHomeData の中 (useAiConsultationReceiver) が受け持つ (#2195 V1・#2206 G1)
 
   // 見出しの今日 (#2245 K2)。読み取りが今日の献立を置いたら、その読み取りの今日 (today) に合わせる (0 時をまたいで開いたままの画面が
-  // 読み直したときに、見出し・週の棒の今日の印・期限までの日数が、読んだ献立・集計と同じ日になる)。置く前は開いたときに読んだ今日
+  // 読み直したときに、見出しが読んだ献立と同じ日になる)。置く前は開いたときに読んだ今日。
+  // 週の棒の今日の印と期限までの日数は、それぞれの値を置いた読み取りの今日 (weeklyStatsToday・expiringItemsToday) に合わせる (#2254 M2。
+  // 今日の献立の読み取りだけが失敗した取り直しでは、見出しは前の日のまま、週の集計と食材は新しい日で置かれる)
   const shownToday = today ?? todayISODate;
+  // 週の棒の今日の印を付ける日 (週の集計を置く前は見出しの今日。置く前の棒は 0 本)
+  const weeklyBarsToday = weeklyStatsToday ?? shownToday;
   const shownDateLabel = today ? formatHomeDateLabel(today) : clientDate;
 
   const [showWeeklyDetail, setShowWeeklyDetail] = useState(false);
@@ -959,7 +965,7 @@ export default function HomePage() {
               {/* 棒グラフ */}
               <div className="flex items-end justify-between gap-2 h-24">
                 {weeklyStats.days.map((day, i) => {
-                  const isToday = shownToday ? day.date === shownToday : false;
+                  const isToday = weeklyBarsToday ? day.date === weeklyBarsToday : false;
                   const height = day.mealCount > 0 ? Math.max(day.cookRate, 10) : 5;
                   
                   return (
@@ -1053,7 +1059,11 @@ export default function HomePage() {
                 </div>
                 <div className="space-y-2">
                   {expiringItems.slice(0, 3).map(item => {
-                    const daysLeft = Math.ceil((parseLocalDate(item.expirationDate!).getTime() - parseLocalDate(shownToday || todayLocal()).getTime()) / (1000 * 60 * 60 * 24));
+                    // 期限までの日数は、食材を読んだ読み取りの今日から数える (#2254 M2。食材はその日から期限の近いもので絞って読んだ。
+                    // 見出しの今日 (shownToday) から数えると、0 時をまたいだ取り直しで今日の献立の読み取りだけが失敗したとき 1 日多くなる)。
+                    // 期限の無い食材は読まない (期限で絞って読む) ので daysUntilFrom は null にならない (null なら行を出さない)
+                    const daysLeft = daysUntilFrom(item.expirationDate, expiringItemsToday ?? (shownToday || todayLocal()));
+                    if (daysLeft === null) return null;
                     return (
                       <div key={item.id} className="flex justify-between items-center">
                         <span className="text-sm text-amber-900">{item.name}</span>
@@ -1205,7 +1215,7 @@ export default function HomePage() {
                 <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">日別詳細</h3>
                 <div className="space-y-2">
                   {weeklyStats.days.map((day) => {
-                    const isToday = shownToday ? day.date === shownToday : false;
+                    const isToday = weeklyBarsToday ? day.date === weeklyBarsToday : false;
                     return (
                       <div key={day.date} className={`flex items-center justify-between p-3 rounded-xl ${isToday ? 'bg-orange-50 border border-orange-200' : 'bg-gray-50'}`}>
                         <div className="flex items-center gap-3">

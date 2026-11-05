@@ -14,7 +14,8 @@ import { internalError } from '@/lib/api/errors';
 import { uuidOrNull } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
-import { REQUIRED_FIELDS_MISSING_MESSAGE } from '@/lib/api/user-api-error-messages';
+import { CALENDAR_DATE_PARAM_LABELS, REQUIRED_FIELDS_MISSING_MESSAGE, invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages';
+import { isCalendarDate } from '@/lib/date-utils';
 
 /**
  * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -31,6 +32,11 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const date = searchParams.get('date');
+    // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲の中) だけを受け付ける (#2254 M2。GET /api/meal-plans と同じ。#1482)。
+    // 確かめずに渡すと、2026-02-30 のような日付が DB の date 型への変換で失敗して 500 になっていた。空欄 (?date=) は以前どおり「指定なし」
+    if (date && !isCalendarDate(date)) {
+      return NextResponse.json({ error: invalidCalendarDateMessage(CALENDAR_DATE_PARAM_LABELS.date) }, { status: 400 });
+    }
 
     // 日付が指定されていない場合は今日 (JST の暦日。#1433)
     const targetDate = date || jstToday();

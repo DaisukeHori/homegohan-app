@@ -201,8 +201,9 @@ export const useHomeData = () => {
   const ownSessionSyncsRef = useRef(0);
   const [activityLevel, setActivityLevel] = useState<string | null>(null);
   /**
-   * 出している今日の献立を読んだ読み取りの今日 (JST の暦日。#2245 K2)。まだ置いていなければ null。ホームの見出しの日付・週の棒の
-   * 今日の印は、この日に合わせる (0 時をまたいで開いたままの画面の読み直しが新しい今日を読んだら、見出しも同じ日になる)
+   * 出している今日の献立を読んだ読み取りの今日 (JST の暦日。#2245 K2)。まだ置いていなければ null。ホームの見出しの日付は
+   * この日に合わせる (0 時をまたいで開いたままの画面の読み直しが新しい今日を読んだら、見出しも同じ日になる)。
+   * 週の棒の今日の印・期限までの日数は、それぞれの値を置いた読み取りの今日 (weeklyStatsToday・expiringItemsToday。#2254 M2)
    */
   const [homeToday, setHomeToday] = useState<string | null>(null);
   // 今日のアドバイスの帯 (文と出所。#2206 G3)
@@ -222,7 +223,20 @@ export const useHomeData = () => {
     totalMeals: 0,
     cookRate: 0,
   });
+  /**
+   * 週の集計 (weeklyStats) を読んだ読み取りの今日 (JST の暦日。#2254 M2)。まだ置いていなければ null。週の棒はこの日で終わる 7 日
+   * (calendarDaysEndingAt) なので、棒の今日の印はこの日に付ける。見出しの今日 (homeToday) に合わせると、0 時をまたいだ取り直しで
+   * 今日の献立の読み取りだけが失敗したとき、新しい日で終わる 7 日の 6 本目 (前の日) に印が付く
+   */
+  const [weeklyStatsToday, setWeeklyStatsToday] = useState<string | null>(null);
   const [expiringItems, setExpiringItems] = useState<PantryItem[]>([]);
+  /**
+   * 期限の近い食材 (expiringItems) を読んだ読み取りの今日 (JST の暦日。#2254 M2)。まだ置いていなければ null。
+   * 期限までの日数はこの日から数える (食材は「この日から期限の近いもの」で絞って読んだので、同じ日から数える)。
+   * 見出しの今日 (homeToday) は今日の献立を置いた読み取りの今日なので、0 時をまたいだ取り直しで今日の献立の読み取りだけが失敗すると、
+   * 見出しは前の日のまま、食材は新しい日で置かれる。見出しの今日から数えると、残りの日数が 1 日多くなる
+   */
+  const [expiringItemsToday, setExpiringItemsToday] = useState<string | null>(null);
   const [shoppingRemaining, setShoppingRemaining] = useState(0);
   const [badgeCount, setBadgeCount] = useState(0);
   const [latestBadge, setLatestBadge] = useState<{ name: string; code: string; obtainedAt: string } | null>(null);
@@ -405,7 +419,7 @@ export const useHomeData = () => {
       // place が番兵と書き込みの窓を見る)。読み取りの失敗では今の表示を残す (置かない)
       if (!dailyMealError) {
         read.place(KEY_TODAY_PLAN, () => {
-          // 置いた今日の献立の日 (見出しの日付・週の棒の今日の印はこの日に合わせる。#2245 K2)
+          // 置いた今日の献立の日 (見出しの日付はこの日に合わせる。#2245 K2。週の棒の今日の印・期限までの日数は、それぞれを置いた読み取りの今日。#2254 M2)
           setHomeToday(today);
           if (dailyMealData && dailyMealData.planned_meals) {
             const mealsData = dailyMealData.planned_meals;
@@ -592,7 +606,11 @@ export const useHomeData = () => {
           totalCookCount: totalCook,
           totalMealCount: totalMeals,
         };
-        read.place(KEY_WEEKLY_STATS, () => setWeeklyStats(weekly));
+        read.place(KEY_WEEKLY_STATS, () => {
+          setWeeklyStats(weekly);
+          // 7 日を終えた今日 (棒の今日の印はこの日に付ける。#2254 M2)
+          setWeeklyStatsToday(today);
+        });
       }
     } catch (e) {
       console.error('Weekly stats fetch error:', e);
@@ -671,7 +689,11 @@ export const useHomeData = () => {
           createdAt: item.created_at,
           updatedAt: item.updated_at,
         }));
-        read.place(KEY_EXPIRING_ITEMS, () => setExpiringItems(items));
+        read.place(KEY_EXPIRING_ITEMS, () => {
+          setExpiringItems(items);
+          // 食材を絞った今日 (期限までの日数はこの日から数える。#2254 M2)
+          setExpiringItemsToday(today);
+        });
       }
     } catch (e) {
       console.error('Expiring items fetch error:', e);
@@ -1342,8 +1364,12 @@ export const useHomeData = () => {
     // 新規追加
     cookingStreak,
     weeklyStats,
+    // 週の集計を読んだ今日 (週の棒の 7 日はこの日で終わる。まだ置いていなければ null。#2254 M2)
+    weeklyStatsToday,
     monthlyStats,
     expiringItems,
+    // 期限の近い食材を読んだ今日 (期限までの日数はこの日から数える。まだ置いていなければ null。#2254 M2)
+    expiringItemsToday,
     shoppingRemaining,
     badgeCount,
     latestBadge,

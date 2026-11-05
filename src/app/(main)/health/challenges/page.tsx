@@ -8,7 +8,7 @@ import {
   CheckCircle2, Clock, X, Sparkles, Star
 } from 'lucide-react';
 import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
-import { daysUntilLocal } from '@/lib/date-utils';
+import { daysUntilFrom, todayLocal } from '@/lib/date-utils';
 
 const colors = {
   bg: '#FAF9F7',
@@ -118,9 +118,12 @@ export default function HealthChallengesPage() {
   /**
    * 終了日 (YYYY-MM-DD・日本の暦日。作成時に JST の今日から求めた日付) まで、今日 (日本の暦日) から何日か (#1594)。
    * 終了日が今日なら 0、過ぎていれば負。以前は終了日を new Date(endDate) (その日の UTC の 0 時 = 日本の 9 時) にして
-   * 今の時刻と比べていたので、終了日の翌日の日本の 9 時まで「期限切れ」にならず、残りの日数も日本の 9 時を境に変わっていた
+   * 今の時刻と比べていたので、終了日の翌日の日本の 9 時まで「期限切れ」にならず、残りの日数も日本の 9 時を境に変わっていた。
+   * 今日は描画ごとに 1 回だけ読み、その描画の行はどれも同じ今日から数える (#2254 M2。行ごとに時計を読むと、0 時をまたいだ描画の中で
+   * 行ごとに別の日から数えうる)
    */
-  const getDaysRemaining = (endDate: string): number | null => daysUntilLocal(endDate);
+  const today = todayLocal();
+  const getDaysRemaining = (endDate: string): number | null => daysUntilFrom(endDate, today);
 
   const getProgressPercentage = (challenge: Challenge) => {
     if (challenge.target_value === 0) return 0;
