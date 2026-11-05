@@ -73,7 +73,17 @@ import { AIDayMenuModal } from "./AIDayMenuModal";
 import { aiSummarySkippedNote, isAiConsentRequiredError, promptAiConsentRequired } from "../../lib/ai-consent";
 import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from "../../lib/failed-response";
 import { isLegalConsentRequiredError } from "../../lib/legal-consent";
-import { SERVICE_UNAVAILABLE_ALERT_TITLE, serviceUnavailableMessageOf } from "../../lib/service-unavailable";
+import {
+  SERVICE_UNAVAILABLE_ALERT_TITLE,
+  isServiceUnavailableError,
+  serviceUnavailableMessageOf,
+} from "../../lib/service-unavailable";
+import {
+  CHAT_LOAD_FAILURE_NOTE_IDS,
+  chatLoadFailureMessageOf,
+  isChatLoadTimeout,
+  type ChatLoadFailureKind,
+} from "../../lib/ai-chat-load-failure";
 
 // ============================================================
 // Types
@@ -102,6 +112,28 @@ type Session = {
   messageCount: number;
   status?: string;
 };
+
+/**
+ * 相談の一覧の読み込み (fetchSessions) の結果 (#2272 S1。Web の SessionsLoad と同じ形。モバイルは未認証をログインのゲートが
+ * 扱うので分けない)。failed は読めなかった (時間切れ・失敗の応答・通信の失敗) で、timedOut は時間切れか、latest は失敗した時点で
+ * これより後に始めた一覧の読み込みが無かったか (後の読み込みのほうが新しいので、古い読み込みの失敗の一文は出さない)
+ */
+type SessionsLoad =
+  | { kind: "loaded"; sessions: Session[] }
+  | { kind: "failed"; timedOut: boolean; latest: boolean };
+
+/** 相談の会話の読み込み (fetchMessagesResult) の結果 (#2272 S1。読めなかったときは時間切れかを持つ。一文を選ぶため) */
+type MessagesLoad = { kind: "loaded"; messages: Message[] } | { kind: "failed"; timedOut: boolean };
+
+/** 読み込みの失敗の一文 (#2272 S1。文と id は src/lib/ai-chat-load-failure.ts。Web の showChatLoadFailure が足す一文と同じ) */
+function chatLoadFailureNoteOf(kind: ChatLoadFailureKind, timedOut: boolean, content?: string): Message {
+  return {
+    id: CHAT_LOAD_FAILURE_NOTE_IDS[kind],
+    role: "assistant",
+    content: content ?? chatLoadFailureMessageOf(kind, timedOut),
+    createdAt: new Date().toISOString(),
+  };
+}
 
 // ============================================================
 // Constants
@@ -357,13 +389,47 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   // なく、最後に始めた読み込みの応答だけを置く (アーカイブの前に始めた開き直しの一覧が、アーカイブのあとの読み直しより後に返ると、
   // 閉じた相談が終了でない一覧が出た)
   const sessionsRequestSeqRef = useRef(0);
-  /** 相談の一覧の読み込みを 1 つ始め、その応答を置く関数を返す (置くのは、これが最後に始めた読み込みのときだけ) */
-  function startSessionsRequest(): (sessions: Session[]) => void {
+  /**
+   * 相談の一覧を読む (#2272 S1。開いたとき (initSession)・新しい相談の作成のあと (createNewSession)・アーカイブのあとから呼ぶ)。
+   * 一覧を置くのは、これが最後に始めた読み込みのときだけ (#2254 M1)。置いたときは、前の読み込みの失敗の一文 (一覧) を外す
+   * (読めたので、開き直してもらう一文は要らない。一覧の画面にも出しているので、古い一文を残さない)。
+   * 読めなかったら (時間切れ・失敗の応答・通信の失敗) failed を返す。理由の一文は、画面がずれる呼び出し側が出す (Web の
+   * fetchSessions と同じ分け方)。以前は失敗を黙って捨てた
+   */
+  async function fetchSessions(): Promise<SessionsLoad> {
     sessionsRequestSeqRef.current += 1;
     const requestSeq = sessionsRequestSeqRef.current;
-    return (loaded) => {
-      if (sessionsRequestSeqRef.current === requestSeq) setSessions(loaded);
-    };
+    try {
+      const api = getApi();
+      const res = await api.get<{ sessions: Session[] }>("/api/ai/consultation/sessions?status=all");
+      const loaded = res.sessions ?? [];
+      if (sessionsRequestSeqRef.current === requestSeq) {
+        setSessions(loaded);
+        setMessages((prev) => prev.filter((m) => m.id !== CHAT_LOAD_FAILURE_NOTE_IDS.sessions));
+      }
+      return { kind: "loaded", sessions: loaded };
+    } catch (e) {
+      return { kind: "failed", timedOut: isChatLoadTimeout(e), latest: sessionsRequestSeqRef.current === requestSeq };
+    }
+  }
+
+  /**
+   * 一覧を読めなかった (listed) ときに、理由と次の手 (開き直す) の一文を会話に出す (#2272 S1。Web の
+   * showChatLoadFailure('sessions', …) と同じ文)。出すのは、これより後に始めた一覧の読み込みが無いときだけ (後の読み込みのほうが新しい。
+   * 後の読み込みが読めていれば一覧は今の状態)
+   */
+  function showSessionsLoadFailure(listed: Extract<SessionsLoad, { kind: "failed" }>) {
+    if (listed.latest) showChatLoadFailure("sessions", listed.timedOut);
+  }
+
+  /**
+   * 読み込みの失敗の一文 (#2272 S1) を今の画面の会話の後ろに足す。同じ種類の前の一文は外す (二重に出さない。Web の
+   * showChatLoadFailure と同じ)。content を渡すと、その文を出す (作成が緊急停止・メンテナンス中の 503 で止められたときの固定の文)。
+   * 画面の操作の番号は進めない (足すだけで、出す相談も会話も置き換えない。進めると、先に始めた新しい相談の作成の結果を捨てる)
+   */
+  function showChatLoadFailure(kind: ChatLoadFailureKind, timedOut: boolean, content?: string) {
+    const note = chatLoadFailureNoteOf(kind, timedOut, content);
+    setMessages((prev) => [...prev.filter((m) => m.id !== note.id), note]);
   }
 
   // 出す相談を変える (画面の操作)。切り替えたら、流れの途中の本文 (streamingContent) も消す (#2227 H1。前の相談の返答の断片を
@@ -461,82 +527,112 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     startViewOperation();
     const startedAt = viewGenRef.current;
     setTimedOutSend(null);
+    /**
+     * 読み込み・作成を待つ間にアーカイブを始めた・ほかの画面の操作 (アーカイブのあとの新しい相談・相談の切り替え・送信) があったか。
+     * あれば出す相談を変えず、一文も足さない (#2245 K1。変えると、アーカイブのあとの新しい相談や選んだ相談を、一覧を読んだ時点の
+     * 相談で上書きする。失敗の一文も、その操作の画面には出さない (Web の openChat と同じ))
+     */
+    const superseded = () => closingSessionRef.current || viewGenRef.current !== startedAt;
+    const listed = await fetchSessions();
+    if (superseded()) return;
+    if (listed.kind === "failed") {
+      // 一覧を読めなかった: 今の会話はそのまま残し、理由と次の手 (開き直す) の一文を足す (#2272 S1。Web の openChat (#2265 Q2) と
+      // 同じ。以前はようこその一文だけの画面に置き換え、理由も出さなかった)
+      showSessionsLoadFailure(listed);
+      return;
+    }
+    const allSessions = listed.sessions;
+
+    // 出す相談の id を先に変えてから会話を取る (#2227 H1。selectSession・Web の AIChatBubble と同じ順。後に変えると、取り直しで
+    // 確かめられなかった送信の保存行が見つかっても、前に出していた相談を今の相談と見て入力欄の文を消さなかった)
+    const target = allSessions.find((s) => s.status === "active") ?? allSessions[0];
+    if (target) {
+      // 開き直す前から同じ相談を出していれば、会話を読めなかったときも今の会話を残す (#2272 S1。loadMessages)
+      const alreadyShown = currentSessionIdRef.current === target.id;
+      showSessionId(target.id);
+      await loadMessages(target.id, { keepShownOnFailure: alreadyShown });
+      return;
+    }
+    // 新規セッション作成
     try {
       const api = getApi();
-      const applySessions = startSessionsRequest();
-      const res = await api.get<{ sessions: Session[] }>(
-        "/api/ai/consultation/sessions?status=all"
-      );
-      const allSessions = res.sessions ?? [];
-      applySessions(allSessions);
-      // 一覧を待つ間にアーカイブを始めた・ほかの画面の操作 (アーカイブのあとの新しい相談・相談の切り替え・送信) があった: 出す相談を
-      // 変えない (#2245 K1。変えると、アーカイブのあとの新しい相談や選んだ相談を、一覧を読んだ時点の相談で上書きする)
-      if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
-
-      // 出す相談の id を先に変えてから会話を取る (#2227 H1。selectSession・Web の AIChatBubble と同じ順。後に変えると、取り直しで
-      // 確かめられなかった送信の保存行が見つかっても、前に出していた相談を今の相談と見て入力欄の文を消さなかった)
-      const active = allSessions.find((s) => s.status === "active");
-      if (active) {
-        showSessionId(active.id);
-        await loadMessages(active.id);
-      } else if (allSessions.length > 0) {
-        showSessionId(allSessions[0].id);
-        await loadMessages(allSessions[0].id);
-      } else {
-        // 新規セッション作成
-        const createRes = await api.post<{
-          success: boolean;
-          session: { id: string };
-        }>("/api/ai/consultation/sessions", { title: "AI相談" });
-        // 作成を待つ間も上と同じ (#2245 K1)
-        if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
-        showSessionId(createRes.session.id);
-        setMessages([WELCOME_MESSAGE]);
-      }
-    } catch {
-      // 失敗を待つ間に画面の操作があったら、その画面を消さない (#2245 K1。上と同じ)
-      if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
+      const createRes = await api.post<{
+        success: boolean;
+        session: { id: string };
+      }>("/api/ai/consultation/sessions", { title: "AI相談" });
+      // 作成を待つ間も上と同じ (#2245 K1)
+      if (superseded()) return;
+      showSessionId(createRes.session.id);
       setMessages([WELCOME_MESSAGE]);
+    } catch (e) {
+      // 失敗を待つ間に画面の操作があったら、その画面に一文を足さない (#2245 K1。上と同じ)
+      if (superseded()) return;
+      // 作れなかった: 理由と次の手の一文を足す (#2272 S1。以前はようこその一文だけの画面にし、理由を出さなかった)
+      showSessionCreateFailure(e);
     }
   }
 
   /**
-   * 相談のメッセージをサーバーから取る。取れなければ null (画面をどうするかは呼び出し側が決める)。
+   * 相談のメッセージをサーバーから取る (#2272 S1。取れなければ failed と時間切れか。画面をどうするかは呼び出し側が決める)。
    * 応答を受け取れなかったあとの取り直し (reload) は、Web と同じ上限 (AI_CHAT_RELOAD_TIMEOUT_MS) で打ち切る (#2227 H1。
    * 取り直しのあいだは送信と入力欄が止まるので、/api/ai/ の下の GET の既定 (120 秒) のままだと、GET が詰まると最大 120 秒入力が止まった)
    */
-  async function fetchMessages(sessionId: string, options: { reload: boolean }): Promise<Message[] | null> {
+  async function fetchMessagesResult(sessionId: string, options: { reload: boolean }): Promise<MessagesLoad> {
     try {
       const api = getApi();
       const path = `/api/ai/consultation/sessions/${sessionId}/messages`;
       const msgRes = options.reload
         ? await api.get<{ messages: Message[] }>(path, { timeoutMs: AI_CHAT_RELOAD_TIMEOUT_MS })
         : await api.get<{ messages: Message[] }>(path);
-      return msgRes.messages ?? [];
-    } catch {
-      return null;
+      return { kind: "loaded", messages: msgRes.messages ?? [] };
+    } catch (e) {
+      return { kind: "failed", timedOut: isChatLoadTimeout(e) };
     }
   }
 
-  async function loadMessages(sessionId: string) {
+  /** 相談のメッセージをサーバーから取る。取れなければ null (取り直しの経路が使う。読み方は fetchMessagesResult) */
+  async function fetchMessages(sessionId: string, options: { reload: boolean }): Promise<Message[] | null> {
+    const result = await fetchMessagesResult(sessionId, options);
+    return result.kind === "loaded" ? result.messages : null;
+  }
+
+  /**
+   * 相談 (sessionId) を出したときの会話の読み込み (開き直し (initSession) と相談の切り替え (selectSession) から呼ぶ)。
+   * 読めなかったら (時間切れ・失敗の応答・通信の失敗)、ようこその一文だけの画面に置き換えず、理由と次の手 (開き直す・
+   * 『新しい相談を始める』を押す) の一文を出す (#2272 S1。Web の fetchMessages (#2265 Q2) と同じ文。以前はようこその一文だけの
+   * 画面に置き換え、履歴のある相談でも履歴が消えたように見えた)。keepShownOnFailure が真 (読む前から同じ相談の会話を出していた) なら
+   * 今の会話を残して一文を足し、偽 (別の相談から切り替えた・初めて開いた) なら一文だけにする (前の相談の会話を、切り替えた先の相談の
+   * 会話のように残さない)
+   */
+  async function loadMessages(sessionId: string, options: { keepShownOnFailure: boolean }) {
     // この読み込みで確かめるのは、読み込みを始める前に積んであった送信だけ (#2227 H1。読み込みの最中に終わった送信は、GET の写しより
     // 後に保存されうるので、写しに無くても忘れない。その送信は自分の取り直しで確かめる)
     const settleable = [...unconfirmedSendsRef.current];
-    const loaded = await fetchMessages(sessionId, { reload: false });
+    const result = await fetchMessagesResult(sessionId, { reload: false });
     // 会話を画面に置くのは、返ったときにまだその相談を出しているときだけ (#2245 K1。相談を A→B と切り替えた・アーカイブのあとの
     // 新しい相談に変わったあとに遅れて返った A の会話を、今の相談の画面に置かない。置くと、画面の会話と違う相談へ送られる。
     // Web の AIChatBubble の fetchMessages と同じ)。確かめられなかった送信の settle は今のまま行う (入力欄に触るのは今の相談のときだけ)
     if (currentSessionIdRef.current === sessionId) {
-      if (loaded && loaded.length > 0) {
-        setMessages(loaded);
+      if (result.kind === "failed") {
+        const note = chatLoadFailureNoteOf("messages", result.timedOut);
+        setMessages((prev) => (options.keepShownOnFailure ? [...prev.filter((m) => m.id !== note.id), note] : [note]));
+      } else if (result.messages.length > 0) {
+        setMessages(result.messages);
       } else {
         setMessages([WELCOME_MESSAGE]);
       }
     }
     // 確かめられなかった前の送信が届いていたら、入力欄に戻した文を消す (#2227 H1)。開き直した会話は以後の送信の
     // 「送る前に出ていた行」に入るので、見つからなかった送信は忘れる
-    if (loaded) {
-      settleUnconfirmedSends({ sessionId, loaded, among: settleable, current: null, currentAccepted: false, forgetRemaining: true });
+    if (result.kind === "loaded") {
+      settleUnconfirmedSends({
+        sessionId,
+        loaded: result.messages,
+        among: settleable,
+        current: null,
+        currentAccepted: false,
+        forgetRemaining: true,
+      });
     }
   }
 
@@ -767,59 +863,71 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     setDayMenuModalVisible(true);
   }
 
-  /** 新しい相談を作って出す (「新しい相談を始める」の押下 pressNewSession と、アーカイブの応答のあとから呼ぶ) */
-  async function createNewSession() {
+  /**
+   * 新しい相談を作れなかった (例外 error) ことを、理由と次の手の一文で会話に出す (#2272 S1。Web の createNewSession の
+   * showChatLoadFailure('create', …) と同じ文。時間切れと、失敗の応答・通信の失敗で文を分ける)。AI 相談の緊急停止・メンテナンス中の
+   * 503 (getApi() が固定の文の ServiceUnavailableError に置き換えて投げる) は、その固定の文を出す (Web も作成の 503 はサーバーの
+   * やさしい文面を出す。『少し待ってから』と出さない)
+   */
+  function showSessionCreateFailure(error: unknown) {
+    const unavailableMessage = isServiceUnavailableError(error) ? error.message : undefined;
+    showChatLoadFailure("create", isChatLoadTimeout(error), unavailableMessage);
+  }
+
+  /**
+   * 新しい相談を作って出す (「新しい相談を始める」の押下 pressNewSession と、アーカイブの応答のあと (showFreshSessionAfterArchive)
+   * から呼ぶ)。作れたら、続けて一覧を読み直す (作った相談を一覧に出す)。戻り値は作れた相談を画面に出したか (Web の createNewSession と同じ)。
+   * 作成 (POST) と一覧の読み直し (GET) の失敗は分けて扱う (#2272 S1。以前は同じ try で、作れて新しい相談が画面に出ているのに一覧の
+   * 読み直しだけが失敗しても『新しいセッションの作成に失敗しました。』と言い切った):
+   *   - 作れなかった: 理由と次の手の一文を今の画面の会話に足し (showSessionCreateFailure)、会話の画面に戻す (一覧の画面から押したときも
+   *     一文が見えるように)。以前は Alert『新しいセッションの作成に失敗しました。』
+   *   - 作れたが一覧を読めなかった: 新しい相談の画面に、一覧を読めなかった一文を足す (Web の SESSIONS_LOAD_*_MESSAGE と同じ文)
+   */
+  async function createNewSession(): Promise<boolean> {
     // 取り直しの最中は始めない (#2227 H1。ボタンも止めている。同じ描画のうちの 2 度目の押下を止める)
-    if (reloadingRef.current) return;
+    if (reloadingRef.current) return false;
     // 作るのも画面の操作 (#2254 M1。Web の AIChatBubble の createNewSession と同じ)。作成を待つ間にほかの画面の操作 (相談の切り替え・
     // 開き直し・別の新しい相談) があったら、その画面を作った相談で上書きしない (最後の操作が勝つ。作った相談はサーバーに残り、
-    // 次に一覧を読んだときに出る)
+    // 次に一覧を読んだときに出る)。失敗の一文もその画面には足さない
     const startedAt = startViewOperation();
+    let createdSessionId: string;
     try {
       const api = getApi();
       const createRes = await api.post<{
         success: boolean;
         session: { id: string };
       }>("/api/ai/consultation/sessions", { title: "AI相談" });
-      if (viewGenRef.current !== startedAt) return;
-      showSessionId(createRes.session.id);
-      setMessages([WELCOME_MESSAGE]);
-      // 案内を外すだけ (#2227 H1。確かめていない送信は入れ物に積んである。作成を待つ間に終わった送信も同じ)
-      setTimedOutSend(null);
+      createdSessionId = createRes.session.id;
+    } catch (e) {
+      if (viewGenRef.current !== startedAt) return false;
+      showSessionCreateFailure(e);
       setShowSessionList(false);
-      // セッション一覧を更新
-      const applySessions = startSessionsRequest();
-      const res = await api.get<{ sessions: Session[] }>(
-        "/api/ai/consultation/sessions?status=all"
-      );
-      applySessions(res.sessions ?? []);
-    } catch {
-      Alert.alert("エラー", "新しいセッションの作成に失敗しました。");
+      return false;
     }
+    if (viewGenRef.current !== startedAt) return false;
+    showSessionId(createdSessionId);
+    setMessages([WELCOME_MESSAGE]);
+    // 案内を外すだけ (#2227 H1。確かめていない送信は入れ物に積んである。作成を待つ間に終わった送信も同じ)
+    setTimedOutSend(null);
+    setShowSessionList(false);
+    // セッション一覧を更新 (作成とは別に扱う。読めなくても作れた相談はそのまま出しておく)。一文を足すのは、まだ作った相談を
+    // 出しているときだけ (一覧を待つ間に切り替えた先の相談の画面に足さない)
+    const listed = await fetchSessions();
+    if (listed.kind === "failed" && currentSessionIdRef.current === createdSessionId) showSessionsLoadFailure(listed);
+    return true;
   }
 
   async function selectSession(sessionId: string) {
     // 取り直しの最中・アーカイブの応答待ちの最中は切り替えない (#2227 H1・#2235 I7。相談の行も止めている。アーカイブの応答のあとの
     // 新しい相談が、選んだ相談を上書きする)
     if (reloadingRef.current || closingSessionRef.current) return;
+    // 同じ相談を選び直したときは、会話を読めなくても今の会話を残す (#2272 S1。loadMessages)
+    const alreadyShown = currentSessionIdRef.current === sessionId;
     showSessionId(sessionId);
     // 案内を外すだけ (#2227 H1。確かめていない送信は入れ物に積んである。開き直した相談の読み込みで、届いていたら入力欄の文を消す)
     setTimedOutSend(null);
     setShowSessionList(false);
-    await loadMessages(sessionId);
-  }
-
-  async function fetchSessions() {
-    try {
-      const api = getApi();
-      const applySessions = startSessionsRequest();
-      const res = await api.get<{ sessions: Session[] }>(
-        "/api/ai/consultation/sessions?status=all"
-      );
-      applySessions(res.sessions ?? []);
-    } catch {
-      // 取得失敗は無視
-    }
+    await loadMessages(sessionId, { keepShownOnFailure: alreadyShown });
   }
 
   async function archiveSession() {
@@ -852,11 +960,17 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     // 行う。始めたあとの例外 (要約の応答の形の崩れなど) で、新しい相談を 2 つ作らない。Web の freshSessionStarted と同じ)
     let freshSessionStarted = false;
     /**
-     * アーカイブのあと、新しい相談を作って出す (作成のあとに一覧も読み直す。createNewSession)。成功の応答のときと、受け付けたあとの
-     * 例外のときに呼ぶ (#2265 Q5)。閉じた相談を今の相談のまま残さず、一覧の status もサーバーの状態に合わせる
+     * アーカイブのあと、一覧を読み直してから新しい相談を作って出す (#2272 S1。Web の showFreshSessionAfterClose と同じ順)。成功の
+     * 応答のときと、受け付けたあとの例外のときに呼ぶ (#2265 Q5)。先に一覧を読み直すので、作成が失敗しても一覧の閉じた相談の status は
+     * サーバーの状態 (終了) に合い (アーカイブのボタンも止まる)、画面には作成の失敗の一文だけを出す (createNewSession。以前は作成の
+     * あとにしか一覧を読まず、作成が失敗すると一覧の status も今の相談のまま残った)。
+     * 作れたら createNewSession が一覧をもう一度読む (作った相談を一覧に出す)。その読み直しの失敗の一文は createNewSession が出すので、
+     * 先の読み直しの失敗の一文はここでは足さない (あとの読み直しが読めていれば、一覧は今の状態。作成も失敗したときは、作成の一文が
+     * 開き直しを案内する。Web と同じく二重に出さない)
      */
     const showFreshSessionAfterArchive = async () => {
       freshSessionStarted = true;
+      await fetchSessions();
       await createNewSession();
     };
     try {
@@ -919,7 +1033,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       } else if (closed.status === 400) {
         // Already closed: UI を最新に合わせる
         Alert.alert("情報", "このセッションは既にアーカイブ済みです。");
-        await fetchSessions();
+        const listed = await fetchSessions();
+        // 読み直しも失敗したら、古い一覧のままなので開き直してもらう (#2272 S1。Web の closeSession の already-closed と同じ)
+        if (listed.kind === "failed") showSessionsLoadFailure(listed);
       } else {
         const err = closed.body;
         // 規約・プライバシーポリシーへの同意が必要 (403 LEGAL_CONSENT_REQUIRED。#1442): errorOfFailedResponse が LegalConsentProvider に
@@ -1270,6 +1386,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const sessionSwitchLocked = reloadingAfterTimeout || isClosingSession;
   // 「最新の会話を読み込む」を押せないとき: 取り直しの最中・アーカイブの応答待ちの最中 (#2227 H1 の整合ゲートの指摘)
   const reloadDisabled = reloadingAfterTimeout || isClosingSession;
+  // 一覧を読めなかった一文 (#2272 S1)。会話に足した一文と同じものを、相談の一覧の画面の上にも出す (一覧の画面は会話を出さないので、
+  // 一覧を開いても古い一覧のままである理由が見えるように)。のちの一覧の読み込みが読めたら外れる (fetchSessions)
+  const sessionsLoadFailureNote = messages.find((m) => m.id === CHAT_LOAD_FAILURE_NOTE_IDS.sessions);
 
   return (
     <>
@@ -1352,6 +1471,12 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                   style={styles.body}
                   contentContainerStyle={styles.bodyContent}
                 >
+                  {/* 一覧を読めなかった一文 (#2272 S1)。見た目は応答を受け取れなかった送信の案内と同じ枠 */}
+                  {sessionsLoadFailureNote && (
+                    <View testID="ai-sessions-load-failure" style={styles.timeoutNotice}>
+                      <Text style={styles.timeoutNoticeText}>{sessionsLoadFailureNote.content}</Text>
+                    </View>
+                  )}
                   {/* 新しい相談・相談の切り替えは、「最新の会話を読み込む」の取り直しの最中・アーカイブの応答待ちの最中は止める
                       (#2227 H1・#2235 I7。送信中は止めない) */}
                   <Pressable
