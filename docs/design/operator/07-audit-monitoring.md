@@ -859,7 +859,7 @@ sequenceDiagram
 | シナリオ | 対処 |
 |---------|------|
 | 監査ログ INSERT 失敗 | 操作自体をロールバック (監査ログなしの破壊的操作は禁止) |
-| `app_logs` への記録失敗 | 握りつぶす (`console.error` に出すだけで、業務の処理は止めない。`src/lib/db-logger.ts` の `saveLog`) |
+| `app_logs` への記録失敗 | 握りつぶす (`console.error` に出すだけで、業務の処理は止めない)。ただし user_id の外部キー違反 (利用者が auth.users に無い) のときだけ、user_id を外して 1 回入れ直し、元の id を metadata (`user_id_not_in_auth_users`) に残す (`src/lib/db-logger.ts` の `saveLog`・Edge の `supabase/functions/_shared/db-logger.ts`。判定と入れ直しの行は `supabase/functions/_shared/log-sanitizer.ts` の `entryForForeignKeyRetry`。#2259 P3) |
 | Slack 通知失敗 | `app_logs` に warn で記録 |
 
 ## 13. テスト方針
