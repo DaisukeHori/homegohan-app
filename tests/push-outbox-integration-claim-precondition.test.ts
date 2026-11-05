@@ -11,6 +11,10 @@
  * #2254 M4: weekly_menu_requests にも 2000 年の行 (attempt_limit_exceeded の検査の行) を積むので、その行が目印 (prompt) を持ち、
  * 前回の残りを消す beforeAll (purgeLeftoverMenuRequests) がこのファイルの全部の目印 (LEFTOVER_REQUEST_PROMPTS) を消すことと、
  * claim_menu_request (表の全体から最も古い取れる行を 1 件取る) の戻りの行を比べないことも確かめる。
+ * #2259 P4: 目印 (prompt) を入れる前の実行が残した、目印の無い 2000 年の weekly_menu_requests の行を、持ち主のメールの頭で消す
+ * beforeAll (purgeUnmarkedLeftoverMenuRequests(LEFTOVER_USER_EMAIL_PREFIXES)) があることと、LEFTOVER_USER_EMAIL_PREFIXES が
+ * このファイルの作る利用者のメールの頭を全部含むことも確かめる (この beforeAll を消す、または引数を既定 ([OWN_USER_EMAIL_PREFIX]) にしても、
+ * purge のテストは関数を直接呼ぶので緑のままになるため)。
  *
  * 結合テストの中身を実 DB で動かす検査ではない (それは結合テストそのもの)。ソースを読み、claim の呼び出しの形を数える。
  */
@@ -159,6 +163,31 @@ describe('#2245 K6 push-outbox の結合テストの claim は表に残ったほ
     const menuClaims = source.split('\n').filter((l) => l.includes("rpc('claim_menu_request'"));
     expect(menuClaims).toHaveLength(1);
     expect(menuClaims[0]).toMatch(/^\s*const \{ error \} = await srAdmin\.rpc\('claim_menu_request', /);
+  });
+
+  it('目印の無い 2000 年の weekly_menu_requests の行は、ファイルの全部のテストの前に (トップレベルの beforeAll が) このファイルの全部の利用者のメールの頭で消す (#2259 P4)', () => {
+    expect(source).toMatch(/^beforeAll\(async \(\) => \{\n\s*await purgeUnmarkedLeftoverMenuRequests\(LEFTOVER_USER_EMAIL_PREFIXES\);\n\}/m);
+    expect(source).toMatch(/^async function purgeUnmarkedLeftoverMenuRequests\(prefixes: readonly string\[\] = \[OWN_USER_EMAIL_PREFIX\]\): Promise<void> \{/m);
+    // メールの頭の定数 (名前 → 値) と、beforeAll が消す頭 (LEFTOVER_USER_EMAIL_PREFIXES) に並べた名前
+    const prefixValues = new Map([...source.matchAll(/^const (\w+_USER_EMAIL_PREFIX) = '([^']+)';$/gm)].map((m) => [m[1], m[2]]));
+    expect([...prefixValues.keys()].sort()).toEqual(['OTHER_USER_EMAIL_PREFIX', 'OWN_USER_EMAIL_PREFIX']);
+    const leftover = /^const LEFTOVER_USER_EMAIL_PREFIXES: readonly string\[\] = \[([^\]]*)\];$/m.exec(source);
+    expect(leftover).not.toBeNull();
+    const listed = (leftover?.[1] ?? '').split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+    expect([...prefixValues.keys()].filter((name) => !listed.includes(name))).toEqual([]);
+    const listedValues = listed.map((name) => prefixValues.get(name));
+    expect(listedValues.filter((value) => value === undefined)).toEqual([]);
+    // このファイルが作る利用者 (createUser) のメールは、どれも beforeAll が消す頭のどれかで始まる
+    // (メールは `...` の形の const で組む。頭の ${定数} は値に置き換え、残った最初の ${...} より前を頭とする)
+    const emailVars = [...source.matchAll(/auth\.admin\.createUser\(\{ email(?:: (\w+))?,/g)].map((m) => m[1] ?? 'email');
+    expect(emailVars.sort()).toEqual(['email', 'otherEmail']);
+    const heads = emailVars.map((name) => {
+      const template = new RegExp(`const ${name} = \`([^\`]*)\`;`).exec(source)?.[1] ?? '';
+      const resolved = template.replace(/\$\{(\w+)\}/g, (whole: string, ref: string) => prefixValues.get(ref) ?? whole);
+      return resolved.split('${')[0];
+    });
+    expect(heads.sort()).toEqual(['rls-1136-other-push-', 'rls-1136-push-']);
+    expect(heads.filter((head) => !listedValues.some((prefix) => prefix !== undefined && head.startsWith(prefix)))).toEqual([]);
   });
 
   it('判定器は、前提を確かめない上限 1 の claim と、自分の行の数だけの claim を違反として拾う', () => {
