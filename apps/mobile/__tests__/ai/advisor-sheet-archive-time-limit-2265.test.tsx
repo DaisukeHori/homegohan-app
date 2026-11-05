@@ -322,7 +322,11 @@ describe('#2265 Q5 受け付けたあとの例外は、成功と同じく新し�
       },
     }));
     const listReadsBefore = sessionListReads();
-    await pressArchiveAndExpectLocked();
+    // 応答はすぐ返る (応答待ちの止めは同じ act のうちに下りる) ので、止めが立ったことは確かめない
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-archive-btn'));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(CLOSE_URL, expect.objectContaining({ method: 'POST' })));
 
     await waitForUnlock();
     await expectFreshSessionAfterAcceptedArchive(listReadsBefore);
@@ -332,7 +336,11 @@ describe('#2265 Q5 受け付けたあとの例外は、成功と同じく新し�
     await openSheet();
     fetchMock.mockImplementationOnce(async () => ({ ok: true, status: 200, json: async () => null }));
     const listReadsBefore = sessionListReads();
-    await pressArchiveAndExpectLocked();
+    // 応答はすぐ返る (応答待ちの止めは同じ act のうちに下りる) ので、止めが立ったことは確かめない
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-archive-btn'));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(CLOSE_URL, expect.objectContaining({ method: 'POST' })));
 
     await waitForUnlock();
     await expectFreshSessionAfterAcceptedArchive(listReadsBefore);
