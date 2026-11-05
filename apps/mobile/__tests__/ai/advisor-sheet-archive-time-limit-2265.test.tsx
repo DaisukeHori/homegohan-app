@@ -4,8 +4,13 @@
  * 直す前: アーカイブの POST は素の fetch (signal も時間切れも無い) で、応答が返らない間は closingSessionRef と isClosingSession が
  * 下りず、送信・新しい相談・相談の切り替え・アーカイブが止まったまま、アプリを開き直すまで戻らなかった。
  * いまは Web の『相談を終了』(#2259 P1) と同じ上限 (AI_CHAT_REQUEST_TIME_LIMIT_MS) で待ち、時間切れで打ち切って止めを下ろし、
- * 『失敗しました』と言い切らずに相談の一覧で確かめてもらう一文を出す。受け付けたあとの本文の読み取りの時間切れは何も出さない
- * (Web と同じ)。上限の値が Web と同じことは tests/mobile-ai-archive-time-limit-2265.test.ts (ルートの vitest) が確かめる。
+ * 『失敗しました』と言い切らずに相談の一覧で確かめてもらう一文を出す。上限の値が Web と同じことは
+ * tests/mobile-ai-archive-time-limit-2265.test.ts (ルートの vitest) が確かめる。
+ *
+ * #2265 Q5: 受け付けたあと (ok の応答) の例外 (本文の読み取りの時間切れ・本文が JSON でない など) は、Web の『相談を終了』の
+ * closeSession (#2265 Q2) と同じく、時間切れ・失敗の一文を出さず、成功のときと同じ後続 (新しい相談を作って出し、一覧を読み直す)
+ * で画面をサーバーの状態に合わせる。直す前は、時間切れでは何もせず、それ以外では『セッションのアーカイブに失敗しました。』と
+ * 言い切り、どちらもアーカイブ済みの相談が今の相談のまま残った (一覧の status も open のまま。送ると閉じた相談に保存された)。
  *
  * 上限は本物 (315 秒) を待たず、短い値に差し替える (判定と待ち方は本物の部品)。
  */
@@ -84,6 +89,12 @@ const CREATE_SESSION_ARGS = ['/api/ai/consultation/sessions', { title: 'AI相談
 
 const fetchMock = jest.fn();
 
+function abortError(): Error {
+  const error = new Error('Aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
@@ -131,6 +142,34 @@ async function pressArchiveAndExpectLocked() {
   expect(screen.getByTestId('ai-archive-btn')).toBeDisabled();
   expect(screen.getByTestId('ai-new-session')).toBeDisabled();
   expect(screen.getByTestId(`ai-session-${OTHER_SESSION.id}`)).toBeDisabled();
+}
+
+/** 相談の一覧を読んだ回数 */
+const sessionListReads = () =>
+  mockGet.mock.calls.filter(([requestPath]) => String(requestPath).startsWith('/api/ai/consultation/sessions?status=all')).length;
+
+/**
+ * 受け付けたあとの例外のあと (#2265 Q5): 時間切れ・失敗の一文を出さず、新しい相談を 1 つだけ作り、一覧を読み直して、
+ * アーカイブ済みの相談の会話を消し、続けて送ると新しい相談へ送る (閉じた相談へは送らない)
+ */
+async function expectFreshSessionAfterAcceptedArchive(listReadsBefore: number) {
+  await waitFor(() => expect(createSessionCalls()).toHaveLength(1));
+  expect(sessionListReads()).toBeGreaterThan(listReadsBefore);
+  expect(alertCalls().some(([, message]) => message === ARCHIVE_SESSION_TIMEOUT_MESSAGE)).toBe(false);
+  expect(alertCalls().some(([, message]) => message === ARCHIVE_FAILED_MESSAGE)).toBe(false);
+  await waitFor(() => expect(screen.queryByText('野菜を足しましょう')).toBeNull());
+
+  await waitFor(() => expect(screen.getByTestId('ai-input').props.editable).toBe(true));
+  fireEvent.changeText(screen.getByTestId('ai-input'), SENT_TEXT);
+  fetchMock.mockRejectedValueOnce(new Error('send failed'));
+  await waitFor(() => expect(screen.getByTestId('ai-send-btn')).not.toBeDisabled());
+  await act(async () => {
+    fireEvent.press(screen.getByTestId('ai-send-btn'));
+  });
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(NEW_SESSION_SEND_URL, expect.anything()));
+  expect(sentUrls()).not.toContain(OLD_SESSION_SEND_URL);
+  // 新しい相談の作成は 1 回だけ (成功の後続と例外の後続を重ねない)
+  expect(createSessionCalls()).toHaveLength(1);
 }
 
 /** 上限を過ぎて止めが下りるのを待つ (アーカイブのボタンがまた押せる) */
@@ -237,16 +276,62 @@ describe('#2265 Q1 アーカイブの応答が返らないと、上限で止め�
     expect(screen.getByTestId('ai-new-session')).not.toBeDisabled();
   });
 
-  it('受け付けたあと (ok の応答) に本文が返らない: 上限で止めを下ろし、時間切れ・失敗の一文は出さない (Web と同じ)', async () => {
+  it('時間切れのあと「最新の会話を読み込む」がまた押せる (アーカイブの応答待ちの止めが下りる)', async () => {
+    await openSheet();
+    // 送信の応答を受け取れずに終わり、「最新の会話を読み込む」の案内が出ている
+    fetchMock.mockRejectedValueOnce(abortError());
+    fireEvent.changeText(screen.getByTestId('ai-input'), SENT_TEXT);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-send-btn'));
+    });
+    await waitFor(() => expect(screen.getByTestId('ai-timeout-notice')).toBeTruthy());
+
+    fetchMock.mockImplementationOnce(() => new Promise<never>(() => {}));
+    await pressArchiveAndExpectLocked();
+    expect(screen.getByTestId('ai-timeout-reload')).toBeDisabled();
+
+    await waitForUnlock();
+    expect(screen.getByTestId('ai-timeout-reload')).not.toBeDisabled();
+  });
+});
+
+describe('#2265 Q5 受け付けたあとの例外は、成功と同じく新しい相談を出して一覧を読み直す (Web の #2265 Q2 と同じ)', () => {
+  it('受け付けたあと (ok の応答) に本文が返らない: 上限で止めを下ろし、時間切れ・失敗の一文は出さず、新しい相談を出して一覧を読み直す', async () => {
     await openSheet();
     fetchMock.mockImplementationOnce(async () => ({ ok: true, status: 200, json: () => new Promise<never>(() => {}) }));
+    const listReadsBefore = sessionListReads();
     await pressArchiveAndExpectLocked();
 
     await waitForUnlock();
-    expect(alertCalls().some(([, message]) => message === ARCHIVE_SESSION_TIMEOUT_MESSAGE)).toBe(false);
-    expect(alertCalls().some(([, message]) => message === ARCHIVE_FAILED_MESSAGE)).toBe(false);
-    expect(createSessionCalls()).toHaveLength(0);
-    expect(screen.getByTestId('ai-new-session')).not.toBeDisabled();
+    // 本文の読み取りは上限で打ち切った
+    expect(closeSignal()?.aborted).toBe(true);
+    await expectFreshSessionAfterAcceptedArchive(listReadsBefore);
+  });
+
+  it('受け付けたあと (ok の応答) に本文が JSON でない: 失敗の一文は出さず、新しい相談を出して一覧を読み直す', async () => {
+    await openSheet();
+    fetchMock.mockImplementationOnce(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON at position 0');
+      },
+    }));
+    const listReadsBefore = sessionListReads();
+    await pressArchiveAndExpectLocked();
+
+    await waitForUnlock();
+    await expectFreshSessionAfterAcceptedArchive(listReadsBefore);
+  });
+
+  it('新しい相談を出したあとに要約の応答の形が崩れていた (本文が null): 新しい相談を作り直さず、失敗の一文も出さない', async () => {
+    await openSheet();
+    fetchMock.mockImplementationOnce(async () => ({ ok: true, status: 200, json: async () => null }));
+    const listReadsBefore = sessionListReads();
+    await pressArchiveAndExpectLocked();
+
+    await waitForUnlock();
+    await expectFreshSessionAfterAcceptedArchive(listReadsBefore);
   });
 });
 
