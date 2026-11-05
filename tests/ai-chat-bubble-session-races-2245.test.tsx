@@ -2639,9 +2639,12 @@ describe('#2259 P1 1 1日献立の依頼の POST が同意以外で失敗して�
 
   it('依頼の応答が上限 (AI_CHAT_REQUEST_TIME_LIMIT_MS) までに返らないと、打ち切って止めを下ろし、献立表で確かめる一文を出す (失敗と言い切らない)', async () => {
     let requestSignal: AbortSignal | null = null;
+    // ブラウザの fetch と同じく、打ち切られたら AbortError で失敗する
     handlers[GENERATE_KEY] = (_url, init) => {
       requestSignal = init?.signal ?? null;
-      return new Promise<Response>(() => {});
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('The user aborted a request.', 'AbortError')));
+      });
     };
     await openChat();
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
@@ -2690,11 +2693,13 @@ describe('#2259 P1 2 止め (『相談を終了』・新しい相談・切り替
   /** 作成を始めた時刻 (偽の Date。順番待ち・読めないまま DAY_MENU_REQUEST_GIVE_UP_MS が過ぎたかを見る) */
   const DAY_MENU_STARTED_AT = new Date('2026-11-05T03:00:00.000Z');
 
-  /** 応答を返さない (打ち切りの signal を記録する) */
+  /** 応答を返さない (打ち切りの signal を記録する。ブラウザの fetch と同じく、打ち切られたら AbortError で失敗する) */
   function never(signals: AbortSignal[]): FetchHandler {
     return (_url, init) => {
       if (init?.signal) signals.push(init.signal);
-      return new Promise<Response>(() => {});
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('The user aborted a request.', 'AbortError')));
+      });
     };
   }
 

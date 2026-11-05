@@ -113,9 +113,12 @@ describe('useV4MenuGeneration: 依頼が受け付けられなかったら作成�
   it('timeLimitMs を渡すと、上限までに応答が返らなければ打ち切り、時間切れの文で失敗にして印を下ろす', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     let signal: AbortSignal | null = null;
+    // ブラウザの fetch と同じく、打ち切られたら AbortError で失敗する (それでも時間切れの文で失敗にする)
     fetchMock.mockImplementation((_input, init) => {
       signal = init?.signal ?? null;
-      return new Promise<Response>(() => {});
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('The user aborted a request.', 'AbortError')));
+      });
     });
     let thrown: unknown = null;
     let pending: Promise<unknown> = Promise.resolve();
