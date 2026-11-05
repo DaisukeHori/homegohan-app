@@ -544,8 +544,8 @@ type SessionsLoad =
 
 /**
  * 新しい相談の作成の応答が返らなかったあとに読み直した一覧 (sessions) から、作成を始める前に見えていた相談 (knownIds。一覧に出た相談と、
- * この画面で作れて出した相談。#2272 S2) に無い、終了していない・メッセージの無い相談を探す (#2265 Q2。作成はサーバーで済んでいることが
- * ある)。一覧は更新の新しい順なので、先頭の 1 つを選ぶ
+ * この画面で作れた相談 (作成の応答を受けた相談。画面に出したかに関わらない。#2272 S2・#2275 T1)) に無い、終了していない・メッセージの
+ * 無い相談を探す (#2265 Q2。作成はサーバーで済んでいることがある)。一覧は更新の新しい順なので、先頭の 1 つを選ぶ
  */
 function sessionCreatedSince(sessions: readonly Session[], knownIds: ReadonlySet<string>): Session | undefined {
   return sessions.find((s) => !knownIds.has(s.id) && s.status !== 'closed' && s.messageCount === 0);
@@ -1432,8 +1432,8 @@ export default function AIChatBubble() {
     const startedAt = startViewOperation();
     // 作成の結果を画面に置きうるのは、作成を待つ間にほかの画面の操作が無かったときだけ (#2259 P1。読み込み中の印の数え方)
     const loading = beginLoading(() => viewGenRef.current === startedAt);
-    // 作成を始める前に一覧で見えていた・この画面で作れて出した相談 (#2265 Q2・#2272 S2。作成の応答が返らなかったときに、読み直した
-    // 一覧から作れていた相談を見つける)
+    // 作成を始める前に見えていた相談: 一覧に出た相談と、この画面で作れた相談 (作成の応答を受けた相談。画面に出したかに関わらない。
+    // #2265 Q2・#2272 S2・#2275 T1。作成の応答が返らなかったときに、読み直した一覧から作れていた相談を見つける)
     const knownSessionIds: ReadonlySet<string> = new Set(listedSessionIdsRef.current);
     // 作成の応答が返らなかったあとの一覧の読み直しが読めたか (#2272 S2)
     let sessionsReloaded = false;
