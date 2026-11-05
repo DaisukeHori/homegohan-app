@@ -339,9 +339,22 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const unconfirmedSendsRef = useRef<UnconfirmedSend[]>([]);
   const claimedSavedUserIdsRef = useRef<string[]>([]);
 
-  /** 画面の操作を 1 つ始める (最新の画面の操作の番号を進める。#2227 H1) */
-  function startViewOperation() {
+  /** 画面の操作を 1 つ始める (最新の画面の操作の番号を進める。#2227 H1)。進めたあとの番号を返す (#2254 M1) */
+  function startViewOperation(): number {
     viewGenRef.current += 1;
+    return viewGenRef.current;
+  }
+  // 最後に始めた相談の一覧の読み込みの番号 (#2254 M1。Web の AIChatBubble の sessionsRequestSeqRef と同じ決まり)。一覧は応答の順で
+  // なく、最後に始めた読み込みの応答だけを置く (アーカイブの前に始めた開き直しの一覧が、アーカイブのあとの読み直しより後に返ると、
+  // 閉じた相談が終了でない一覧が出た)
+  const sessionsRequestSeqRef = useRef(0);
+  /** 相談の一覧の読み込みを 1 つ始め、その応答を置く関数を返す (置くのは、これが最後に始めた読み込みのときだけ) */
+  function startSessionsRequest(): (sessions: Session[]) => void {
+    sessionsRequestSeqRef.current += 1;
+    const requestSeq = sessionsRequestSeqRef.current;
+    return (loaded) => {
+      if (sessionsRequestSeqRef.current === requestSeq) setSessions(loaded);
+    };
   }
 
   // 出す相談を変える (画面の操作)。切り替えたら、流れの途中の本文 (streamingContent) も消す (#2227 H1。前の相談の返答の断片を
@@ -441,11 +454,12 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     setTimedOutSend(null);
     try {
       const api = getApi();
+      const applySessions = startSessionsRequest();
       const res = await api.get<{ sessions: Session[] }>(
         "/api/ai/consultation/sessions?status=all"
       );
       const allSessions = res.sessions ?? [];
-      setSessions(allSessions);
+      applySessions(allSessions);
       // 一覧を待つ間にアーカイブを始めた・ほかの画面の操作 (アーカイブのあとの新しい相談・相談の切り替え・送信) があった: 出す相談を
       // 変えない (#2245 K1。変えると、アーカイブのあとの新しい相談や選んだ相談を、一覧を読んだ時点の相談で上書きする)
       if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
@@ -748,22 +762,28 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   async function createNewSession() {
     // 取り直しの最中は始めない (#2227 H1。ボタンも止めている。同じ描画のうちの 2 度目の押下を止める)
     if (reloadingRef.current) return;
+    // 作るのも画面の操作 (#2254 M1。Web の AIChatBubble の createNewSession と同じ)。作成を待つ間にほかの画面の操作 (相談の切り替え・
+    // 開き直し・別の新しい相談) があったら、その画面を作った相談で上書きしない (最後の操作が勝つ。作った相談はサーバーに残り、
+    // 次に一覧を読んだときに出る)
+    const startedAt = startViewOperation();
     try {
       const api = getApi();
       const createRes = await api.post<{
         success: boolean;
         session: { id: string };
       }>("/api/ai/consultation/sessions", { title: "AI相談" });
+      if (viewGenRef.current !== startedAt) return;
       showSessionId(createRes.session.id);
       setMessages([WELCOME_MESSAGE]);
       // 案内を外すだけ (#2227 H1。確かめていない送信は入れ物に積んである。作成を待つ間に終わった送信も同じ)
       setTimedOutSend(null);
       setShowSessionList(false);
       // セッション一覧を更新
+      const applySessions = startSessionsRequest();
       const res = await api.get<{ sessions: Session[] }>(
         "/api/ai/consultation/sessions?status=all"
       );
-      setSessions(res.sessions ?? []);
+      applySessions(res.sessions ?? []);
     } catch {
       Alert.alert("エラー", "新しいセッションの作成に失敗しました。");
     }
@@ -783,10 +803,11 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   async function fetchSessions() {
     try {
       const api = getApi();
+      const applySessions = startSessionsRequest();
       const res = await api.get<{ sessions: Session[] }>(
         "/api/ai/consultation/sessions?status=all"
       );
-      setSessions(res.sessions ?? []);
+      applySessions(res.sessions ?? []);
     } catch {
       // 取得失敗は無視
     }

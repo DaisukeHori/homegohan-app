@@ -500,6 +500,25 @@ export default function AIChatBubble() {
   const [isClosingSession, setIsClosingSession] = useState(false);
   const [isToggling, setIsToggling] = useState(false); // #125: 連続クリック防止フラグ
   const [showDayMenuModal, setShowDayMenuModal] = useState(false);
+  // 1日献立の作成の最中 (チャットに『○月○日の献立を作成中...』を足してから、完了・失敗の一文を足すまで) か・提案の実行の API の
+  // 応答待ちの最中か (#2254 M1)。この間は『相談を終了』を止める (止めないと、閉じたあとの新しい相談の画面の置き換え (createNewSession)
+  // で作成中の一文が消え、完了・実行の結果の一文だけが新しい相談の画面に出た。#2245 K1 が直した向き (閉じる応答待ちの間の作成) の逆)。
+  // 同意の確認を待つ間は入れない (その間に閉じるを押したら閉じる側が勝ち、作成・実行をしない。#2245 K1)。
+  // 作成の最中をフックの isGenerating で見ないのは、依頼が失敗した (onError) あともフックの isGenerating が真のまま残り、閉じるが
+  // ずっと押せなくなるため (作成の最中は、ここで始まりと終わり (完了・失敗) を自分で持つ)。
+  // ref でも持つのは、ボタンを止める描画を待たずに今の値を見て、同じ描画のうちの押下も止めるため (closingSessionRef と同じ形)
+  const [isDayMenuInFlight, setIsDayMenuInFlight] = useState(false);
+  const dayMenuInFlightRef = useRef(false);
+  const [isActionRequestInFlight, setIsActionRequestInFlight] = useState(false);
+  const actionRequestInFlightRef = useRef(false);
+  const markDayMenuInFlight = (inFlight: boolean) => {
+    dayMenuInFlightRef.current = inFlight;
+    setIsDayMenuInFlight(inFlight);
+  };
+  const markActionRequestInFlight = (inFlight: boolean) => {
+    actionRequestInFlightRef.current = inFlight;
+    setIsActionRequestInFlight(inFlight);
+  };
   // FAB ドラッグ位置 (right/bottom px)
   const [fabPosition, setFabPosition] = useState<{ x: number; y: number }>(() => {
     if (typeof window === 'undefined') return { x: 16, y: 96 };
@@ -543,6 +562,8 @@ export default function AIChatBubble() {
     subscribeToProgress,
   } = useV4MenuGeneration({
     onGenerationComplete: () => {
+      // 作成が終わった: 『相談を終了』をまた押せる (#2254 M1)
+      markDayMenuInFlight(false);
       setV4Progress(null);
       notifyMenuGenerated();
       // 成功メッセージをチャットに追加
@@ -558,6 +579,8 @@ export default function AIChatBubble() {
       }));
     },
     onError: (error) => {
+      // 作成が失敗した (依頼の失敗・進捗の失敗): 『相談を終了』をまた押せる (#2254 M1)
+      markDayMenuInFlight(false);
       setV4Progress(null);
       // 生成を受け付けたあとに、サーバーが同意の判定で止めた (未同意。T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内する。
       // 同期で止められたとき (下の catch) と同じ一文だけを出し、失敗の文は出さない
@@ -602,9 +625,37 @@ export default function AIChatBubble() {
    * 見て、前の相談の会話を今の画面に置く。モバイルの AIAdvisorSheet の showSessionId と同じ)
    */
   const showSessionId = (sessionId: string | null) => {
+    // 出す相談を変えるのも画面の操作 (#2254 M1。前に始めた開く (openChat)・新しい相談の作成の結果で、この相談を上書きさせない)
+    startViewOperation();
     currentSessionIdRef.current = sessionId;
     setCurrentSessionId(sessionId);
   };
+  // 最新の画面の操作の番号 (#2254 M1。モバイルの AIAdvisorSheet の viewGenRef と同じ決まり)。チャットを開く (openChat)・新しい相談を
+  // 作る (createNewSession)・出す相談を変える (showSessionId) たびに 1 つ進める。開く・作るは始めたときの番号を持ち、一覧・作成の応答が
+  // 返ったときに番号が進んでいれば、出す相談と会話を変えない (最後の操作が勝つ)。以前は開く側が閉包の古い currentSessionId を見て、
+  // 一覧を待つ間に始めた新しい相談・選んだ相談を、一覧を読んだ時点の相談で上書きした
+  const viewGenRef = useRef(0);
+  /** 画面の操作を 1 つ始め、その番号を返す */
+  function startViewOperation(): number {
+    viewGenRef.current += 1;
+    return viewGenRef.current;
+  }
+  // 最後に始めた一覧の読み込み (fetchSessions) の番号 (#2254 M1)。一覧は応答の順でなく、最後に始めた読み込みの応答だけを置く
+  // (閉じる応答待ちの前に始めた一覧が、閉じる側の読み直しより後に返ると、閉じた相談が終了でない一覧が出た)
+  const sessionsRequestSeqRef = useRef(0);
+  // 最後に始めた読み込み中の印 (isLoading) の番号 (#2254 M1)。印を下ろすのは最後に始めた読み込み (会話の読み込み・新しい相談の作成)
+  // が終わったときだけ (前の相談の遅れた読み込みが終わったときに、今の読み込みの最中の印を早く消さない)
+  const loadingSeqRef = useRef(0);
+  /** 読み込み中の印を立て、その読み込みの番号を返す */
+  const beginLoading = useCallback((): number => {
+    loadingSeqRef.current += 1;
+    setIsLoading(true);
+    return loadingSeqRef.current;
+  }, []);
+  /** 読み込み (seq) が終わった: それが最後に始めた読み込みなら印を下ろす */
+  const endLoading = useCallback((seq: number) => {
+    if (loadingSeqRef.current === seq) setIsLoading(false);
+  }, []);
   // 届いたかを確かめられなかった送信 (取り直せなかった・送った文が見つからなかった) と、送信に当てた送った文の保存行の id (#2227 H1)。
   // 後の取り直しで前の送信の保存行が見つかったら、入力欄に戻した文を消し (届いていたのにそのまま送ると二重に届く)、今回の送信の
   // 保存行を探すときはそれを除く (同じ文を続けて送ったときに、前の送信の保存行を今回の送信と取り違えない)。決まりは共有の
@@ -740,6 +791,8 @@ export default function AIChatBubble() {
   // セッション一覧取得
   // 戻り値: null = 未認証, Session[] = セッション一覧 (空配列含む)
   const fetchSessions = useCallback(async (): Promise<Session[] | null> => {
+    sessionsRequestSeqRef.current += 1;
+    const requestSeq = sessionsRequestSeqRef.current;
     try {
       const res = await fetch('/api/ai/consultation/sessions?status=all');
       if (res.status === 401) {
@@ -750,7 +803,9 @@ export default function AIChatBubble() {
         setIsAuthenticated(true);
         const data = await res.json();
         const fetched: Session[] = data.sessions || [];
-        setSessions(fetched);
+        // 一覧を置くのは、これが最後に始めた一覧の読み込みのときだけ (#2254 M1。あとに始めた読み込みのほうが新しい)。
+        // 呼び出し側 (openChat) には返す (出す相談を決めるかは、画面の操作の番号で呼び出し側が決める)
+        if (sessionsRequestSeqRef.current === requestSeq) setSessions(fetched);
         return fetched;
       }
       return null;
@@ -765,7 +820,7 @@ export default function AIChatBubble() {
   // 確かめられなかった送信の settle は、今の相談でなくても行う (その相談の写しで届いたかが分かる。入力欄に触るのは今の相談のときだけ)。
   // 決まりはモバイルの AIAdvisorSheet の loadMessages と同じ
   const fetchMessages = useCallback(async (sessionId: string) => {
-    setIsLoading(true);
+    const loading = beginLoading();
     // この読み込みで忘れてよいのは、読み込みを始める前に積んであった送信だけ (#2235 I1。読み込みの最中に終わった取り直しが積んだ
     // 送信は、GET の写しより後に保存されうるので、写しに無くても忘れない。モバイルの AIAdvisorSheet の loadMessages と同じ)
     const forgettable = [...unconfirmedSendsRef.current];
@@ -786,9 +841,11 @@ export default function AIChatBubble() {
     } catch (e) {
       console.error('Failed to fetch messages:', e);
     } finally {
-      setIsLoading(false);
+      // 印を下ろすのは、これが最後に始めた読み込みのときだけ (#2254 M1。A→B と切り替えたあとに遅れて終わった A の読み込みが、
+      // B の読み込みの最中の印を消さない)
+      endLoading(loading);
     }
-  }, [settleUnconfirmedSends]);
+  }, [settleUnconfirmedSends, beginLoading, endLoading]);
 
   // チャットを開く
   // Bug-6: 隣接 UI からの誤クリックでチャットが意図せず開くのを防ぐため、
@@ -813,24 +870,29 @@ export default function AIChatBubble() {
       // 相談を閉じる (/close) の応答待ちの間は、会話を読み込まない (#2245 K1。閉じる側が応答のあと一覧を読み直し、新しい相談を出す。
       // ここで読み込むと、閉じたあとの新しい相談の画面を、遅れて返った閉じた相談の会話や一覧で上書きしうる)。開くだけはする
       if (closingSessionRef.current) return;
+      // 開くのも画面の操作 (#2254 M1)。一覧を待つ間にほかの画面の操作があったかを、この番号で見る
+      const startedAt = startViewOperation();
       const fetchedSessions = await fetchSessions();
 
       if (fetchedSessions === null) {
         return; // 認証されていない場合は何もしない
       }
-      // 一覧を待つ間に閉じるを押した: 読み込みは閉じる側に任せる (#2245 K1。上と同じ)
-      if (closingSessionRef.current) return;
+      // 一覧を待つ間に閉じるを押した: 読み込みは閉じる側に任せる (#2245 K1。上と同じ)。
+      // 一覧を待つ間にほかの画面の操作 (新しい相談・相談の切り替え・開き直し) があった: 出す相談を変えず、会話も読み込まない
+      // (#2254 M1。最後の操作が勝つ。以前は閉包の古い currentSessionId を見て、始めた新しい相談を一覧の相談で上書きした)
+      if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
 
       // 既存のアクティブセッションがあればそれを使う、なければ新規作成
-      // ※ fetchSessions() の返り値を直接参照（stale state 回避）
-      if (fetchedSessions.length > 0 && !currentSessionId) {
+      // ※ fetchSessions() の返り値を直接参照（stale state 回避）。今出している相談も閉包の state でなく ref で見る (#2254 M1)
+      const shownSessionId = currentSessionIdRef.current;
+      if (fetchedSessions.length > 0 && !shownSessionId) {
         const activeSession = fetchedSessions.find(s => s.messageCount > 0) || fetchedSessions[0];
         showSessionId(activeSession.id);
         await fetchMessages(activeSession.id);
-      } else if (!currentSessionId) {
+      } else if (!shownSessionId) {
         await createNewSession();
       } else {
-        await fetchMessages(currentSessionId);
+        await fetchMessages(shownSessionId);
       }
     } finally {
       // #125: アニメーション完了まで少し待ってからフラグを解除
@@ -852,16 +914,20 @@ export default function AIChatBubble() {
 
   // 新規セッション作成 (「新しい相談を始める」の押下 pressNewSession・チャットを開いたとき・相談を閉じたあとから呼ぶ)
   const createNewSession = async () => {
-    setIsLoading(true);
+    // 作るのも画面の操作 (#2254 M1)。作成を待つ間にほかの画面の操作 (相談の切り替え・開き直し・別の新しい相談) があったら、
+    // その画面を作った相談で上書きしない (最後の操作が勝つ。作った相談はサーバーに残り、次に一覧を読んだときに出る)
+    const startedAt = startViewOperation();
+    const loading = beginLoading();
     try {
       const res = await fetch('/api/ai/consultation/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: 'AI相談' }),
       });
-      
+
       if (res.ok) {
         const data = await res.json();
+        if (viewGenRef.current !== startedAt) return;
         showSessionId(data.session.id);
         setMessages([]);
         setShowSessionList(false);
@@ -876,7 +942,7 @@ export default function AIChatBubble() {
       } else {
         // #1148: AI 相談の緊急停止中は、サーバーのやさしい文面を出す (入力しても送れないので、セッションは作らない)
         const unavailableMessage = await readAiChatUnavailableMessage(res);
-        if (unavailableMessage) {
+        if (unavailableMessage && viewGenRef.current === startedAt) {
           showSessionId(null);
           setMessages([{
             id: 'unavailable',
@@ -889,7 +955,7 @@ export default function AIChatBubble() {
     } catch (e) {
       console.error('Failed to create session:', e);
     } finally {
-      setIsLoading(false);
+      endLoading(loading);
     }
   };
 
@@ -1375,6 +1441,8 @@ export default function AIChatBubble() {
       if ((await ensureAiConsent()) === 'declined') return;
       // 同意の確認を待つ間に相談を閉じ始めた: 実行しない (#2245 K1。上と同じ)
       if (closingSessionRef.current) return;
+      // ここから応答 (結果の一文) までは『相談を終了』を止める (#2254 M1。finally で下ろす)
+      markActionRequestInFlight(true);
 
       // まずアクションログを取得
       const res = await aiFetch(`/api/ai/consultation/actions/${messageId}/execute`, {
@@ -1443,6 +1511,7 @@ export default function AIChatBubble() {
       ]);
     } finally {
       setExecutingActionId(null);
+      markActionRequestInFlight(false);
     }
   };
 
@@ -1516,6 +1585,9 @@ export default function AIChatBubble() {
     // 送信中も閉じない (#2235 I8。送信の返答は閉じた相談にだけ保存され、閉じたあとの新しい相談の画面には出ない。ボタンも止めている。
     // ref で見るのは、同じ描画のうちの 2 度目の押下・送信と同じ描画のうちの押下も止めるため)
     if (!currentSessionId || isClosingSession || closingSessionRef.current || isSending || sendingRef.current) return;
+    // 1日献立の作成の最中・提案の実行の応答待ちの最中も閉じない (#2254 M1。閉じたあとの新しい相談の画面の置き換えで、作成中の一文が
+    // 消え、完了・結果の一文だけが新しい相談の画面に出る。ボタンも止めている。ref で見るのは、同じ描画のうちの押下も止めるため)
+    if (dayMenuInFlightRef.current || actionRequestInFlightRef.current) return;
 
     closingSessionRef.current = true;
     setIsClosingSession(true);
@@ -1608,6 +1680,8 @@ export default function AIChatBubble() {
     if ((await ensureAiConsent()) === 'declined') return;
     // 同意の確認を待つ間に相談を閉じ始めた: 作らない (#2245 K1。上と同じ)
     if (closingSessionRef.current) return;
+    // ここから作成が終わる (完了・失敗の一文を足す) までは『相談を終了』を止める (#2254 M1。作成中の一文を閉じたあとの置き換えで消さない)
+    markDayMenuInFlight(true);
 
     // 日付をフォーマット (#2235 I3。選んだ暦日 (YYYY-MM-DD) の年月日を formatDateJa で読む。以前の new Date(selectedDate) は
     // UTC の 0 時の瞬間を端末のローカル時刻 (getMonth / getDate) で読んでいたので、端末が UTC より西だと前の日になった)
@@ -1644,8 +1718,13 @@ export default function AIChatBubble() {
             setV4Progress(progress.message);
           }
         });
+      } else {
+        // 進捗を追えない (完了・失敗が届かない): 『相談を終了』の止めを下ろす (#2254 M1。ずっと止めない)
+        markDayMenuInFlight(false);
       }
     } catch (e: any) {
+      // 依頼が失敗した (同意で止められたときも): 作成は始まっていないので『相談を終了』の止めを下ろす (#2254 M1)
+      markDayMenuInFlight(false);
       if (e instanceof AiConsentRequiredError) {
         // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する。作成中の表示を打ち消しておく
         setMessages(prev => [...prev, {
@@ -1673,6 +1752,9 @@ export default function AIChatBubble() {
 
   // 送信・入力・おすすめの質問を止めるか: 送信中・相談を閉じる応答待ちの最中 (#2235 I8)
   const inputLocked = isSending || isClosingSession;
+  // 『相談を終了』を止めるか: 閉じる応答待ち・送信中 (#2235 I8)・1日献立の作成の最中・提案の実行の応答待ちの最中 (#2254 M1)・相談が無い
+  const closeSessionLocked =
+    isClosingSession || isSending || isDayMenuInFlight || isActionRequestInFlight || !currentSessionId;
   // 1 日分の献立の日付の欄の下限 (JST の今日) と上限 (その 14 日後)。時計は 1 回だけ読む (#2235 I8。以前は下限と上限で別々に読み、
   // 上限は端末の 0 時の Date を setDate でずらしていた)。上限を暦の計算で扱えない日は、上限を付けない
   const dayMenuRange = showDayMenuModal ? dayMenuDateRangeOf(todayLocal()) : null;
@@ -1803,7 +1885,7 @@ export default function AIChatBubble() {
               <div className="flex items-center gap-1">
                 <button
                   onClick={closeSession}
-                  disabled={isClosingSession || isSending || !currentSessionId}
+                  disabled={closeSessionLocked}
                   className="p-2 rounded-full hover:bg-gray-100"
                   title="相談を終了して要約を保存"
                 >

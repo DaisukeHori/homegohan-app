@@ -9,8 +9,12 @@
  *      (c) アーカイブの応答待ちの間にシートを閉じて開き直すと、開き直し (initSession) がアーカイブの応答待ちを見ずに読み込み、
  *          アーカイブのあとの新しい相談の画面を、閉じた相談の会話で上書きした (一覧を待つ間にアーカイブしたときも同じ)
  *   2. 「1日献立変更」に disabled が無く、送信中・アーカイブの応答待ちの間も押せた。モーダルの「作成する」も止めなかった
+ *   3. (#2254 M1。Web の AIChatBubble と同じ型) 遅れて返った読み込みが、あとの操作の画面を上書きした (どれも表示だけ)
+ *      (a) 新しい相談の作成 (createNewSession) は、作成を待つ間に選んだ相談を作った相談で上書きした
+ *      (b) 相談の一覧は応答の順に置き、アーカイブの前に始めた開き直しの一覧が、アーカイブのあとの読み直しより後に返ると、
+ *          閉じた相談が終了でない一覧が出た
  */
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 
 const mockGet = jest.fn();
@@ -351,5 +355,69 @@ describe('#2245 K1 2 1日献立のモーダルの「作成する」は、開い�
       fireEvent.press(screen.getByText('作成する'));
     });
     await waitFor(() => expect(dayMenuGenerateCalls()).toHaveLength(1));
+  });
+});
+
+describe('#2254 M1 遅れて返った読み込みは、あとの操作の画面を上書きしない (最後の操作が勝つ)', () => {
+  it('(a) 新しい相談の作成を待つ間に相談を選んだら、作成のあとも選んだ相談のまま', async () => {
+    await openSheet();
+    const create = deferred<{ success: boolean; session: { id: string } }>();
+    mockPost.mockImplementationOnce(() => create.promise);
+    fireEvent.press(screen.getByTestId('ai-toggle-sessions'));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-new-session'));
+    });
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith('/api/ai/consultation/sessions', { title: 'AI相談' }));
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId(`ai-session-${OTHER_SESSION.id}`));
+    });
+    await waitFor(() => expect(screen.getByText(OTHER_REPLY_TEXT)).toBeTruthy());
+
+    await act(async () => {
+      create.resolve({ success: true, session: { id: NEW_SESSION_ID } });
+    });
+    await flush();
+
+    expect(screen.getByText(OTHER_REPLY_TEXT)).toBeTruthy();
+    expect(screen.queryByTestId('ai-quick-0')).toBeNull();
+  });
+
+  it('(b) アーカイブの前に始めた開き直しの一覧が、アーカイブのあとの読み直しより後に返っても、閉じた相談を終了の一覧で出す', async () => {
+    const view = await openSheet();
+    view.rerender(<AIAdvisorSheet visible={false} onClose={jest.fn()} />);
+    const sessionsBefore = sessionsGetCount();
+    const reopenSessions = holdGet<{ sessions: Array<typeof SESSION> }>(SESSIONS_PATH);
+    view.rerender(<AIAdvisorSheet visible onClose={jest.fn()} />);
+    await waitFor(() => expect(sessionsGetCount()).toBe(sessionsBefore + 1));
+
+    // アーカイブのあとの読み直しの一覧 (閉じた相談は終了)
+    const defaultGet = mockGet.getMockImplementation()!;
+    mockGet.mockImplementation(async (requestPath: string) => {
+      if (requestPath.startsWith(SESSIONS_PATH)) return { sessions: [{ ...SESSION, status: 'closed' }, OTHER_SESSION] };
+      return defaultGet(requestPath);
+    });
+    await pressArchive();
+    await waitForNewSession();
+    await waitFor(() => expect(sessionsGetCount()).toBe(sessionsBefore + 2));
+
+    // アーカイブの前に始めた開き直しの一覧 (閉じた相談がまだ終了でない) が後から返る
+    await act(async () => {
+      reopenSessions.resolve({ sessions: [SESSION, OTHER_SESSION] });
+    });
+    await flush();
+
+    fireEvent.press(screen.getByTestId('ai-toggle-sessions'));
+    expect(within(screen.getByTestId(`ai-session-${SESSION.id}`)).getByText('終了')).toBeTruthy();
+  });
+
+  it('対照: 作成を待つ間に何もしなければ、作った相談を出す', async () => {
+    await openSheet();
+    fireEvent.press(screen.getByTestId('ai-toggle-sessions'));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-new-session'));
+    });
+    await waitForNewSession();
+    expect(screen.queryByText(MAIN_REPLY_TEXT)).toBeNull();
   });
 });
