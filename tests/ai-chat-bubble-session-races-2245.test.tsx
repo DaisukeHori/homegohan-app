@@ -65,6 +65,13 @@
  *          実行・作成の一文が出えた。あとに始めた読み込みが失敗すると先に成功した写しも捨てた。読み込みの最中に足した『相談を終了』の
  *          失敗の一文が、同じ相談を選び直すと一度も出ずに消えた。閉じるは入口で画面の操作を進めず、先に始めた新しい相談の作成の
  *          結果が閉じた相談の失敗の一文の前に画面を置き換えた
+ *  13. (#2265 Q2) 読み込みの時間切れの一文・相談が無いときの 1日献立の理由の一文・まれな縁
+ *      (1) 一覧・会話の読み込みと新しい相談の作成が時間切れ (AI_CHAT_LOAD_TIMEOUT_MS)・非 ok のとき、console.error だけで何も出さず、
+ *          初めて開いたときの会話の読み込みが返らないと履歴の無い画面のまま、新しい相談の作成が返らないと相談の無い画面のまま
+ *          送信も『相談を終了』も押せなかった (サーバーには相談ができていて、次の一覧の読み込みでやっと出た)
+ *      (2) 相談を出していない画面 (新しい相談の作成が緊急停止 (503) など) の 1日献立のモーダルで、「作成する」が理由も出ずに押せなかった
+ *      (3) 『相談を終了』を受け付けた (ok) あとに本文の読み取りが時間切れ・JSON でないと、一覧の読み直しも新しい相談の作成もせず、
+ *          サーバーで閉じた相談の画面が残った
  */
 
 import { act, createElement } from 'react';
@@ -178,6 +185,13 @@ const {
   ACTION_REQUEST_TIMEOUT_MESSAGE,
   CLOSE_SESSION_TIMEOUT_MESSAGE,
   AI_CHAT_LOAD_TIMEOUT_MS,
+  SESSIONS_LOAD_TIMEOUT_MESSAGE,
+  SESSIONS_LOAD_FAILED_MESSAGE,
+  MESSAGES_LOAD_TIMEOUT_MESSAGE,
+  MESSAGES_LOAD_FAILED_MESSAGE,
+  SESSION_CREATE_TIMEOUT_MESSAGE,
+  SESSION_CREATE_FAILED_MESSAGE,
+  DAY_MENU_NO_SESSION_MESSAGE,
 } = await import('@/components/AIChatBubble');
 const { AI_CHAT_REQUEST_TIME_LIMIT_MS } = await import('@/lib/ai/consultation-request-time-limit');
 
@@ -3093,5 +3107,586 @@ describe('#2259 P1 4 低頻度の競合 (以前からある型)', () => {
     // 直す前: 閉じるが画面の操作を進めず、作成の結果が新しい相談の画面に置き換え、そこに閉じた相談の失敗の一文が足された
     expect(text()).not.toContain(WELCOME_TEXT);
     expect(text()).toContain(MAIN_REPLY_TEXT);
+  });
+});
+
+describe('#2265 Q2 (1) 一覧・会話の読み込みと新しい相談の作成が時間切れ・失敗でも、理由と次の手の一文を出し、送信できる画面に戻す', () => {
+  /** 応答を返さない (打ち切りの signal を記録する。ブラウザの fetch と同じく、打ち切られたら AbortError で失敗する) */
+  function neverResponds(signals: AbortSignal[]): FetchHandler {
+    return (_url, init) => {
+      if (init?.signal) signals.push(init.signal);
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('The user aborted a request.', 'AbortError')));
+      });
+    };
+  }
+
+  /** 画面の文に needle が出ている回数 (同じ一文を二重に出していないかを見る) */
+  function occurrences(needle: string): number {
+    return text().split(needle).length - 1;
+  }
+
+  /** 作成の応答が返らなかったあとの一覧の読み直しで見える、サーバーで作れていた相談 (メッセージは無い) */
+  const CREATED_ON_SERVER = { id: NEW_SESSION_ID, title: 'AI相談', messageCount: 0, status: 'active' };
+
+  it('初めて開いたときの一覧の読み込みが返らないと、上限で一覧の一文を出す。開き直すと会話が出て送れる (一文は残らない)', async () => {
+    const signals: AbortSignal[] = [];
+    const listed = handlers[SESSIONS_KEY];
+    handlers[SESSIONS_KEY] = neverResponds(signals);
+    await render();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await pressFab();
+    await waitFor(() => requestCount(SESSIONS_KEY) === 1);
+
+    await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS - 1);
+    await settle();
+    expect(text()).not.toContain(SESSIONS_LOAD_TIMEOUT_MESSAGE);
+
+    await advanceFakeTime(1);
+    // 直す前: console.error だけで何も出ず、相談の無い画面のまま送れなかった
+    await waitFor(() => text().includes(SESSIONS_LOAD_TIMEOUT_MESSAGE));
+    expect(signals[0].aborted).toBe(true);
+    expect(occurrences(SESSIONS_LOAD_TIMEOUT_MESSAGE)).toBe(1);
+
+    handlers[SESSIONS_KEY] = listed;
+    await closeChatWindow();
+    await pressFab();
+    await waitFor(() => text().includes(MAIN_REPLY_TEXT) && !chatInput().disabled);
+    expect(text()).not.toContain(SESSIONS_LOAD_TIMEOUT_MESSAGE);
+  });
+
+  it('一覧の読み込みが失敗の応答 (500) なら、失敗の一文 (時間切れの一文ではない) を出す', async () => {
+    handlers[SESSIONS_KEY] = async () => json(500, { error: 'internal' });
+    await render();
+    await pressFab();
+    await waitFor(() => text().includes(SESSIONS_LOAD_FAILED_MESSAGE));
+    expect(text()).not.toContain(SESSIONS_LOAD_TIMEOUT_MESSAGE);
+  });
+
+  it('対照: 一覧の読み込みが未認証 (401) なら、一覧の一文を出さない (ログインの案内のまま)', async () => {
+    handlers[SESSIONS_KEY] = async () => json(401, { error: 'unauthorized' });
+    await render();
+    await pressFab();
+    await settle();
+    expect(requestCount(SESSIONS_KEY)).toBe(1);
+    expect(text()).not.toContain(SESSIONS_LOAD_FAILED_MESSAGE);
+    expect(text()).not.toContain(SESSIONS_LOAD_TIMEOUT_MESSAGE);
+  });
+
+  it('初めて開いたときの会話の読み込みが返らないと、上限で会話の一文を出し、送信欄と『相談を終了』が使える', async () => {
+    const signals: AbortSignal[] = [];
+    handlers[messagesKey(SESSION_ID)] = neverResponds(signals);
+    await render();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await pressFab();
+    await waitFor(() => requestCount(messagesKey(SESSION_ID)) === 1 && loadingSpinnerShown());
+
+    await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+    // 直す前: 相談は選ばれたまま、何も出ずに履歴の無い画面だった
+    await waitFor(() => text().includes(MESSAGES_LOAD_TIMEOUT_MESSAGE) && !loadingSpinnerShown());
+    expect(signals[0].aborted).toBe(true);
+    expect(chatInput().disabled).toBe(false);
+    expect(closeButton().disabled).toBe(false);
+    expect(text()).not.toContain(MESSAGES_LOAD_FAILED_MESSAGE);
+  });
+
+  it('同じ相談の会話の読み込みが 2 回続けて失敗 (500) しても、会話の一文は 1 つだけ。あとで読めたら一文は消える', async () => {
+    await openChat();
+    handlers[messagesKey(OTHER_SESSION_ID)] = async () => json(500, { error: 'internal' });
+    await openSessionList();
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => text().includes(MESSAGES_LOAD_FAILED_MESSAGE) && !loadingSpinnerShown());
+    await openSessionList();
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === 2 && !loadingSpinnerShown());
+    await settle();
+    expect(occurrences(MESSAGES_LOAD_FAILED_MESSAGE)).toBe(1);
+    expect(chatInput().disabled).toBe(false);
+
+    handlers[messagesKey(OTHER_SESSION_ID)] = async () => json(200, { messages: OTHER_MESSAGES });
+    await openSessionList();
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => text().includes(OTHER_REPLY_TEXT) && !loadingSpinnerShown());
+    expect(text()).not.toContain(MESSAGES_LOAD_FAILED_MESSAGE);
+  });
+
+  it('切り替える前の相談の会話の読み込みが遅れて時間切れになっても、切り替えた先の相談の画面に一文を出さない', async () => {
+    await openChat();
+    const signals: AbortSignal[] = [];
+    handlers[messagesKey(OTHER_SESSION_ID)] = neverResponds(signals);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await openSessionList();
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === 1);
+    await openSessionList();
+    await pressSessionRow(MAIN_SESSION_TITLE);
+    await waitFor(() => requestCount(messagesKey(SESSION_ID)) === 2 && text().includes(MAIN_REPLY_TEXT) && !loadingSpinnerShown());
+
+    await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+    await settle();
+    expect(signals[0].aborted).toBe(true);
+    expect(text()).not.toContain(MESSAGES_LOAD_TIMEOUT_MESSAGE);
+    expect(text()).toContain(MAIN_REPLY_TEXT);
+  });
+
+  it('初めて開いて相談が無いときの新しい相談の作成が返らなくても、一覧を読み直して作れていた相談を選び、送れる画面にする', async () => {
+    const signals: AbortSignal[] = [];
+    let sessionsOnServer: unknown[] = [];
+    handlers[SESSIONS_KEY] = async () => json(200, { sessions: sessionsOnServer });
+    handlers[CREATE_SESSION_KEY] = (url, init) => {
+      // 作成はサーバーで済んだが、応答が届かない
+      sessionsOnServer = [CREATED_ON_SERVER];
+      return neverResponds(signals)(url, init);
+    };
+    await render();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await pressFab();
+    await waitFor(() => requestCount(CREATE_SESSION_KEY) === 1 && loadingSpinnerShown());
+    expect(chatInput().disabled).toBe(true);
+
+    await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+    // 直す前: 相談の無い画面のまま、送信も『相談を終了』も押せなかった (作れていた相談は次の一覧の読み込みでやっと出た)
+    await waitFor(() => text().includes(WELCOME_TEXT) && !loadingSpinnerShown());
+    expect(signals[0].aborted).toBe(true);
+    expect(requestCount(SESSIONS_KEY)).toBe(2);
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(1);
+    expect(chatInput().disabled).toBe(false);
+    expect(closeButton().disabled).toBe(false);
+    expect(text()).not.toContain(SESSION_CREATE_TIMEOUT_MESSAGE);
+
+    // 選んだのは作れていた相談 (『相談を終了』はその相談を閉じる。閉じた先は確かめないので失敗の応答にしておく)
+    handlers[closeKey(NEW_SESSION_ID)] = async () => json(500, { error: 'internal' });
+    await clickClose(NEW_SESSION_ID);
+  });
+
+  it('作成の応答が返らず、読み直した一覧にも作れた相談が無ければ、作成の一文を 1 つだけ出し、前の相談の画面で送れる', async () => {
+    await openChat();
+    const signals: AbortSignal[] = [];
+    handlers[CREATE_SESSION_KEY] = neverResponds(signals);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await openSessionList();
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => requestCount(CREATE_SESSION_KEY) === 1 && loadingSpinnerShown());
+
+    await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+    await waitFor(() => text().includes(SESSION_CREATE_TIMEOUT_MESSAGE) && !loadingSpinnerShown());
+    expect(requestCount(SESSIONS_KEY)).toBe(2);
+    expect(occurrences(SESSION_CREATE_TIMEOUT_MESSAGE)).toBe(1);
+    expect(text()).toContain(MAIN_REPLY_TEXT);
+    expect(text()).not.toContain(WELCOME_TEXT);
+    expect(chatInput().disabled).toBe(false);
+  });
+
+  it('作成の応答もそのあとの一覧の読み直しも返らないときは、作成の一文だけを出す (一覧の一文と二重に出さない)', async () => {
+    await openChat();
+    const signals: AbortSignal[] = [];
+    handlers[CREATE_SESSION_KEY] = neverResponds(signals);
+    handlers[SESSIONS_KEY] = neverResponds(signals);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await openSessionList();
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => requestCount(CREATE_SESSION_KEY) === 1);
+
+    await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+    await waitFor(() => requestCount(SESSIONS_KEY) === 2);
+    await settle();
+    // 一覧を読み直している間は、読み込み中の印を立てたまま (送れない)
+    expect(loadingSpinnerShown()).toBe(true);
+    expect(chatInput().disabled).toBe(true);
+
+    await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+    await waitFor(() => text().includes(SESSION_CREATE_TIMEOUT_MESSAGE) && !loadingSpinnerShown());
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(text()).not.toContain(SESSIONS_LOAD_TIMEOUT_MESSAGE);
+    expect(chatInput().disabled).toBe(false);
+  });
+
+  it('新しい相談の作成が失敗の応答 (500) なら、作成の失敗の一文を出す (一覧は読み直さない)', async () => {
+    await openChat();
+    handlers[CREATE_SESSION_KEY] = async () => json(500, { error: 'internal' });
+    await openSessionList();
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => text().includes(SESSION_CREATE_FAILED_MESSAGE) && !loadingSpinnerShown());
+    expect(requestCount(SESSIONS_KEY)).toBe(1);
+    expect(text()).not.toContain(SESSION_CREATE_TIMEOUT_MESSAGE);
+    expect(chatInput().disabled).toBe(false);
+  });
+
+  it('対照: 新しい相談の作成が緊急停止 (503) なら、サーバーの文面だけを出す (作成の一文は出さない)', async () => {
+    await openChat();
+    handlers[CREATE_SESSION_KEY] = async () => json(503, { error: AI_CHAT_DISABLED_MESSAGE, code: AI_CHAT_DISABLED_CODE });
+    await openSessionList();
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => text().includes(AI_CHAT_DISABLED_MESSAGE) && !loadingSpinnerShown());
+    expect(text()).not.toContain(SESSION_CREATE_FAILED_MESSAGE);
+  });
+
+  it('閉じたあとの一覧の読み直しが失敗 (500) しても新しい相談は出し、その画面に一覧の一文を 1 つ出す', async () => {
+    await openChat();
+    handlers[SESSIONS_KEY] = async () => json(500, { error: 'internal' });
+    await clickClose();
+    await waitFor(() => text().includes(WELCOME_TEXT) && text().includes(SESSIONS_LOAD_FAILED_MESSAGE));
+    expect(occurrences(SESSIONS_LOAD_FAILED_MESSAGE)).toBe(1);
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(1);
+  });
+
+  /** 既定の一覧の 2 つの相談 (beforeEach の SESSIONS_KEY と同じ) */
+  const LISTED_SESSIONS = [
+    { id: SESSION_ID, title: MAIN_SESSION_TITLE, messageCount: 2 },
+    { id: OTHER_SESSION_ID, title: OTHER_SESSION_TITLE, messageCount: 1 },
+  ];
+
+  /**
+   * 作成の時間切れのあとに読み直した一覧にあっても、作れた相談と取り違えない相談 (sessionCreatedSince の 3 つの条件のどれか 1 つだけに
+   * 外れる)。listedBefore は作成を始める前の一覧にも出ていたか。読み直しの一覧では先頭に置く (条件を 1 つ外すと先頭のこれが選ばれる)
+   */
+  const NOT_CREATED_SESSIONS = [
+    {
+      label: '作成を始める前から一覧に出ていた、メッセージの無い相談',
+      listedBefore: true,
+      session: { id: 'session-known-empty', title: '前からある空の相談', messageCount: 0, status: 'active' },
+    },
+    {
+      label: '終了した、メッセージの無い相談',
+      listedBefore: false,
+      session: { id: 'session-closed-empty', title: '終了した空の相談', messageCount: 0, status: 'closed' },
+    },
+    {
+      label: 'メッセージのある相談',
+      listedBefore: false,
+      session: { id: 'session-unknown-with-messages', title: '前に無かった相談', messageCount: 3, status: 'active' },
+    },
+  ];
+
+  it.each(NOT_CREATED_SESSIONS)(
+    '作成の応答が返らず、読み直した一覧にあるのが $label だけなら、それを選ばずに作成の一文を出す',
+    async ({ listedBefore, session }) => {
+      if (listedBefore) handlers[SESSIONS_KEY] = async () => json(200, { sessions: [session, ...LISTED_SESSIONS] });
+      await openChat();
+      handlers[SESSIONS_KEY] = async () => json(200, { sessions: [session, ...LISTED_SESSIONS] });
+      const signals: AbortSignal[] = [];
+      handlers[CREATE_SESSION_KEY] = neverResponds(signals);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      await openSessionList();
+      await act(async () => {
+        buttonWithText('新しい相談を始める')!.click();
+      });
+      await waitFor(() => requestCount(CREATE_SESSION_KEY) === 1 && loadingSpinnerShown());
+
+      await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+      // 条件を 1 つでも外すと、この相談を作れた相談として選び、ようこその一文の画面にする
+      await waitFor(() => text().includes(SESSION_CREATE_TIMEOUT_MESSAGE) && !loadingSpinnerShown());
+      expect(requestCount(SESSIONS_KEY)).toBe(2);
+      expect(text()).toContain(MAIN_REPLY_TEXT);
+      expect(text()).not.toContain(WELCOME_TEXT);
+    },
+  );
+
+  it('作成の応答が返らず、一覧の読み直しを待つ間に相談を切り替えたら、読み直した一覧に作れた相談があっても選ばない (一文も出さない)', async () => {
+    await openChat();
+    const listAfterTimeout = deferred<Response>();
+    const signals: AbortSignal[] = [];
+    handlers[CREATE_SESSION_KEY] = neverResponds(signals);
+    handlers[SESSIONS_KEY] = () => listAfterTimeout.promise;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await openSessionList();
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => requestCount(CREATE_SESSION_KEY) === 1);
+    await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+    await waitFor(() => requestCount(SESSIONS_KEY) === 2);
+
+    // 一覧の欄は「新しい相談を始める」を押したときから開いたまま (作成が済んでいないので閉じていない)
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => text().includes(OTHER_REPLY_TEXT));
+    await act(async () => {
+      listAfterTimeout.resolve(json(200, { sessions: [CREATED_ON_SERVER, ...LISTED_SESSIONS] }));
+    });
+    await settle();
+
+    expect(text()).toContain(OTHER_REPLY_TEXT);
+    expect(text()).not.toContain(WELCOME_TEXT);
+    expect(text()).not.toContain(SESSION_CREATE_TIMEOUT_MESSAGE);
+  });
+
+  it.each([
+    ['失敗の応答 (500)', (create: Deferred<Response>) => create.resolve(json(500, { error: 'internal' }))],
+    ['通信の失敗 (fetch が投げる)', (create: Deferred<Response>) => create.reject(new TypeError('Failed to fetch'))],
+  ])('作成を待つ間に相談を切り替えたら、作成が %s でも切り替えた先の画面に作成の一文を出さない', async (_label, fail) => {
+    await openChat();
+    await openSessionList();
+    const create = hold(CREATE_SESSION_KEY);
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => requestCount(CREATE_SESSION_KEY) === 1);
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => text().includes(OTHER_REPLY_TEXT));
+
+    await act(async () => {
+      fail(create);
+    });
+    await settle();
+
+    expect(text()).toContain(OTHER_REPLY_TEXT);
+    expect(text()).not.toContain(SESSION_CREATE_FAILED_MESSAGE);
+    expect(text()).not.toContain(SESSION_CREATE_TIMEOUT_MESSAGE);
+    expect(requestCount(SESSIONS_KEY)).toBe(1);
+  });
+
+  it('『相談を終了』がすでに終了 (400) で、そのあとの一覧の読み直しも失敗 (500) したら、終了の一文と一覧の一文を 1 つずつ出す', async () => {
+    await openChat();
+    handlers[closeKey(SESSION_ID)] = async () => json(400, { error: AI_CONSULTATION_SESSION_ALREADY_CLOSED_MESSAGE });
+    handlers[SESSIONS_KEY] = async () => json(500, { error: 'internal' });
+    await clickClose();
+    await waitFor(() => text().includes(AI_CONSULTATION_SESSION_ALREADY_CLOSED_MESSAGE) && !closeButton().disabled);
+    await settle();
+
+    // 直す前: 読み直しの失敗は黙り、すでに終了した相談が終了でない古い一覧のまま残った
+    expect(occurrences(AI_CONSULTATION_SESSION_ALREADY_CLOSED_MESSAGE)).toBe(1);
+    expect(occurrences(SESSIONS_LOAD_FAILED_MESSAGE)).toBe(1);
+    expect(text()).not.toContain(SESSIONS_LOAD_TIMEOUT_MESSAGE);
+    expect(requestCount(SESSIONS_KEY)).toBe(2);
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(0);
+  });
+
+  it('閉じたあとの一覧の読み直しも新しい相談の作成も失敗 (500) したら、作成の一文だけを出す (一覧の一文と二重に出さない)', async () => {
+    await openChat();
+    handlers[SESSIONS_KEY] = async () => json(500, { error: 'internal' });
+    handlers[CREATE_SESSION_KEY] = async () => json(500, { error: 'internal' });
+    await clickClose();
+    await waitFor(() => text().includes(SESSION_CREATE_FAILED_MESSAGE) && !closeButton().disabled);
+    await settle();
+
+    expect(occurrences(SESSION_CREATE_FAILED_MESSAGE)).toBe(1);
+    expect(text()).not.toContain(SESSIONS_LOAD_FAILED_MESSAGE);
+    expect(requestCount(SESSIONS_KEY)).toBe(2);
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(1);
+  });
+
+  it('一覧の読み込みが通信の失敗 (fetch が投げる) なら、失敗の一文 (時間切れの一文ではない) を出す', async () => {
+    handlers[SESSIONS_KEY] = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    await render();
+    await pressFab();
+    await waitFor(() => text().includes(SESSIONS_LOAD_FAILED_MESSAGE));
+    expect(text()).not.toContain(SESSIONS_LOAD_TIMEOUT_MESSAGE);
+  });
+
+  it('会話の読み込みが通信の失敗 (fetch が投げる) なら、失敗の一文 (時間切れの一文ではない) を出し、送信欄が使える', async () => {
+    handlers[messagesKey(SESSION_ID)] = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    await render();
+    await pressFab();
+    await waitFor(() => text().includes(MESSAGES_LOAD_FAILED_MESSAGE) && !loadingSpinnerShown());
+    expect(text()).not.toContain(MESSAGES_LOAD_TIMEOUT_MESSAGE);
+    expect(chatInput().disabled).toBe(false);
+  });
+
+  it('新しい相談の作成が通信の失敗 (fetch が投げる) なら、失敗の一文 (時間切れの一文ではない) を出し、一覧は読み直さない', async () => {
+    await openChat();
+    handlers[CREATE_SESSION_KEY] = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+    await openSessionList();
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => text().includes(SESSION_CREATE_FAILED_MESSAGE) && !loadingSpinnerShown());
+    expect(text()).not.toContain(SESSION_CREATE_TIMEOUT_MESSAGE);
+    expect(requestCount(SESSIONS_KEY)).toBe(1);
+    expect(text()).toContain(MAIN_REPLY_TEXT);
+    expect(chatInput().disabled).toBe(false);
+  });
+
+  it('切り替える前の相談の会話の読み込みが遅れて失敗の応答 (500) で返っても、切り替えた先の相談の画面に一文を出さない', async () => {
+    await openChat();
+    const otherLoad = hold(messagesKey(OTHER_SESSION_ID));
+    await openSessionList();
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === 1);
+    await openSessionList();
+    await pressSessionRow(MAIN_SESSION_TITLE);
+    await waitFor(() => requestCount(messagesKey(SESSION_ID)) === 2 && text().includes(MAIN_REPLY_TEXT) && !loadingSpinnerShown());
+
+    await act(async () => {
+      otherLoad.resolve(json(500, { error: 'internal' }));
+    });
+    await settle();
+    expect(text()).not.toContain(MESSAGES_LOAD_FAILED_MESSAGE);
+    expect(text()).toContain(MAIN_REPLY_TEXT);
+  });
+
+  it('開き直しの一覧を待つ間に相談を切り替えたら、一覧が失敗 (500) で返っても一覧の一文を出さない (切り替えた画面が勝つ)', async () => {
+    await openChat();
+    await closeChatWindow();
+    const reopenSessions = hold(SESSIONS_KEY);
+    await pressFab();
+    await waitFor(() => requestCount(SESSIONS_KEY) === 2);
+    await openSessionList();
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => text().includes(OTHER_REPLY_TEXT) && !loadingSpinnerShown());
+
+    await act(async () => {
+      reopenSessions.resolve(json(500, { error: 'internal' }));
+    });
+    await settle();
+    expect(text()).not.toContain(SESSIONS_LOAD_FAILED_MESSAGE);
+    expect(text()).toContain(OTHER_REPLY_TEXT);
+  });
+
+  it('開き直しの一覧を待つ間に『相談を終了』を押したら、一覧が失敗 (500) で返っても一覧の一文を出さない (閉じる側に任せる)', async () => {
+    await openChat();
+    await closeChatWindow();
+    const reopenSessions = hold(SESSIONS_KEY);
+    await pressFab();
+    await waitFor(() => requestCount(SESSIONS_KEY) === 2);
+    const close = hold(closeKey(SESSION_ID));
+    await clickClose();
+
+    await act(async () => {
+      reopenSessions.resolve(json(500, { error: 'internal' }));
+    });
+    await settle();
+    expect(text()).not.toContain(SESSIONS_LOAD_FAILED_MESSAGE);
+
+    // 閉じるの失敗の応答を返して終える (失敗の応答では一覧を読み直さない)
+    await act(async () => {
+      close.resolve(json(500, { error: 'internal' }));
+    });
+    await waitFor(() => text().includes(CONSULTATION_CLOSE_FAILED_MESSAGE) && !closeButton().disabled);
+    expect(text()).not.toContain(SESSIONS_LOAD_FAILED_MESSAGE);
+    expect(requestCount(SESSIONS_KEY)).toBe(2);
+  });
+
+  it('会話の読み込みの最中に開き直しの一覧が失敗 (500) したら、その会話が読めたあとも一覧の一文を残す', async () => {
+    const mainLoad = hold(messagesKey(SESSION_ID));
+    await render();
+    await pressFab();
+    await waitFor(() => requestCount(messagesKey(SESSION_ID)) === 1);
+    await closeChatWindow();
+    handlers[SESSIONS_KEY] = async () => json(500, { error: 'internal' });
+    await pressFab();
+    // 一覧の一文は足したが、会話の読み込みの最中は読み込み中の輪が会話を隠す
+    await waitFor(() => requestCount(SESSIONS_KEY) === 2);
+    await settle();
+
+    await act(async () => {
+      mainLoad.resolve(json(200, { messages: MAIN_MESSAGES }));
+    });
+    // 会話の置き換えで一覧の一文を消すと、古い一覧のままなのに開き直しの案内が見えなくなる
+    await waitFor(() => text().includes(MAIN_REPLY_TEXT) && !loadingSpinnerShown());
+    expect(occurrences(SESSIONS_LOAD_FAILED_MESSAGE)).toBe(1);
+  });
+
+  it('同じ相談の会話の読み込みが 2 つ重なり、先の読み込みが失敗 (500) しても、あとの読み込みが会話を読めたら会話の一文は残さない', async () => {
+    await openChat();
+    const firstLoad = hold(messagesKey(OTHER_SESSION_ID));
+    await openSessionList();
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === 1);
+    await closeChatWindow();
+    const secondLoad = hold(messagesKey(OTHER_SESSION_ID));
+    await pressFab();
+    await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === 2);
+
+    // 先の読み込みはまだ画面に置きうる (あとの読み込みが置いていない) ので一文を足す (あとの読み込みの最中は読み込み中の輪が会話を隠す)
+    await act(async () => {
+      firstLoad.resolve(json(500, { error: 'internal' }));
+    });
+    await settle();
+
+    await act(async () => {
+      secondLoad.resolve(json(200, { messages: OTHER_MESSAGES }));
+    });
+    await waitFor(() => text().includes(OTHER_REPLY_TEXT) && !loadingSpinnerShown());
+    expect(text()).not.toContain(MESSAGES_LOAD_FAILED_MESSAGE);
+  });
+});
+
+describe('#2265 Q2 (2) 相談を出していない画面の 1日献立のモーダルは、「作成する」を止めたうえで理由の一文を出す', () => {
+  function noSessionReason(): string | null {
+    return container.querySelector('[data-testid="day-menu-no-session"]')?.textContent ?? null;
+  }
+
+  it('モーダルを開いたまま新しい相談の作成が緊急停止 (503) で相談の無い画面になったら、ボタンの近くに理由の一文を出す', async () => {
+    handlers[CREATE_SESSION_KEY] = async () => json(503, { error: AI_CHAT_DISABLED_MESSAGE, code: AI_CHAT_DISABLED_CODE });
+    await openChat();
+    await act(async () => {
+      dayMenuButton().click();
+    });
+    // 対照: 相談を出している間は出さない
+    expect(noSessionReason()).toBeNull();
+    await openSessionList();
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => text().includes(AI_CHAT_DISABLED_MESSAGE) && !loadingSpinnerShown());
+
+    // 直す前: 「作成する」が薄くなるだけで、理由が出なかった (止める条件は #2259 P1 のまま)
+    expect(createDayMenuButton().disabled).toBe(true);
+    expect(noSessionReason()).toBe(DAY_MENU_NO_SESSION_MESSAGE);
+    // 理由の一文はモーダルの中 (「作成する」と同じ箱)
+    const reason = container.querySelector('[data-testid="day-menu-no-session"]')!;
+    expect(reason.parentElement!.contains(createDayMenuButton())).toBe(true);
+  });
+});
+
+describe('#2265 Q2 (3) 『相談を終了』を受け付けたあとの例外でも、一覧を読み直して新しい相談を出す (失敗の一文は出さない)', () => {
+  /** ok の応答だが、本文の読み取りが返らない */
+  function okWithStalledBody(): Response {
+    const res = new Response(null, { status: 200 });
+    Object.defineProperty(res, 'json', { value: () => new Promise<never>(() => {}) });
+    return res;
+  }
+
+  it('本文の読み取りが上限 (AI_CHAT_REQUEST_TIME_LIMIT_MS) までに終わらなくても、閉じたあとの新しい相談の画面にする', async () => {
+    await openChat();
+    handlers[closeKey(SESSION_ID)] = async () => okWithStalledBody();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await clickClose();
+    await waitFor(() => closeButton().disabled);
+
+    await advanceFakeTime(AI_CHAT_REQUEST_TIME_LIMIT_MS);
+    // 直す前: 失敗の一文も出さず、一覧の読み直しも新しい相談の作成もせず、サーバーで閉じた相談の画面が残った
+    await waitFor(() => text().includes(WELCOME_TEXT) && !closeButton().disabled);
+    expect(requestCount(SESSIONS_KEY)).toBe(2);
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(1);
+    expect(text()).not.toContain(MAIN_REPLY_TEXT);
+    expect(text()).not.toContain(CLOSE_SESSION_TIMEOUT_MESSAGE);
+    expect(text()).not.toContain(CONSULTATION_CLOSE_FAILED_MESSAGE);
+  });
+
+  it('本文が JSON でなくても、閉じたあとの新しい相談の画面にする', async () => {
+    await openChat();
+    handlers[closeKey(SESSION_ID)] = async () => new Response('<html>not json</html>', { status: 200 });
+    await clickClose();
+    await waitFor(() => text().includes(WELCOME_TEXT) && !closeButton().disabled);
+    expect(requestCount(SESSIONS_KEY)).toBe(2);
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(1);
+    expect(text()).not.toContain(CONSULTATION_CLOSE_FAILED_MESSAGE);
+  });
+
+  it('新しい相談を出したあとの例外 (本文が null で要約を読めない) では、新しい相談をもう 1 つ作らない', async () => {
+    await openChat();
+    handlers[closeKey(SESSION_ID)] = async () => json(200, null);
+    await clickClose();
+    await waitFor(() => text().includes(WELCOME_TEXT) && !closeButton().disabled);
+    await settle();
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(1);
+    expect(requestCount(SESSIONS_KEY)).toBe(2);
+    expect(text()).not.toContain(CONSULTATION_CLOSE_FAILED_MESSAGE);
   });
 });
