@@ -60,13 +60,6 @@ import {
   type UnconfirmedSend,
 } from "../../lib/ai-chat-timeout";
 import { notifyAiConsultationDataChanged } from "../../lib/ai-consultation-data-changed";
-import {
-  AI_CHAT_REQUEST_TIME_LIMIT_MS,
-  ARCHIVE_SESSION_TIMEOUT_MESSAGE,
-  ARCHIVE_SESSION_TIMEOUT_TITLE,
-  isConsultationRequestTimeout,
-  withinConsultationRequestTimeLimit,
-} from "../../lib/ai-consultation-request-time-limit";
 import { supabase } from "../../lib/supabase";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
@@ -843,38 +836,22 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
     closingSessionRef.current = true;
     setIsClosingSession(true);
-    // アーカイブを受け付けた (ok の応答が返った) か。受け付けたあとの本文の読み取りの時間切れでは、時間切れの一文を出さない
-    // (Web の『相談を終了』と同じ扱い。#2259 P1。アーカイブはサーバーで済んでいる)
-    let closeAccepted = false;
     try {
-      // 応答は AI_CHAT_REQUEST_TIME_LIMIT_MS を上限に待つ (#2265 Q1。Web の #2259 P1 と同じ値・同じ判定。以前は上限が無く、応答が
-      // 返らない間はアーカイブの応答待ちのまま、送信・新しい相談・相談の切り替え・取り直しが止まり、アプリを開き直すまで戻らなかった)。
-      // トークンの取り出しと応答の本文の読み取りまで上限の中で行う
-      const closed = await withinConsultationRequestTimeLimit(AI_CHAT_REQUEST_TIME_LIMIT_MS, async (signal) => {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData.session?.access_token ?? null;
-        const baseUrl = getApiBaseUrl();
-        const res = await fetch(
-          `${baseUrl}/api/ai/consultation/sessions/${currentSessionId}/close`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            signal,
-          }
-        );
-        if (!res.ok) {
-          const body: unknown = await res.json().catch(() => ({}));
-          return { ok: false, status: res.status, body } as const;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token ?? null;
+      const baseUrl = getApiBaseUrl();
+      const res = await fetch(
+        `${baseUrl}/api/ai/consultation/sessions/${currentSessionId}/close`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
         }
-        closeAccepted = true;
+      );
+      if (res.ok) {
         const data = await res.json();
-        return { ok: true, data } as const;
-      });
-      if (closed.ok) {
-        const data = closed.data;
         // 先に新しいセッションを作る。createNewSession は成功すると messages を [WELCOME_MESSAGE] に置き換えるので、
         // 要約 (または要約を省いた旨の一文) をその前に足すと、作成を待つ間しか出ずに消えてしまう (Web の AIChatBubble と同じ順)
         await createNewSession();
@@ -903,24 +880,24 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
             ]);
           }
         }
-      } else if (closed.status === 400) {
+      } else if (res.status === 400) {
         // Already closed: UI を最新に合わせる
         Alert.alert("情報", "このセッションは既にアーカイブ済みです。");
         await fetchSessions();
       } else {
-        const err = closed.body;
+        const err = await res.json().catch(() => ({}));
         // 規約・プライバシーポリシーへの同意が必要 (403 LEGAL_CONSENT_REQUIRED。#1442): errorOfFailedResponse が LegalConsentProvider に
         // 知らせ (ゲートが同意画面だけにする)、固定の文の例外を返す。本文は JSON で読んだ後なので文字列に戻して渡す
         // (`HTTP <状態>: <本文>` の Error を自分で作らない。tests/mobile-service-unavailable-raw-fetch.test.ts)。
         // 503 (緊急停止・メンテナンス中など) とそれ以外の失敗は、下の今の分岐のまま
-        const failure = errorOfFailedResponse(closed.status, JSON.stringify(err));
+        const failure = errorOfFailedResponse(res.status, JSON.stringify(err));
         if (isLegalConsentRequiredError(failure)) {
           Alert.alert(stoppedByServerAlertTitleOf(failure), failure.message);
           return;
         }
         // AI 相談の緊急停止中・メンテナンス中 (#1457)・同意の状況を読めなかった 503 (#1486): 本文の文字列ではなく、
         // code から決めた固定の文を出す (#1486 より前のサーバーは、メンテナンス中の本文の error がオブジェクトだった)
-        const unavailableMessage = serviceUnavailableMessageOf(closed.status, err);
+        const unavailableMessage = serviceUnavailableMessageOf(res.status, err);
         if (unavailableMessage) {
           Alert.alert(SERVICE_UNAVAILABLE_ALERT_TITLE, unavailableMessage);
           return;
@@ -932,15 +909,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
             "セッションのアーカイブに失敗しました。"
         );
       }
-    } catch (e) {
-      // 上限までに応答が返らなかった (#2265 Q1) ときは、サーバーでアーカイブが済んでいることがあるので、『失敗しました』と
-      // 言い切らず、相談の一覧で確かめてもらう (Web の CLOSE_SESSION_TIMEOUT_MESSAGE と同じ扱い)。受け付けたあとの本文の読み取りの
-      // 時間切れは何も出さない (Web と同じ)。止めは finally で下ろす
-      if (isConsultationRequestTimeout(e)) {
-        if (!closeAccepted) Alert.alert(ARCHIVE_SESSION_TIMEOUT_TITLE, ARCHIVE_SESSION_TIMEOUT_MESSAGE);
-      } else {
-        Alert.alert("エラー", "セッションのアーカイブに失敗しました。");
-      }
+    } catch {
+      Alert.alert("エラー", "セッションのアーカイブに失敗しました。");
     } finally {
       closingSessionRef.current = false;
       setIsClosingSession(false);
