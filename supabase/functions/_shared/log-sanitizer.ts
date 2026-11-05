@@ -297,3 +297,38 @@ export function sanitizeLogEntry(entry: SanitizableLogEntry): SanitizedLogEntry 
     return failedLogEntry(entry);
   }
 }
+
+// ── 外部キー (app_logs.user_id → auth.users) で落ちた行の書き直し (#2259 P3) ─────────
+
+/** Postgres の外部キー違反のエラーコード (foreign_key_violation)。PostgREST はこれを error.code に入れて返す */
+export const FOREIGN_KEY_VIOLATION_CODE = '23503';
+
+/**
+ * user_id を外して保存し直した行で、元の user_id を残す metadata のキー。
+ * app_logs.user_id は auth.users への外部キー (app_logs_user_id_fkey) なので、auth.users に無い利用者
+ * (退会して消えた利用者など) の id を入れた行は insert ごと落ちる。user_id 列を空にして入れ直し、
+ * どの利用者のログだったかはこのキーで追えるようにする。
+ */
+export const UNLINKED_USER_ID_METADATA_KEY = 'user_id_not_in_auth_users';
+
+/** insert の error が外部キー違反 (23503) か */
+export function isForeignKeyViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === FOREIGN_KEY_VIOLATION_CODE;
+}
+
+/**
+ * app_logs への insert が error で落ちたとき、user_id を外して 1 回だけ入れ直す行を返す (#2259 P3)。
+ * 入れ直すのは、外部キー違反 (23503) で、かつ行に user_id があるときだけ。それ以外は null (入れ直さない)。
+ * app_logs の外部キーは user_id の 1 本だけなので、user_id のある行の 23503 は user_id が auth.users に無いことを表す。
+ * 返す行は user_id を省き (NULL になる)、元の user_id を metadata の UNLINKED_USER_ID_METADATA_KEY に入れる。
+ * 引数は書き換えない。user_id は uuid の形に限っている (sanitizeLogEntry) ので、metadata に入れても秘密は増えない。
+ */
+export function rowForForeignKeyRetry(error: unknown, row: SanitizedLogEntry): SanitizedLogEntry | null {
+  if (!isForeignKeyViolation(error) || row.user_id === undefined) return null;
+  const { user_id: unlinkedUserId, ...rest } = row;
+  return { ...rest, metadata: { ...row.metadata, [UNLINKED_USER_ID_METADATA_KEY]: unlinkedUserId } };
+}
+
+/** 外部キー違反で user_id を外して入れ直すときに、console (関数ログ) に残す文 (Next.js と Edge で同じ文) */
+export const FOREIGN_KEY_RETRY_CONSOLE_MESSAGE =
+  'app_logs: user_id が auth.users に無いため (外部キー違反)、user_id を外して保存し直す:';
