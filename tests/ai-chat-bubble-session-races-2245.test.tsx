@@ -72,6 +72,12 @@
  *      (2) 相談を出していない画面 (新しい相談の作成が緊急停止 (503) など) の 1日献立のモーダルで、「作成する」が理由も出ずに押せなかった
  *      (3) 『相談を終了』を受け付けた (ok) あとに本文の読み取りが時間切れ・JSON でないと、一覧の読み直しも新しい相談の作成もせず、
  *          サーバーで閉じた相談の画面が残った
+ *  14. (#2275 T1) 相談の切り替えの読み込みの失敗・作れたが出さなかった相談・一覧の失敗の一文
+ *      (1) 別の相談への切り替えで会話の読み込みが失敗・時間切れになると、前の相談の会話を残したまま一文を足し、見えている会話とは
+ *          別の相談 (切り替えた先) へ送れた (モバイルは #2272 S1 で直した)
+ *      (2) 作成は成功したが、作成を待つ間に相談を切り替えて出さなかった相談は、見えていた相談に数えず、一覧でまだ見ないうちに次の
+ *          作成の応答が返らないと、読み直した一覧からそれを『作れていた相談』として選んだ
+ *      (3) 一覧を読めなかった一文は会話の 1 件なので、一覧がまだ古いのに、会話の置き換え (相談の切り替え・新しい相談の作成) で先に消えた
  */
 
 import { act, createElement } from 'react';
@@ -3801,5 +3807,238 @@ describe('#2272 S2 新しい相談の作成の時間切れからの回復のま�
     });
     await waitFor(() => text().includes(SESSION_CREATE_FAILED_MESSAGE) && !loadingSpinnerShown());
     expect(text()).not.toContain('ログインが必要です');
+  });
+});
+
+describe('#2275 T1 相談の切り替えの読み込みの失敗・作れたが出さなかった相談・一覧の失敗の一文', () => {
+  /** 応答を返さない (打ち切られたら AbortError で失敗する。#2265 Q2 の同名の関数と同じ) */
+  function neverResponds(): FetchHandler {
+    return (_url, init) =>
+      new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('The user aborted a request.', 'AbortError')));
+      });
+  }
+
+  /** 画面の文に needle が出ている回数 (同じ一文を二重に出していないかを見る) */
+  function occurrences(needle: string): number {
+    return text().split(needle).length - 1;
+  }
+
+  /** 既定の一覧の 2 つの相談 (beforeEach の SESSIONS_KEY と同じ) */
+  const LISTED_SESSIONS = [
+    { id: SESSION_ID, title: MAIN_SESSION_TITLE, messageCount: 2 },
+    { id: OTHER_SESSION_ID, title: OTHER_SESSION_TITLE, messageCount: 1 },
+  ];
+  /** サーバーで作れていた、メッセージの無い相談 (一覧の読み直しで見える) */
+  const CREATED_ON_SERVER = { id: NEW_SESSION_ID, title: 'AI相談', messageCount: 0, status: 'active' };
+
+  /** 相談 A の会話を出したまま、開き直しの一覧の読み込みを失敗 (500) させ、一覧の一文を出す (一覧の行は最初に読めた一覧のまま) */
+  async function showListFailureOverMainSession() {
+    await openChat();
+    await closeChatWindow();
+    handlers[SESSIONS_KEY] = async () => json(500, { error: 'internal' });
+    await pressFab();
+    await waitFor(() => text().includes(SESSIONS_LOAD_FAILED_MESSAGE) && !loadingSpinnerShown());
+    expect(text()).toContain(MAIN_REPLY_TEXT);
+  }
+
+  describe('(1) 別の相談への切り替えで会話を読めなかったら、前の相談の会話を残さず一文だけにする (同じ相談の選び直し・開き直しは残す)', () => {
+    it('A を出している状態で B へ切り替え、B の会話の読み込みが失敗 (500) したら、A の会話を残さず一文だけにする', async () => {
+      await openChat();
+      handlers[messagesKey(OTHER_SESSION_ID)] = async () => json(500, { error: 'internal' });
+      await openSessionList();
+      await pressSessionRow(OTHER_SESSION_TITLE);
+      await waitFor(() => text().includes(MESSAGES_LOAD_FAILED_MESSAGE) && !loadingSpinnerShown());
+      // 直す前: A の会話を残したまま一文を足し、見えている A の会話とは別の B へ送れた
+      expect(text()).not.toContain(MAIN_REPLY_TEXT);
+      expect(occurrences(MESSAGES_LOAD_FAILED_MESSAGE)).toBe(1);
+      // 一文の画面のまま送れる (送り先は切り替えた B。見えている会話と食い違わない)
+      expect(chatInput().disabled).toBe(false);
+    });
+
+    it('A を出している状態で B へ切り替え、B の会話の読み込みが時間切れになったら、A の会話を残さず時間切れの一文だけにする', async () => {
+      await openChat();
+      handlers[messagesKey(OTHER_SESSION_ID)] = neverResponds();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      await openSessionList();
+      await pressSessionRow(OTHER_SESSION_TITLE);
+      await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === 1 && loadingSpinnerShown());
+
+      await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+      await waitFor(() => text().includes(MESSAGES_LOAD_TIMEOUT_MESSAGE) && !loadingSpinnerShown());
+      // 直す前: A の会話を残したまま時間切れの一文を足した
+      expect(text()).not.toContain(MAIN_REPLY_TEXT);
+      expect(occurrences(MESSAGES_LOAD_TIMEOUT_MESSAGE)).toBe(1);
+    });
+
+    it('A を出している状態で B へ切り替え、B の会話の読み込みが通信の失敗 (fetch が投げる) なら、A の会話を残さず一文だけにする', async () => {
+      await openChat();
+      handlers[messagesKey(OTHER_SESSION_ID)] = async () => {
+        throw new TypeError('Failed to fetch');
+      };
+      await openSessionList();
+      await pressSessionRow(OTHER_SESSION_TITLE);
+      await waitFor(() => text().includes(MESSAGES_LOAD_FAILED_MESSAGE) && !loadingSpinnerShown());
+      expect(text()).not.toContain(MAIN_REPLY_TEXT);
+      expect(occurrences(MESSAGES_LOAD_FAILED_MESSAGE)).toBe(1);
+    });
+
+    it('対照: 出している A をもう一度選び、会話の読み込みが失敗 (500) しても、A の会話を残して一文を足す', async () => {
+      await openChat();
+      handlers[messagesKey(SESSION_ID)] = async () => json(500, { error: 'internal' });
+      await openSessionList();
+      await pressSessionRow(MAIN_SESSION_TITLE);
+      await waitFor(() => text().includes(MESSAGES_LOAD_FAILED_MESSAGE) && !loadingSpinnerShown());
+      expect(text()).toContain(MAIN_REPLY_TEXT);
+      expect(occurrences(MESSAGES_LOAD_FAILED_MESSAGE)).toBe(1);
+    });
+
+    it('対照: チャットを閉じて開き直し、会話の読み込みが失敗 (500) しても、出していた A の会話を残して一文を足す', async () => {
+      await openChat();
+      await closeChatWindow();
+      handlers[messagesKey(SESSION_ID)] = async () => json(500, { error: 'internal' });
+      await pressFab();
+      await waitFor(() => text().includes(MESSAGES_LOAD_FAILED_MESSAGE) && !loadingSpinnerShown());
+      expect(text()).toContain(MAIN_REPLY_TEXT);
+      expect(occurrences(MESSAGES_LOAD_FAILED_MESSAGE)).toBe(1);
+    });
+
+    it('A→B と切り替えて B の読み込みを待つ間に、A の遅れた読み込みが失敗しても一文は出さず、B が読めたら B の会話だけを出す (#2245 K1 の決めを保つ)', async () => {
+      const mainLoad = hold(messagesKey(SESSION_ID));
+      await render();
+      await pressFab();
+      await waitFor(() => requestCount(messagesKey(SESSION_ID)) === 1);
+      await openSessionList();
+      await pressSessionRow(OTHER_SESSION_TITLE);
+      await waitFor(() => text().includes(OTHER_REPLY_TEXT) && !loadingSpinnerShown());
+
+      await act(async () => {
+        mainLoad.resolve(json(500, { error: 'internal' }));
+      });
+      await settle();
+      expect(text()).toContain(OTHER_REPLY_TEXT);
+      expect(text()).not.toContain(MESSAGES_LOAD_FAILED_MESSAGE);
+    });
+  });
+
+  describe('(2) 作成の応答を受けた相談は、画面に出さなかったときも見えていた相談に数える', () => {
+    it('作成を待つ間に相談を切り替えて出さなかった相談を、次の作成の時間切れのあとに『作れていた相談』として選ばない', async () => {
+      await openChat();
+      // 1 つ目の作成は、応答を待つ間に B へ切り替える (作れた相談は画面に出さない)
+      const firstCreate = hold(CREATE_SESSION_KEY);
+      await openSessionList();
+      await act(async () => {
+        buttonWithText('新しい相談を始める')!.click();
+      });
+      await waitFor(() => requestCount(CREATE_SESSION_KEY) === 1);
+      await pressSessionRow(OTHER_SESSION_TITLE);
+      await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === 1);
+      await act(async () => {
+        firstCreate.resolve(json(200, { session: { id: NEW_SESSION_ID } }));
+      });
+      await waitFor(() => text().includes(OTHER_REPLY_TEXT) && !loadingSpinnerShown());
+      expect(text()).not.toContain(WELCOME_TEXT);
+      expect(requestCount(SESSIONS_KEY)).toBe(1);
+
+      // 2 つ目の作成はサーバーに届かずに時間切れ。読み直した一覧には 1 つ目の (出さなかった) 空の相談だけが新しく出ている
+      handlers[CREATE_SESSION_KEY] = neverResponds();
+      handlers[SESSIONS_KEY] = async () => json(200, { sessions: [CREATED_ON_SERVER, ...LISTED_SESSIONS] });
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      await openSessionList();
+      await act(async () => {
+        buttonWithText('新しい相談を始める')!.click();
+      });
+      await waitFor(() => requestCount(CREATE_SESSION_KEY) === 2 && loadingSpinnerShown());
+
+      await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+      // 直す前: 1 つ目の (出さなかった) 空の相談を作れていた相談として選び、ようこその一文の画面にした (作成の一文は出なかった)
+      await waitFor(() => text().includes(SESSION_CREATE_TIMEOUT_MESSAGE) && !loadingSpinnerShown());
+      expect(requestCount(SESSIONS_KEY)).toBe(2);
+      expect(text()).toContain(OTHER_REPLY_TEXT);
+      expect(text()).not.toContain(WELCOME_TEXT);
+      expect(chatInput().disabled).toBe(false);
+    });
+  });
+
+  describe('(3) 一覧を読めなかった一文は、一覧を読み直せるまで会話の置き換えで消さない', () => {
+    it('一覧の一文を出したあとに B へ切り替えて B の会話が読めても、一覧の一文を残す', async () => {
+      await showListFailureOverMainSession();
+      await openSessionList();
+      await pressSessionRow(OTHER_SESSION_TITLE);
+      await waitFor(() => text().includes(OTHER_REPLY_TEXT) && !loadingSpinnerShown());
+      // 直す前: 会話の置き換えで一覧の一文が消え、一覧はまだ古いのに開き直しの案内が見えなくなった
+      expect(occurrences(SESSIONS_LOAD_FAILED_MESSAGE)).toBe(1);
+      expect(text()).not.toContain(MAIN_REPLY_TEXT);
+    });
+
+    it('一覧の一文を出したあとに B へ切り替えて B の会話を読めなかったら、一覧の一文と会話の一文を 1 つずつ出す (A の会話は残さない)', async () => {
+      await showListFailureOverMainSession();
+      handlers[messagesKey(OTHER_SESSION_ID)] = async () => json(500, { error: 'internal' });
+      await openSessionList();
+      await pressSessionRow(OTHER_SESSION_TITLE);
+      await waitFor(() => text().includes(MESSAGES_LOAD_FAILED_MESSAGE) && !loadingSpinnerShown());
+      expect(occurrences(SESSIONS_LOAD_FAILED_MESSAGE)).toBe(1);
+      expect(occurrences(MESSAGES_LOAD_FAILED_MESSAGE)).toBe(1);
+      expect(text()).not.toContain(MAIN_REPLY_TEXT);
+    });
+
+    it('一覧の一文を出したあとに新しい相談を作っても、ようこその一文の画面に一覧の一文を残す', async () => {
+      await showListFailureOverMainSession();
+      await openSessionList();
+      await act(async () => {
+        buttonWithText('新しい相談を始める')!.click();
+      });
+      await waitFor(() => text().includes(WELCOME_TEXT) && !loadingSpinnerShown());
+      // 直す前: 作成の画面の置き換えで一覧の一文が消えた
+      expect(occurrences(SESSIONS_LOAD_FAILED_MESSAGE)).toBe(1);
+      expect(text()).not.toContain(MAIN_REPLY_TEXT);
+    });
+
+    it('一覧の一文を出したあとに送って返答が出ても (送信の確定)、一覧の一文を残す', async () => {
+      await showListFailureOverMainSession();
+      const SENT_TEXT = '鶏むね肉で何か作れますか';
+      const SENT_REPLY_TEXT = '照り焼きはいかがでしょう';
+      const sse = (payload: unknown) => `data: ${JSON.stringify(payload)}\n\n`;
+      handlers[`POST /api/ai/consultation/sessions/${SESSION_ID}/messages?stream=true`] = async () =>
+        new Response(
+          sse({ choices: [{ delta: { content: SENT_REPLY_TEXT } }] }) +
+            sse({
+              userMessage: { id: 'sent-user', content: SENT_TEXT, isImportant: false, createdAt: '2026-11-05T00:00:00.000Z' },
+              aiMessage: { id: 'sent-ai', content: SENT_REPLY_TEXT, proposedActions: null, createdAt: '2026-11-05T00:00:01.000Z' },
+              actionExecuted: false,
+              actionResult: null,
+            }) +
+            'data: [DONE]\n\n',
+          { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+        );
+      await act(async () => {
+        const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+        setValue.call(chatInput(), SENT_TEXT);
+        chatInput().dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('button[aria-label="メッセージを送信"]')!.click();
+      });
+      await waitFor(() => text().includes(SENT_REPLY_TEXT) && !chatInput().disabled);
+      expect(occurrences(SESSIONS_LOAD_FAILED_MESSAGE)).toBe(1);
+    });
+
+    it('対照: 一覧を読み直せたら (開き直し)、そのあとの会話の置き換えで一覧の一文を残さない', async () => {
+      await showListFailureOverMainSession();
+      handlers[SESSIONS_KEY] = async () => json(200, { sessions: LISTED_SESSIONS });
+      await closeChatWindow();
+      await pressFab();
+      await waitFor(() => requestCount(SESSIONS_KEY) === 3 && text().includes(MAIN_REPLY_TEXT) && !loadingSpinnerShown());
+      expect(text()).not.toContain(SESSIONS_LOAD_FAILED_MESSAGE);
+    });
+
+    it('対照: 閉じたあとの一覧の読み直しが失敗 (500) し、新しい相談の画面に足す一覧の一文は 1 つだけ (前の一覧の一文と二重に出さない)', async () => {
+      await showListFailureOverMainSession();
+      await clickClose();
+      await waitFor(() => text().includes(WELCOME_TEXT) && !loadingSpinnerShown() && !closeButton().disabled);
+      await settle();
+      expect(occurrences(SESSIONS_LOAD_FAILED_MESSAGE)).toBe(1);
+      expect(text()).not.toContain(MAIN_REPLY_TEXT);
+    });
   });
 });
