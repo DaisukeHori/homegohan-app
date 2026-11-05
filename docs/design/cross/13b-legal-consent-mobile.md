@@ -4,12 +4,12 @@
 
 | 項目 | 値 |
 |---|---|
-| Status | 設計ゲート通過 (2026-10-17・v2.12・構造裁定のやり直しの後の R1 で Opus 5.5 と Sonnet 5.5 の 2 枚が PASS)。§6.15 の B1 (#1830)・B2 (#1833) は実装済み。v2.13〜v2.16 は記録の追随 (製品の挙動は変えない) |
+| Status | 設計ゲート通過 (2026-10-17・v2.12・構造裁定のやり直しの後の R1 で Opus 5.5 と Sonnet 5.5 の 2 枚が PASS)。§6.15 の B1 (#1830)・B2 (#1833) は実装済み。v2.13〜v2.17 は記録の追随 (製品の挙動は変えない) |
 | Issue | #1442 (親: #1174 の同意ゲート。先例: #1154 の AI 同意の 403・#1030 / #1445 の凍結の API ゲート。前提: #1598 の WebView への一本化と PR #1733) |
 | 分冊 | 本冊 = 配線 (段 B: モバイル + Web → ネイティブの合図 1 本)。核 (段 A: サーバー + `packages/shared`) は `13a-legal-consent-api-server.md` (着地済み) |
 | 正典の関係 | 13a とともに `08-legal-compliance.md` §7.2 (同意ゲート) の配線を広げる冊。§7.2 の「モバイルのネイティブの画面は対象外」の記述は本冊のマージで現在形に直す (§6.19)。`cross/14-parental-consent.md` §0.5 が 13b に求める「生年月日の欄・未成年の案内」は、本冊では Web の同意画面をそのまま使うことで満たす (§6.19・§6.22) |
 | 範囲の正本 | Issue #1442 の本文とコメント (コメントの記録: 運営の API も 403 で止める範囲に入れる・役割の例外を作らない) |
-| 前提 (本冊が書かれた時点) | #1598 のコメント (2026-10-15) の記録「タブから行けないネイティブの画面は消して、WebView の画面に一本化します」と、PR #1733 (main `1c726fbb`。届かないネイティブの画面 60 本の削除) の後の main。file:line は origin/main `312cfb04` (2026-10-17。文字を Noto Sans JP にそろえる #588 = PR #1824 が、本冊が直す `apps/mobile/app/_layout.tsx`・`(tabs)/_layout.tsx` と、多くの画面の import の行を変えた後) で取った (§0.3)。ログイン・新規登録・確認メール・設定タブの画面 (`(auth)/login.tsx`・`(auth)/signup.tsx`・`(auth)/auth/verify.tsx`・`(tabs)/settings.tsx`) の行と、Sign in with Apple の段 A2 (#1995) が足した `src/lib/routeAfterSignIn.ts`・`src/lib/appleSignIn.ts` の行は、origin/main `edff659e` (2026-10-24。#2007 が `login.tsx`・`signup.tsx` に import とコメントを足した後) で取り直した (`AIAdvisorSheet.tsx` は、§0.3 の生の fetch の行・§3.3 の部品の行と Modal の段落・§4.2 の S27・§6.2 の状態比較表の現行の列・§6.21 の旧版の表では関数の名前で指す。§6.6.18 の差分の import の行・§6.20 の検証コマンドの注の `AIAdvisorSheet.tsx` の行は `312cfb04` の行のまま。§6.6.18 の `archiveSession` の失敗の分岐と `finally` は関数の名前で指す)。`origin/design/legal-consent-mobile` の 13b (v1.1) は、#1598 と PR #1733 より前に書かれたので、消えた画面に依存する部分を落とし、残す部分の file:line を取り直した (§0.5) |
+| 前提 (本冊が書かれた時点) | #1598 のコメント (2026-10-15) の記録「タブから行けないネイティブの画面は消して、WebView の画面に一本化します」と、PR #1733 (main `1c726fbb`。届かないネイティブの画面 60 本の削除) の後の main。file:line は origin/main `312cfb04` (2026-10-17。文字を Noto Sans JP にそろえる #588 = PR #1824 が、本冊が直す `apps/mobile/app/_layout.tsx`・`(tabs)/_layout.tsx` と、多くの画面の import の行を変えた後) で取った (§0.3)。ログイン・新規登録・確認メール・設定タブの画面 (`(auth)/login.tsx`・`(auth)/signup.tsx`・`(auth)/auth/verify.tsx`・`(tabs)/settings.tsx`) の行と、Sign in with Apple の段 A2 (#1995) が足した `src/lib/routeAfterSignIn.ts`・`src/lib/appleSignIn.ts` の行は、origin/main `edff659e` (2026-10-24。#2007 が `login.tsx`・`signup.tsx` に import とコメントを足した後) で取り直した (`AIAdvisorSheet.tsx` は、§0.3 の生の fetch の行・§3.3 の部品の行と Modal の段落・§4.2 の S27・§6.2 の状態比較表の現行の列・§6.21 の旧版の表では関数の名前で指す。§6.6.18 の差分の import の行だけが `312cfb04` の行のまま。§6.6.18 の箇条 (`archiveSession` の失敗の分岐と `finally`・既存の `(err as any)`・送信の 403 の経路) と §6.20 の検証コマンドの注は関数の名前で指す)。`origin/design/legal-consent-mobile` の 13b (v1.1) は、#1598 と PR #1733 より前に書かれたので、消えた画面に依存する部分を落とし、残す部分の file:line を取り直した (§0.5) |
 | 読み手 | 実装 (Sonnet 5.5) と敵対レビュー。実装は §6 だけを読んで手を止めずに書けることを完成条件にする |
 | 節番号 | 分冊前の 13 と同じ番号を使う。本冊に無い節 (§3.3 以外の §3 の多く・§6.4・§6.6.1〜§6.6.7・§6.9・§6.13 など) は 13a にある。両冊にある節番号は、それぞれの冊に関わる行だけを持つ。両方に関わる行は 13a に置く |
 
@@ -1400,7 +1400,7 @@ import { isLegalConsentRequiredError } from "../../lib/legal-consent";
 //         // 知らせ (ゲートが同意画面だけにする)、固定の文の例外を返す。本文は JSON で読んだ後なので文字列に戻して渡す
 //         // (`HTTP <状態>: <本文>` の Error を自分で作らない。tests/mobile-service-unavailable-raw-fetch.test.ts)。
 //         // 503 (緊急停止・メンテナンス中など) とそれ以外の失敗は、下の今の分岐のまま
-//         const failure = errorOfFailedResponse(res.status, JSON.stringify(err));
+//         const failure = errorOfFailedResponse(closed.status, JSON.stringify(err));
 //         if (isLegalConsentRequiredError(failure)) {
 //           Alert.alert(stoppedByServerAlertTitleOf(failure), failure.message);
 //           return;
@@ -1408,11 +1408,11 @@ import { isLegalConsentRequiredError } from "../../lib/legal-consent";
 ```
 
 - `failure` が `LegalConsentRequiredError` なら `stoppedByServerAlertTitleOf` は `LEGAL_CONSENT_ALERT_TITLE` (「同意が必要です」。6.6.14) を返し、`failure.message` は `LEGAL_CONSENT_REQUIRED_MESSAGE` (固定の文)。`LegalConsentRequiredError` は 6.6.14 の `StoppedByServerError` の union に入るので、型の絞り込みのまま渡せる。新しい定数は足さない。
-- `return` の後も `archiveSession` の `finally` の `setIsClosingSession(false)` は今までどおり動く。Provider が `required` になるとタブの layout がスピナーになり、シートは外れる (S27) ので、外れた後の `setState` は React が捨てる。新しいセッションは作らない (`createNewSession` は `res.ok` の分岐だけ)。
-- 分岐で見るのは `isLegalConsentRequiredError` だけ (`isStoppedByServerError` にしない)。`errorOfFailedResponse` は 503 にも `ServiceUnavailableError` を返すが、503 は今までどおり下の `serviceUnavailableMessageOf` の分岐が出す (見出し・文と、`apps/mobile/__tests__/ai/service-unavailable.test.tsx:137-151` の期待を変えない)。`errorOfFailedResponse` の中の 429・503 の判定 (`aiDailyLimitErrorOf`・`serviceUnavailableErrorOf`) は副作用の無い純粋な関数で、知らせるのは同意の 403 のときの `legalConsentRequiredErrorOf` だけ。
+- `return` の後も `archiveSession` の `finally` の `setIsClosingSession(false)` は今までどおり動く。Provider が `required` になるとタブの layout がスピナーになり、シートは外れる (S27) ので、外れた後の `setState` は React が捨てる。新しいセッションは作らない (`createNewSession` を `showFreshSessionAfterArchive` 経由で呼ぶのは、アーカイブが受け付けられた (ok の応答の) あとだけ = 成功の分岐と、受け付けたあとの例外の catch。#2265 Q5。403 では `closeAccepted` が立たない。`showFreshSessionAfterArchive` は一覧を読み直してから `createNewSession` を呼ぶ。#2272 S1)。
+- 分岐で見るのは `isLegalConsentRequiredError` だけ (`isStoppedByServerError` にしない)。`errorOfFailedResponse` は 503 にも `ServiceUnavailableError` を返すが、503 は今までどおり下の `serviceUnavailableMessageOf` の分岐が出す (見出し・文と、`apps/mobile/__tests__/ai/service-unavailable.test.tsx` の it『%s: 相談を閉じる操作が 503 なら、固定の文の Alert を出す』の期待を変えない)。`errorOfFailedResponse` の中の 429・503 の判定 (`aiDailyLimitErrorOf`・`serviceUnavailableErrorOf`) は副作用の無い純粋な関数で、知らせるのは同意の 403 のときの `legalConsentRequiredErrorOf` だけ。
 - `res.json()` が失敗した (JSON でない本文) ときの `err` は `{}` で、`JSON.stringify` は `'{}'` を渡すので、同意の 403 と見分けない (T-ML2 の「JSON でない本文は見分けない」と同じ結果)。
-- 既存の `(err as any)` (`:385-386`) は変えない (触る行の外)。§6.20 の `as any` の検査は足した行だけを見る。
-- 送信の 403 (`sendMessage`) は今のコードのまま同意画面へ回る: `errorOfFailedResponse` (`:461`) が `LegalConsentRequiredError` を投げ、catch (`:552`) の `isAiConsentRequiredError` は固定の文の message に当たらず (`HTTP 403` で始まらない)、`isStoppedByServerError` (`:565`) が true になって、メッセージを消し、入力を戻し、Alert「同意が必要です」に固定の文を出す (T-AS2)。
+- `archiveSession` の失敗の分岐の Alert「エラー」の既存の `(err as any)` は変えない (触る行の外)。§6.20 の `as any` の検査は足した行だけを見る。
+- 送信の 403 (`sendMessage`) は今のコードのまま同意画面へ回る: `sendMessage` の生の fetch の `errorOfFailedResponse(res.status, errText)` が `LegalConsentRequiredError` を投げ、`sendMessage` の catch の `isAiConsentRequiredError` は固定の文の message に当たらず (`HTTP 403` で始まらない)、`sendMessage` の catch の `isStoppedByServerError` の分岐に入って、メッセージを消し、入力を戻し、Alert「同意が必要です」に固定の文を出す (T-AS2)。
 
 ### 6.7 定数 (新設。すべて名前付き・根拠つき)
 
@@ -1671,7 +1671,7 @@ offload --host auto -e TZ=UTC -- npx tsc --noEmit -p apps/mobile               #
 offload --host auto -e TZ=UTC -- npm run lint
 offload --host auto -e TZ=UTC --fetch offload-vitest.json -- npx vitest run --reporter=json --outputFile=offload-vitest.json   # 全件 (passed / failed の実数で判定)
 offload --host auto -e TZ=UTC -- sh -c 'cd apps/mobile && npx jest'            # B2
-git diff origin/main...HEAD | grep -n '^+.*as any'                              # 0 件 (足した行だけを見る。AIAdvisorSheet.tsx の既存の (err as any) (385-386 行目) は 6.6.18 で変えない)
+git diff origin/main...HEAD | grep -n '^+.*as any'                              # 0 件 (足した行だけを見る。AIAdvisorSheet.tsx の archiveSession の失敗の分岐の既存の (err as any) は 6.6.18 で変えない)
 ```
 
 ### 6.21 配布 (#1115) の前の旧版のアプリの扱い (R-17)
@@ -1762,3 +1762,4 @@ Q-2 (13a の直読み)・Q-3 (ENFORCE off のときの新規の人)・Q-5・Q-6 
 | v2.14 | 2026-11-04 | 整合ゲートの候補の追随 (#2206 docs-1103c。製品の挙動は変えない): §1.3 の直接の読み書きの経路を今の main の全数にし (`settings.tsx`・`resume.tsx`・`routeAfterSignIn.ts`・`menu-tour-profile.ts` の `user_profiles`・`nutrition-targets.tsx` と `onboarding/complete/index.tsx` の `nutrition_targets`・`useV4MenuGeneration.ts` と `realtime.ts` の `weekly_menu_requests`・`pushNotifications.ts` の 2 つの関数)、#2203 (U3) の `replyActionStateOf` に合わせた・§6.2 と §6.21 の `AIAdvisorSheet.tsx` の関数の名前で指すセルに 312cfb04 の時点であることと今の失敗の読み方を添えた・§0.3・§3.3・S27 の `webViewBridge.ts` と `(tabs)/_layout.tsx` の行番号の参照を名前 (`requestBridgeCode`・`<AIFloatingFab />`) の参照にした |
 | v2.15 | 2026-11-04 | 整合ゲートの候補の追随 (#2227 docs-1104b。製品の挙動は変えない): 表紙の Status を実装済みの形にした・§0.3 の質問の画面の行・§1.3・§3.3 の初期設定の行の『呼ぶ API』・S28 (§3.2 と §4.2 の 2 か所) に `saveProgress` のあとの `POST /api/profile/completeness` (未同意なら 403) を足し、S28 の 403 の場所を最初の答えの保存のあとに直した・§1.3 の Realtime の購読に `useV4MenuGeneration.ts` の `subscribeToProgress` を足した |
 | v2.16 | 2026-11-05 | 記録の追随 (#2265 R docs-1105h。製品の挙動は変えない): §6.6.18 の正典のスニペットの `archiveSession` の失敗の分岐の行番号 (374-389・375・376-388 行目) と古いコードの引用 (`const err = await res.json().catch(() => ({}));`) をやめ、関数の名前で指した (#2265 Q1 (#2268) で、`archiveSession` は `/close` の失敗の本文を時間の上限 (`withinConsultationRequestTimeLimit`) の中で読み、失敗の分岐は `closed.status`・`closed.body` を見る)。同じ節の `finally` の行番号 (`:392-394`) も名前の参照にし、表紙の前提の行の『`312cfb04` の行のまま』の範囲を import の行に絞った |
+| v2.17 | 2026-11-05 | 記録の追随 (#2272 S1。製品の挙動は変えない): §6.6.18 の正典のスニペットの失敗の分岐の行を `errorOfFailedResponse(closed.status, …)` にした (直前の注のとおり。v2.16 で注だけを直していた)・箇条の『`createNewSession` は `res.ok` の分岐だけ』を #2265 Q5 (受け付けたあとの例外でも新しい相談を出す) と #2272 S1 (一覧を読み直してから作成する) のあとの形 (`showFreshSessionAfterArchive` 経由・アーカイブが受け付けられたあとだけ) にした・§6.6.18 の箇条と §6.20 の検証コマンドの注の `AIAdvisorSheet.tsx` の裸の行番号 (`(err as any)`・送信の `errorOfFailedResponse`・catch・`isStoppedByServerError`) と `service-unavailable.test.tsx` の行番号を名前の参照にし、表紙の前提の行の『`312cfb04` の行のまま』を §6.6.18 の import の行だけにした |
