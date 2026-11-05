@@ -22,6 +22,13 @@
  *          開き直しでは切り替える前の相談の会話を読み直した。新しい相談の作成 (createNewSession) も、作成を待つ間に選んだ相談を上書きした
  *      (b) 一覧 (fetchSessions) は応答の順に置き、閉じる前に始めた一覧が閉じる側の読み直しより後に返ると、閉じた相談が終了でない一覧が出た
  *      (c) 前の相談の遅れた会話の読み込みが終わると、今の読み込みの最中の印 (読み込み中の輪) を早く消した
+ *   8. (#2254 M1 の同じ型) 6 の止めが閉じていなかった
+ *      (a) 提案の実行の止めが真偽の値 1 つで、2 枚のカードの実行が重なると、先に終わった実行がもう一方の応答待ちの止め (と実行中の印)
+ *          を外し、まだ応答待ちなのに『相談を終了』を押せた
+ *      (b) 作成の最中・実行の応答待ちの最中も『新しい相談を始める』・相談の切り替えを押せ、会話の置き換えで作成中の一文が消え、
+ *          完了・結果の一文が新しい相談・切り替えた先の相談の画面に出た
+ *      (c) 作成の最中・実行の応答待ちの最中にチャットを閉じて開き直す (一覧を待つ間に作成・実行を始めたときも) と、開く側が会話を
+ *          読み直して作成中・結果の一文を消した。会話の読み込みの最中にも『1日献立変更』を押せ、足した作成中の一文が読み込んだ会話で消えた
  */
 
 import { act, createElement } from 'react';
@@ -1196,5 +1203,309 @@ describe('#2254 M1 2 遅れて返った一覧・会話の読み込みは、あ�
     });
     await waitFor(() => text().includes(MAIN_REPLY_TEXT));
     expect(requestCount(CREATE_SESSION_KEY)).toBe(0);
+  });
+});
+
+describe('#2254 M1 同じ型: 作成の最中・実行の応答待ちの止めは、重なり・新しい相談・相談の切り替え・開き直しでも外れない', () => {
+  const PROPOSAL_A_ID = 'proposal-a';
+  const PROPOSAL_B_ID = 'proposal-b';
+  const executeKeyOf = (messageId: string) => `POST /api/ai/consultation/actions/${messageId}/execute`;
+  const proposalMessage = (id: string, createdAt: string) => ({
+    id,
+    role: 'assistant',
+    content: MAIN_REPLY_TEXT,
+    proposedActions: { type: 'add_pantry_item', params: { name: '卵' } },
+    createdAt,
+  });
+  const EXECUTED_RESPONSE = { success: true, actionType: 'add_pantry_item', result: {} };
+  const EXECUTED_TEXT = '実行しました';
+
+  beforeEach(() => {
+    v4.generate.mockResolvedValue({ requestId: DAY_MENU_REQUEST_ID });
+  });
+
+  function executeButtons(): HTMLButtonElement[] {
+    return Array.from(container.querySelectorAll<HTMLButtonElement>('button')).filter((b) =>
+      (b.textContent ?? '').includes('実行する'),
+    );
+  }
+
+  /** 提案のカードを 2 枚 (A・B の順) 出す */
+  function withTwoProposals() {
+    handlers[messagesKey(SESSION_ID)] = async () =>
+      json(200, {
+        messages: [
+          proposalMessage(PROPOSAL_A_ID, '2026-11-01T00:00:00.000Z'),
+          proposalMessage(PROPOSAL_B_ID, '2026-11-01T00:00:01.000Z'),
+        ],
+      });
+  }
+
+  /** 提案のカードを 1 枚 (A) 出す */
+  function withOneProposal() {
+    handlers[messagesKey(SESSION_ID)] = async () =>
+      json(200, { messages: [proposalMessage(PROPOSAL_A_ID, '2026-11-01T00:00:00.000Z')] });
+  }
+
+  function newSessionButton(): HTMLButtonElement {
+    const button = buttonWithText('新しい相談を始める');
+    expect(button).toBeDefined();
+    return button!;
+  }
+
+  function sessionRow(title: string): HTMLButtonElement {
+    const row = buttonWithText(title);
+    expect(row).toBeDefined();
+    return row!;
+  }
+
+  it('(a) 2 枚のカードの実行が重なり、先の 1 件だけ応答が返っても『相談を終了』は止まったまま (押しても閉じない)。残りの実行中の印も残る', async () => {
+    withTwoProposals();
+    await openChat();
+    const executeA = hold(executeKeyOf(PROPOSAL_A_ID));
+    const executeB = hold(executeKeyOf(PROPOSAL_B_ID));
+    expect(executeButtons()).toHaveLength(2);
+    await act(async () => {
+      executeButtons()[0].click();
+    });
+    await act(async () => {
+      executeButtons()[1].click();
+    });
+    await waitFor(() => requestCount(executeKeyOf(PROPOSAL_A_ID)) === 1 && requestCount(executeKeyOf(PROPOSAL_B_ID)) === 1);
+    await waitFor(() => closeButton().disabled);
+
+    // 先に A の応答だけ返る (A のカードは実行済みで消え、B のカードだけ残る)
+    await act(async () => {
+      executeA.resolve(json(200, EXECUTED_RESPONSE));
+    });
+    await waitFor(() => executeButtons().length === 1);
+    await settle();
+    expect(closeButton().disabled).toBe(true);
+    // B はまだ応答待ち: B の「実行する」も止まったまま (重ねて実行させない)
+    expect(executeButtons()[0].disabled).toBe(true);
+    await act(async () => {
+      closeButton().click();
+    });
+    await settle();
+    expect(requestCount(closeKey(SESSION_ID))).toBe(0);
+
+    await act(async () => {
+      executeB.resolve(json(200, EXECUTED_RESPONSE));
+    });
+    await waitFor(() => !closeButton().disabled);
+    expect(requestCount(closeKey(SESSION_ID))).toBe(0);
+  });
+
+  it('(b) 作成の最中は『新しい相談を始める』・相談の行が止まり、押しても会話を置き換えず、作成中の一文が残る。完了のあとまた押せる', async () => {
+    await openChat();
+    await openSessionList();
+    await startDayMenu();
+    await waitFor(() => newSessionButton().disabled);
+    expect(sessionRow(OTHER_SESSION_TITLE).disabled).toBe(true);
+
+    await act(async () => {
+      newSessionButton().click();
+    });
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await settle();
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(0);
+    expect(requestCount(messagesKey(OTHER_SESSION_ID))).toBe(0);
+    expect(text()).toContain(DAY_MENU_STARTED_TEXT);
+
+    await act(async () => {
+      v4.options?.onGenerationComplete?.();
+    });
+    await waitFor(() => !newSessionButton().disabled);
+    expect(sessionRow(OTHER_SESSION_TITLE).disabled).toBe(false);
+    expect(text()).toContain(DAY_MENU_STARTED_TEXT);
+    expect(text()).toContain(DAY_MENU_DONE_TEXT);
+  });
+
+  it('(b) 入口の側: 作成を始めたのと同じ描画のうちに (止める描画の前に) 新しい相談・相談の切り替えを押しても置き換えない', async () => {
+    await openChat();
+    await openSessionList();
+    await act(async () => {
+      dayMenuButton().click();
+    });
+    await act(async () => {
+      createDayMenuButton().click();
+      await flushMicrotasksUntil(() => v4.generate.mock.calls.length === 1);
+      // まだ止める描画の前 (ボタンは押せる) に押す
+      expect(newSessionButton().disabled).toBe(false);
+      newSessionButton().click();
+      sessionRow(OTHER_SESSION_TITLE).click();
+    });
+    await settle();
+
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(0);
+    expect(requestCount(messagesKey(OTHER_SESSION_ID))).toBe(0);
+    expect(text()).toContain(DAY_MENU_STARTED_TEXT);
+  });
+
+  it('(b) 実行の応答待ちの最中も『新しい相談を始める』・相談の行が止まり、結果の一文は今の相談の画面に出る。結果のあとまた押せる', async () => {
+    withOneProposal();
+    await openChat();
+    await openSessionList();
+    const execute = hold(executeKeyOf(PROPOSAL_A_ID));
+    await act(async () => {
+      executeButtons()[0].click();
+    });
+    await waitFor(() => newSessionButton().disabled);
+    expect(sessionRow(OTHER_SESSION_TITLE).disabled).toBe(true);
+
+    await act(async () => {
+      newSessionButton().click();
+    });
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await settle();
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(0);
+    expect(requestCount(messagesKey(OTHER_SESSION_ID))).toBe(0);
+
+    await act(async () => {
+      execute.resolve(json(200, EXECUTED_RESPONSE));
+    });
+    await waitFor(() => !newSessionButton().disabled);
+    expect(text()).toContain(EXECUTED_TEXT);
+    expect(text()).toContain(MAIN_REPLY_TEXT);
+    expect(text()).not.toContain(WELCOME_TEXT);
+  });
+
+  it('(b) 入口の側: 実行の API を呼んだのと同じ描画のうちに新しい相談・相談の切り替えを押しても置き換えない', async () => {
+    withOneProposal();
+    await openChat();
+    await openSessionList();
+    const execute = hold(executeKeyOf(PROPOSAL_A_ID));
+    await act(async () => {
+      executeButtons()[0].click();
+      await flushMicrotasksUntil(() => requestCount(executeKeyOf(PROPOSAL_A_ID)) === 1);
+      expect(newSessionButton().disabled).toBe(false);
+      newSessionButton().click();
+      sessionRow(OTHER_SESSION_TITLE).click();
+    });
+    await settle();
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(0);
+    expect(requestCount(messagesKey(OTHER_SESSION_ID))).toBe(0);
+
+    await act(async () => {
+      execute.resolve(json(200, EXECUTED_RESPONSE));
+    });
+    await waitFor(() => text().includes(EXECUTED_TEXT));
+    expect(text()).not.toContain(WELCOME_TEXT);
+  });
+
+  it('(c) 作成の最中にチャットを閉じて開き直しても、会話を読み直さず作成中の一文が残る', async () => {
+    await openChat();
+    await startDayMenu();
+    await waitFor(() => closeButton().disabled);
+    await closeChatWindow();
+    const loadsBefore = requestCount(messagesKey(SESSION_ID));
+    const sessionsBefore = requestCount(SESSIONS_KEY);
+
+    await pressFab();
+    await waitFor(() => requestCount(SESSIONS_KEY) === sessionsBefore + 1);
+    await settle();
+    expect(requestCount(messagesKey(SESSION_ID))).toBe(loadsBefore);
+    expect(text()).toContain(DAY_MENU_STARTED_TEXT);
+  });
+
+  it('(c) 実行の応答待ちの最中にチャットを閉じて開き直しても、会話を読み直さず結果の一文が今の画面に出る', async () => {
+    withOneProposal();
+    await openChat();
+    const execute = hold(executeKeyOf(PROPOSAL_A_ID));
+    await act(async () => {
+      executeButtons()[0].click();
+    });
+    await waitFor(() => closeButton().disabled);
+    await closeChatWindow();
+    const loadsBefore = requestCount(messagesKey(SESSION_ID));
+    const sessionsBefore = requestCount(SESSIONS_KEY);
+
+    await pressFab();
+    await waitFor(() => requestCount(SESSIONS_KEY) === sessionsBefore + 1);
+    await settle();
+    expect(requestCount(messagesKey(SESSION_ID))).toBe(loadsBefore);
+
+    await act(async () => {
+      execute.resolve(json(200, EXECUTED_RESPONSE));
+    });
+    await waitFor(() => text().includes(EXECUTED_TEXT));
+  });
+
+  it('(c) 開き直しの一覧を待つ間に作成を始めて終えても、一覧のあとに会話を読み直さず作成中・完了の一文が残る', async () => {
+    await openChat();
+    await closeChatWindow();
+    const sessionsLoad = hold(SESSIONS_KEY);
+    await pressFab();
+    await waitFor(() => requestCount(SESSIONS_KEY) === 2);
+    const loadsBefore = requestCount(messagesKey(SESSION_ID));
+
+    await startDayMenu();
+    await act(async () => {
+      v4.options?.onGenerationComplete?.();
+    });
+    await waitFor(() => text().includes(DAY_MENU_DONE_TEXT));
+
+    await act(async () => {
+      sessionsLoad.resolve(
+        json(200, { sessions: [{ id: SESSION_ID, title: MAIN_SESSION_TITLE, messageCount: 2 }] }),
+      );
+    });
+    await settle();
+    expect(requestCount(messagesKey(SESSION_ID))).toBe(loadsBefore);
+    expect(text()).toContain(DAY_MENU_STARTED_TEXT);
+    expect(text()).toContain(DAY_MENU_DONE_TEXT);
+  });
+
+  it('(c) 開き直しの一覧を待つ間に実行して結果が返っても、一覧のあとに会話を読み直さず結果の一文が残る', async () => {
+    withOneProposal();
+    await openChat();
+    await closeChatWindow();
+    const sessionsLoad = hold(SESSIONS_KEY);
+    await pressFab();
+    await waitFor(() => requestCount(SESSIONS_KEY) === 2);
+    const loadsBefore = requestCount(messagesKey(SESSION_ID));
+
+    handlers[executeKeyOf(PROPOSAL_A_ID)] = async () => json(200, EXECUTED_RESPONSE);
+    await act(async () => {
+      executeButtons()[0].click();
+    });
+    await waitFor(() => text().includes(EXECUTED_TEXT));
+
+    await act(async () => {
+      sessionsLoad.resolve(
+        json(200, { sessions: [{ id: SESSION_ID, title: MAIN_SESSION_TITLE, messageCount: 2 }] }),
+      );
+    });
+    await settle();
+    expect(requestCount(messagesKey(SESSION_ID))).toBe(loadsBefore);
+    expect(text()).toContain(EXECUTED_TEXT);
+  });
+
+  it('(c) 会話の読み込みの最中は『1日献立変更』が止まる (足した作成中の一文が、読み込んだ会話で消える)。読み込みのあとまた押せる', async () => {
+    await openChat();
+    await openSessionList();
+    const otherLoad = hold(messagesKey(OTHER_SESSION_ID));
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === 1);
+    expect(dayMenuButton().disabled).toBe(true);
+
+    await act(async () => {
+      otherLoad.resolve(json(200, { messages: OTHER_MESSAGES }));
+    });
+    await waitFor(() => text().includes(OTHER_REPLY_TEXT));
+    expect(dayMenuButton().disabled).toBe(false);
+  });
+
+  it('対照: 作成・実行をしていない間は『新しい相談を始める』・相談の切り替えができ、開き直しで会話を読み直す', async () => {
+    await openChat();
+    await openSessionList();
+    expect(newSessionButton().disabled).toBe(false);
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => text().includes(OTHER_REPLY_TEXT));
+
+    await closeChatWindow();
+    const loadsBefore = requestCount(messagesKey(OTHER_SESSION_ID));
+    await pressFab();
+    await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === loadsBefore + 1);
   });
 });

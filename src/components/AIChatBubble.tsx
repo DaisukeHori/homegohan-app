@@ -492,7 +492,9 @@ export default function AIChatBubble() {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [executingActionId, setExecutingActionId] = useState<string | null>(null);
+  // 実行の応答待ちの提案のカード (メッセージの id) の集まり (#2254 M1)。1 つの値で持つと、2 枚のカードの実行が重なったとき、先に
+  // 終わった実行がもう一方のカードの実行中の印を消し、まだ応答待ちのカードの「実行する」をまた押せた
+  const [executingActionIds, setExecutingActionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [showSessionList, setShowSessionList] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
@@ -506,19 +508,32 @@ export default function AIChatBubble() {
   // 同意の確認を待つ間は入れない (その間に閉じるを押したら閉じる側が勝ち、作成・実行をしない。#2245 K1)。
   // 作成の最中をフックの isGenerating で見ないのは、依頼が失敗した (onError) あともフックの isGenerating が真のまま残り、閉じるが
   // ずっと押せなくなるため (作成の最中は、ここで始まりと終わり (完了・失敗) を自分で持つ)。
-  // ref でも持つのは、ボタンを止める描画を待たずに今の値を見て、同じ描画のうちの押下も止めるため (closingSessionRef と同じ形)
+  // 『新しい相談を始める』・相談の切り替えも同じ理由でこの間は止め、チャットを開き直したときの会話の読み直し (openChat) もしない
+  // (どれも会話を置き換えるので、作成中の一文が消え、完了・結果の一文が別の相談の画面に出る (開き直しは同じ相談の画面で消える)。#2254 M1)。
+  // ref でも持つのは、ボタンを止める描画を待たずに今の値を見て、同じ描画のうちの押下も止めるため (closingSessionRef と同じ形)。
+  // 1日献立の作成は一度に 1 つだけ (generateDayMenu の入口で止める。完了・失敗の通知 (onGenerationComplete / onError) はどの依頼の
+  // ものかを持たないので、重ねると先の完了で止めが外れる) なので真偽で持つ。提案の実行はカードごとに重なりうるので件数で持つ
+  // (真偽で持つと、2 件の実行が重なったとき、先に終わった実行がもう一方の応答待ちの止めを外した)
   const [isDayMenuInFlight, setIsDayMenuInFlight] = useState(false);
   const dayMenuInFlightRef = useRef(false);
-  const [isActionRequestInFlight, setIsActionRequestInFlight] = useState(false);
-  const actionRequestInFlightRef = useRef(false);
+  const [actionRequestsInFlight, setActionRequestsInFlight] = useState(0);
+  const actionRequestsInFlightRef = useRef(0);
   const markDayMenuInFlight = (inFlight: boolean) => {
     dayMenuInFlightRef.current = inFlight;
     setIsDayMenuInFlight(inFlight);
   };
-  const markActionRequestInFlight = (inFlight: boolean) => {
-    actionRequestInFlightRef.current = inFlight;
-    setIsActionRequestInFlight(inFlight);
+  /** 提案の実行の応答待ちを 1 件始める (終わったら必ず endActionRequest を 1 回呼ぶ) */
+  const beginActionRequest = () => {
+    actionRequestsInFlightRef.current += 1;
+    setActionRequestsInFlight(actionRequestsInFlightRef.current);
   };
+  /** 提案の実行の応答待ちが 1 件終わった */
+  const endActionRequest = () => {
+    actionRequestsInFlightRef.current -= 1;
+    setActionRequestsInFlight(actionRequestsInFlightRef.current);
+  };
+  /** 1日献立の作成の最中か・提案の実行の応答待ちが 1 件でもあるか (今の値。#2254 M1) */
+  const resultRequestInFlight = () => dayMenuInFlightRef.current || actionRequestsInFlightRef.current > 0;
   // FAB ドラッグ位置 (right/bottom px)
   const [fabPosition, setFabPosition] = useState<{ x: number; y: number }>(() => {
     if (typeof window === 'undefined') return { x: 16, y: 96 };
@@ -881,6 +896,10 @@ export default function AIChatBubble() {
       // 一覧を待つ間にほかの画面の操作 (新しい相談・相談の切り替え・開き直し) があった: 出す相談を変えず、会話も読み込まない
       // (#2254 M1。最後の操作が勝つ。以前は閉包の古い currentSessionId を見て、始めた新しい相談を一覧の相談で上書きした)
       if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
+      // 1日献立の作成の最中・提案の実行の応答待ちの最中 (チャットを閉じて開き直した): 出す相談を変えず、会話も読み直さない (#2254 M1。
+      // 読み直すと会話がサーバーの写しで置き換わり、作成中の一文が消える。画面はもうその相談の会話を出している)。
+      // 一覧を待つ間に作成・実行を始めたとき (終わったあとも) は、始めたのが画面の操作なので上の番号で止まる
+      if (resultRequestInFlight()) return;
 
       // 既存のアクティブセッションがあればそれを使う、なければ新規作成
       // ※ fetchSessions() の返り値を直接参照（stale state 回避）。今出している相談も閉包の state でなく ref で見る (#2254 M1)
@@ -905,10 +924,12 @@ export default function AIChatBubble() {
 
   /**
    * 「新しい相談を始める」の押下 (#2235 I8)。相談を閉じる応答待ちの間は始めない (ボタンも止めている。ref で見るのは、閉じると同じ
-   * 描画のうちの押下も止めるため)。閉じる側は応答のあと自分で新しい相談を作る (createNewSession) ので、ここで作ると 2 つになる
+   * 描画のうちの押下も止めるため)。閉じる側は応答のあと自分で新しい相談を作る (createNewSession) ので、ここで作ると 2 つになる。
+   * 1日献立の作成の最中・提案の実行の応答待ちの最中も始めない (#2254 M1。新しい相談の画面の置き換えで作成中の一文が消え、完了・結果の
+   * 一文が新しい相談の画面に出る。ボタンも止めている)
    */
   const pressNewSession = async () => {
-    if (closingSessionRef.current) return;
+    if (closingSessionRef.current || resultRequestInFlight()) return;
     await createNewSession();
   };
 
@@ -1435,14 +1456,20 @@ export default function AIChatBubble() {
     // 相談を閉じる (/close) の応答待ちの間は実行しない (#2245 K1。1日献立変更と同じ。実行の結果の一文が閉じる側の新しい相談の画面の
     // 置き換えで消え、実行したかが見えなくなる。ボタンも止めている。ref で見るのは、閉じると同じ描画のうちの押下も止めるため)
     if (closingSessionRef.current) return;
-    setExecutingActionId(messageId);
+    setExecutingActionIds(prev => new Set(prev).add(messageId));
+    // この実行が応答待ちの件数に入れたか (finally で入れた分だけ出す)
+    let actionRequestBegun = false;
     try {
       // 提案の実行は、サーバーで献立の生成などの AI の処理を始めることがある。未同意なら同意画面を出す (「同意しない」なら実行しない)
       if ((await ensureAiConsent()) === 'declined') return;
       // 同意の確認を待つ間に相談を閉じ始めた: 実行しない (#2245 K1。上と同じ)
       if (closingSessionRef.current) return;
-      // ここから応答 (結果の一文) までは『相談を終了』を止める (#2254 M1。finally で下ろす)
-      markActionRequestInFlight(true);
+      // ここから応答 (結果の一文) までは『相談を終了』・新しい相談・相談の切り替えを止める (#2254 M1。finally で件数から出す)
+      beginActionRequest();
+      actionRequestBegun = true;
+      // 実行を始めるのも画面の操作 (#2254 M1。結果の一文を今の画面に足す。モバイルの AIAdvisorSheet が送信を画面の操作にするのと
+      // 同じ決まり)。一覧を待っている開く (openChat) に、この画面の会話を読み直させない
+      startViewOperation();
 
       // まずアクションログを取得
       const res = await aiFetch(`/api/ai/consultation/actions/${messageId}/execute`, {
@@ -1510,8 +1537,13 @@ export default function AIChatBubble() {
         actionOutcomeChatMessage({ kind: 'failed', content: AI_CONSULTATION_ACTION_FAILED_FALLBACK_MESSAGE }),
       ]);
     } finally {
-      setExecutingActionId(null);
-      markActionRequestInFlight(false);
+      // このカードの印だけを外す (#2254 M1。ほかのカードの実行がまだ応答待ちなら、その印と止めは残す)
+      setExecutingActionIds(prev => {
+        const next = new Set(prev);
+        next.delete(messageId);
+        return next;
+      });
+      if (actionRequestBegun) endActionRequest();
     }
   };
 
@@ -1547,8 +1579,10 @@ export default function AIChatBubble() {
 
   // セッション切り替え
   const switchSession = async (sessionId: string) => {
-    // 相談を閉じる応答待ちの最中は切り替えない (#2235 I8。相談の行も止めている。閉じたあとの新しい相談が、選んだ相談を上書きする)
-    if (closingSessionRef.current) return;
+    // 相談を閉じる応答待ちの最中は切り替えない (#2235 I8。相談の行も止めている。閉じたあとの新しい相談が、選んだ相談を上書きする)。
+    // 1日献立の作成の最中・提案の実行の応答待ちの最中も切り替えない (#2254 M1。切り替えた先の会話の読み込みで作成中の一文が消え、
+    // 完了・結果の一文が切り替えた先の相談の画面に出る。相談の行も止めている)
+    if (closingSessionRef.current || resultRequestInFlight()) return;
     showSessionId(sessionId);
     setShowSessionList(false);
     await fetchMessages(sessionId);
@@ -1587,7 +1621,7 @@ export default function AIChatBubble() {
     if (!currentSessionId || isClosingSession || closingSessionRef.current || isSending || sendingRef.current) return;
     // 1日献立の作成の最中・提案の実行の応答待ちの最中も閉じない (#2254 M1。閉じたあとの新しい相談の画面の置き換えで、作成中の一文が
     // 消え、完了・結果の一文だけが新しい相談の画面に出る。ボタンも止めている。ref で見るのは、同じ描画のうちの押下も止めるため)
-    if (dayMenuInFlightRef.current || actionRequestInFlightRef.current) return;
+    if (resultRequestInFlight()) return;
 
     closingSessionRef.current = true;
     setIsClosingSession(true);
@@ -1670,7 +1704,8 @@ export default function AIChatBubble() {
     // 相談を閉じる (/close) の応答待ちの間は作らない (#2245 K1。チャットに足す『○月○日の献立を作成中...』が、閉じる側の新しい相談の
     // 画面の置き換え (createNewSession) で消え、作成の結果が見えなくなる。ボタンも止めている。ref で見るのは、閉じると同じ描画のうちの
     // 押下も止めるため)
-    if (isGeneratingDayMenu || closingSessionRef.current) return;
+    // 作成の最中 (dayMenuInFlightRef) も作らない (#2254 M1。作成は一度に 1 つ。重ねると、先の作成の完了で『相談を終了』の止めが外れる)
+    if (isGeneratingDayMenu || dayMenuInFlightRef.current || closingSessionRef.current) return;
     // 日付の欄が空・範囲の外なら作らない (#2245 K1。ボタンも止めている)
     if (!isDayMenuDateSelectable(selectedDate, dayMenuDateRangeOf(todayLocal()))) return;
 
@@ -1678,10 +1713,13 @@ export default function AIChatBubble() {
 
     // 未同意なら同意画面を出す (「同意しない」なら生成しない)
     if ((await ensureAiConsent()) === 'declined') return;
-    // 同意の確認を待つ間に相談を閉じ始めた: 作らない (#2245 K1。上と同じ)
-    if (closingSessionRef.current) return;
-    // ここから作成が終わる (完了・失敗の一文を足す) までは『相談を終了』を止める (#2254 M1。作成中の一文を閉じたあとの置き換えで消さない)
+    // 同意の確認を待つ間に相談を閉じ始めた: 作らない (#2245 K1。上と同じ)。同意の確認を待つ間に別の作成が始まった: 作らない (#2254 M1)
+    if (closingSessionRef.current || dayMenuInFlightRef.current) return;
+    // ここから作成が終わる (完了・失敗の一文を足す) までは『相談を終了』・新しい相談・相談の切り替えを止める (#2254 M1。作成中の一文を
+    // 会話の置き換えで消さない)
     markDayMenuInFlight(true);
+    // 作成を始めるのも画面の操作 (#2254 M1。提案の実行と同じ)。一覧を待っている開く (openChat) に、この画面の会話を読み直させない
+    startViewOperation();
 
     // 日付をフォーマット (#2235 I3。選んだ暦日 (YYYY-MM-DD) の年月日を formatDateJa で読む。以前の new Date(selectedDate) は
     // UTC の 0 時の瞬間を端末のローカル時刻 (getMonth / getDate) で読んでいたので、端末が UTC より西だと前の日になった)
@@ -1752,9 +1790,13 @@ export default function AIChatBubble() {
 
   // 送信・入力・おすすめの質問を止めるか: 送信中・相談を閉じる応答待ちの最中 (#2235 I8)
   const inputLocked = isSending || isClosingSession;
+  // 1日献立の作成の最中か・提案の実行の応答待ちが 1 件でもあるか (#2254 M1。描画の側)
+  const resultRequestPending = isDayMenuInFlight || actionRequestsInFlight > 0;
   // 『相談を終了』を止めるか: 閉じる応答待ち・送信中 (#2235 I8)・1日献立の作成の最中・提案の実行の応答待ちの最中 (#2254 M1)・相談が無い
-  const closeSessionLocked =
-    isClosingSession || isSending || isDayMenuInFlight || isActionRequestInFlight || !currentSessionId;
+  const closeSessionLocked = isClosingSession || isSending || resultRequestPending || !currentSessionId;
+  // 『新しい相談を始める』・相談の行を止めるか: 閉じる応答待ち (#2235 I8。送信中は止めない)・1日献立の作成の最中・提案の実行の
+  // 応答待ちの最中 (#2254 M1)
+  const sessionSwitchLocked = isClosingSession || resultRequestPending;
   // 1 日分の献立の日付の欄の下限 (JST の今日) と上限 (その 14 日後)。時計は 1 回だけ読む (#2235 I8。以前は下限と上限で別々に読み、
   // 上限は端末の 0 時の Date を setDate でずらしていた)。上限を暦の計算で扱えない日は、上限を付けない
   const dayMenuRange = showDayMenuModal ? dayMenuDateRangeOf(todayLocal()) : null;
@@ -1766,7 +1808,9 @@ export default function AIChatBubble() {
   const dayMenuCreatable =
     !isGeneratingDayMenu && !isClosingSession && dayMenuRange !== null && !dayMenuDateUnselectable;
   // 1日献立変更を押せるか: 送信中・作成中・相談を閉じる応答待ちの最中でないとき (#2245 K1。閉じる応答待ちを足した)
-  const dayMenuButtonLocked = isSending || isGeneratingDayMenu || isClosingSession;
+  // 会話の読み込みの最中 (読み込み中の輪) も止める (#2254 M1。作成中の一文を足しても、読み込んだ会話で置き換わって消える)。
+  // 作成の最中 (isDayMenuInFlight) も止める (作成は一度に 1 つ。generateDayMenu の入口でも止めている)
+  const dayMenuButtonLocked = isSending || isGeneratingDayMenu || isDayMenuInFlight || isClosingSession || isLoading;
 
   return (
     <>
@@ -1922,10 +1966,11 @@ export default function AIChatBubble() {
                   style={{ background: colors.card, borderColor: colors.border }}
                 >
                   <div className="p-2 max-h-40 overflow-y-auto">
-                    {/* 新しい相談・相談の切り替えは、相談を閉じる応答待ちの最中は止める (#2235 I8。送信中は止めない) */}
+                    {/* 新しい相談・相談の切り替えは、相談を閉じる応答待ちの最中は止める (#2235 I8。送信中は止めない)。
+                        1日献立の作成の最中・提案の実行の応答待ちの最中も止める (#2254 M1) */}
                     <button
                       onClick={pressNewSession}
-                      disabled={isClosingSession}
+                      disabled={sessionSwitchLocked}
                       className="w-full px-3 py-2 rounded-lg text-left flex items-center gap-2 hover:bg-gray-100 disabled:opacity-50"
                     >
                       <MessageCircle size={14} color={colors.primary} />
@@ -1938,7 +1983,7 @@ export default function AIChatBubble() {
                       <button
                         key={session.id}
                         onClick={() => switchSession(session.id)}
-                        disabled={isClosingSession}
+                        disabled={sessionSwitchLocked}
                         className={`w-full px-3 py-2 rounded-lg text-left hover:bg-gray-100 disabled:opacity-50 ${
                           currentSessionId === session.id ? 'bg-gray-100' : ''
                         }`}
@@ -2151,11 +2196,11 @@ export default function AIChatBubble() {
                               <div className="flex gap-2">
                                 <button
                                   onClick={() => executeAction(msg.proposedActions!.type, msg.id)}
-                                  disabled={executingActionId === msg.id || isClosingSession}
+                                  disabled={executingActionIds.has(msg.id) || isClosingSession}
                                   className="flex-1 py-2 rounded-lg flex items-center justify-center gap-1"
-                                  style={{ background: colors.success, opacity: (executingActionId === msg.id || isClosingSession) ? BUSY_BUTTON_OPACITY : 1 }}
+                                  style={{ background: colors.success, opacity: (executingActionIds.has(msg.id) || isClosingSession) ? BUSY_BUTTON_OPACITY : 1 }}
                                 >
-                                  {executingActionId === msg.id ? (
+                                  {executingActionIds.has(msg.id) ? (
                                     <Loader2 size={14} color="#fff" className="animate-spin" />
                                   ) : (
                                     <Check size={14} color="#fff" />
