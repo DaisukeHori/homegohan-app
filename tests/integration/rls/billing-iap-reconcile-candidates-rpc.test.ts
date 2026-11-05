@@ -138,9 +138,6 @@ async function deleteTestUsers(ids: string[]): Promise<void> {
     if (error) throw new Error(`deleteUser: ${error.message}`);
     const index = createdUserIds.indexOf(id);
     if (index >= 0) createdUserIds.splice(index, 1);
-    // 前回の残りを消す purge が it の中で今回の利用者を消したときも、afterEach がもう一度消そうとしないように外す
-    const current = currentTestUserIds.indexOf(id);
-    if (current >= 0) currentTestUserIds.splice(current, 1);
   }
   for (const table of ['personal_subscriptions', 'iap_reconcile_attempts'] as const) {
     const left = await srAdmin.from(table).select('user_id').in('user_id', ids);
@@ -563,6 +560,8 @@ describe('前回の実行の残りを消す (#2254 M4)', () => {
   it('a store row left by an interrupted earlier run (iap_product_id under PRODUCT_PREFIX with another RUN) is returned as a candidate until purgeLeftoverStoreUsers deletes the user with its rows; by default a row under another prefix stays, and the beforeAll form (LEFTOVER_PRODUCT_PREFIXES) deletes it too', async () => {
     const leftover = await createUser('leftover');
     const keep = await createUser('leftover-keep');
+    // 前回の実行の利用者に見せる: この it の片付け (afterEach) の対象から外す (purge が消す。消さなかったときは afterAll の安全網が消す)
+    currentTestUserIds.splice(0);
     // 前回の実行が残した形: 別の RUN の商品のストアの行 (期限を過ぎた live な行)
     await insertStoreRow(leftover.id, { status: 'active', periodEnd: at(-3), syncedAt: null, product: `${PRODUCT_PREFIX}previous-run.pro.month` });
     // 既定では残す行: PRODUCT_PREFIX で始まらない商品のストアの行 (ほかのテスト・本物の購読の代わり)
