@@ -128,7 +128,7 @@ describe.each(VARIANTS)('$name: app_logs.user_id の外部キーで落ちた行 
     expect(rows).toHaveLength(2);
     const [first, retried] = rows;
     expect(first.user_id).toBe(MISSING_USER_ID);
-    expect(retried).not.toHaveProperty('user_id');
+    expect(retried.user_id).toBeUndefined();
     expect(retried.metadata).toEqual({ event: 'TRANSFER', [UNLINKED_USER_ID_KEY]: MISSING_USER_ID });
     // user_id と metadata のほかは、最初の行と同じものを入れ直す
     const retriedRest = omitKeys(retried, ['metadata']);
@@ -148,7 +148,7 @@ describe.each(VARIANTS)('$name: app_logs.user_id の外部キーで落ちた行 
 
     const rows = insertedRows();
     expect(rows).toHaveLength(2);
-    expect(rows[1]).not.toHaveProperty('user_id');
+    expect(rows[1].user_id).toBeUndefined();
     expect(rows[1]).toMatchObject({ level, message: '利用者のログ', metadata: { [UNLINKED_USER_ID_KEY]: MISSING_USER_ID } });
   });
 
@@ -237,21 +237,43 @@ describe.each(VARIANTS)('$name: console に出す metadata は sanitizeMetadata 
   });
 });
 
-describe('log-sanitizer の rowForForeignKeyRetry (#2259 P3)', () => {
+describe('log-sanitizer の entryForForeignKeyRetry (#2259 P3)', () => {
   async function loadSanitizer() {
     return import('../supabase/functions/_shared/log-sanitizer.ts');
   }
 
-  it('外部キー違反で user_id のある行: user_id を省き、metadata に元の user_id を足した新しい行を返す (引数は書き換えない)', async () => {
-    const { rowForForeignKeyRetry, sanitizeLogEntry } = await loadSanitizer();
-    const row = sanitizeLogEntry({ level: 'error', source: 'api-route', user_id: MISSING_USER_ID, message: 'x', metadata: { a: 1 } });
-    const snapshot = structuredClone(row);
+  it('外部キー違反で user_id のある行: user_id を省き、metadata の先頭に元の user_id を足した新しい行を返す (引数は書き換えない)', async () => {
+    const { entryForForeignKeyRetry } = await loadSanitizer();
+    const entry = { level: 'error', source: 'api-route', user_id: MISSING_USER_ID, message: 'x', metadata: { a: 1 } };
+    const snapshot = structuredClone(entry);
 
-    const retried = rowForForeignKeyRetry(FK_ERROR, row);
+    const retried = entryForForeignKeyRetry(FK_ERROR, entry);
 
-    expect(retried).toEqual({ level: 'error', source: 'api-route', message: 'x', metadata: { a: 1, [UNLINKED_USER_ID_KEY]: MISSING_USER_ID } });
+    expect(retried).toEqual({ level: 'error', source: 'api-route', message: 'x', metadata: { [UNLINKED_USER_ID_KEY]: MISSING_USER_ID, a: 1 } });
     expect(retried).not.toHaveProperty('user_id');
-    expect(row).toEqual(snapshot);
+    expect(Object.keys(retried?.metadata ?? {})[0]).toBe(UNLINKED_USER_ID_KEY);
+    expect(entry).toEqual(snapshot);
+  });
+
+  it('元の metadata に同じ名前のキーがあっても、入れ直した理由の user_id で上書きする', async () => {
+    const { entryForForeignKeyRetry } = await loadSanitizer();
+    const entry = { level: 'warn', source: 'edge-function', user_id: MISSING_USER_ID, message: 'x', metadata: { [UNLINKED_USER_ID_KEY]: 'other', b: 2 } };
+    expect(entryForForeignKeyRetry(FK_ERROR, entry)?.metadata).toEqual({ [UNLINKED_USER_ID_KEY]: MISSING_USER_ID, b: 2 });
+  });
+
+  it('metadata が大きくて sanitizeLogEntry が切り詰めても、元の user_id はプレビューの頭に残る', async () => {
+    const { entryForForeignKeyRetry, sanitizeLogEntry } = await loadSanitizer();
+    /** 8KB の上限を十分に超える長さ */
+    const OVERSIZED_CHARS = 20_000;
+    const entry = { level: 'error', source: 'api-route', user_id: MISSING_USER_ID, message: 'x', metadata: { big: 'y'.repeat(OVERSIZED_CHARS) } };
+
+    const retried = entryForForeignKeyRetry(FK_ERROR, entry);
+    if (!retried) throw new Error('入れ直す行が返らなかった');
+    const row = sanitizeLogEntry(retried);
+
+    expect(row.user_id).toBeUndefined();
+    expect(row.metadata?._truncated).toBe(true);
+    expect(String(row.metadata?._preview)).toContain(`"${UNLINKED_USER_ID_KEY}":"${MISSING_USER_ID}"`);
   });
 
   it.each([
@@ -260,14 +282,17 @@ describe('log-sanitizer の rowForForeignKeyRetry (#2259 P3)', () => {
     ['null', null],
     ['文字列', FOREIGN_KEY_VIOLATION],
   ])('error が %s なら null (入れ直さない)', async (_label, error) => {
-    const { rowForForeignKeyRetry, sanitizeLogEntry } = await loadSanitizer();
-    const row = sanitizeLogEntry({ level: 'warn', source: 'edge-function', user_id: MISSING_USER_ID, message: 'x' });
-    expect(rowForForeignKeyRetry(error, row)).toBeNull();
+    const { entryForForeignKeyRetry } = await loadSanitizer();
+    const entry = { level: 'warn', source: 'edge-function', user_id: MISSING_USER_ID, message: 'x' };
+    expect(entryForForeignKeyRetry(error, entry)).toBeNull();
   });
 
-  it('user_id の無い行 (uuid でない user_id を sanitizeLogEntry が外した行も) は 23503 でも null', async () => {
-    const { rowForForeignKeyRetry, sanitizeLogEntry } = await loadSanitizer();
-    const row = sanitizeLogEntry({ level: 'warn', source: 'edge-function', user_id: 'unknown', message: 'x' });
-    expect(rowForForeignKeyRetry(FK_ERROR, row)).toBeNull();
+  it.each([
+    ['user_id が無い', undefined],
+    ['uuid でない user_id (sanitizeLogEntry が外して insert した行)', 'unknown'],
+  ])('%s 行は 23503 でも null', async (_label, userId) => {
+    const { entryForForeignKeyRetry } = await loadSanitizer();
+    const entry = { level: 'warn', source: 'edge-function', user_id: userId, message: 'x' };
+    expect(entryForForeignKeyRetry(FK_ERROR, entry)).toBeNull();
   });
 });

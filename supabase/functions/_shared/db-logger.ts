@@ -7,7 +7,7 @@
 import { createClient } from "@supabase/supabase-js";
 import {
   FOREIGN_KEY_RETRY_CONSOLE_MESSAGE,
-  rowForForeignKeyRetry,
+  entryForForeignKeyRetry,
   sanitizeLogEntry,
   sanitizeMetadata,
 } from "./log-sanitizer.ts";
@@ -51,19 +51,18 @@ async function saveLog(entry: LogEntry): Promise<void> {
 
     // #1171: 保存前に message / error_message / error_stack / metadata の秘密情報マスキングと
     // 文字数の切り詰めを行い、uuid でない user_id は NULL にする (Next.js 側の src/lib/db-logger.ts と同じ処理)
-    const row = sanitizeLogEntry(entry);
-    const { error } = await supabase.from('app_logs').insert(row);
+    const { error } = await supabase.from('app_logs').insert(sanitizeLogEntry(entry));
     if (!error) return;
 
     // #2259 P3: user_id が auth.users に無い (外部キー違反) なら、user_id を外して 1 回だけ入れ直す
     // (元の user_id は metadata に残す。Next.js 側と同じ処理)。それ以外の失敗は従来どおり console にだけ残す
-    const retryRow = rowForForeignKeyRetry(error, row);
-    if (!retryRow) {
+    const retryEntry = entryForForeignKeyRetry(error, entry);
+    if (!retryEntry) {
       console.error('Failed to save log to DB:', error);
       return;
     }
     console.warn(FOREIGN_KEY_RETRY_CONSOLE_MESSAGE, error);
-    const retry = await supabase.from('app_logs').insert(retryRow);
+    const retry = await supabase.from('app_logs').insert(sanitizeLogEntry(retryEntry));
     if (retry.error) {
       console.error('Failed to save log to DB:', retry.error);
     }
