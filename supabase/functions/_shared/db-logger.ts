@@ -5,7 +5,12 @@
 
 // 版は supabase/functions/deno.json の imports で固定する (#1518。以前は esm.sh からメジャー版だけの指定で読んでいた)
 import { createClient } from "@supabase/supabase-js";
-import { sanitizeLogEntry } from "./log-sanitizer.ts";
+import {
+  FOREIGN_KEY_RETRY_CONSOLE_MESSAGE,
+  entryForForeignKeyRetry,
+  sanitizeLogEntry,
+  sanitizeMetadata,
+} from "./log-sanitizer.ts";
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -47,9 +52,19 @@ async function saveLog(entry: LogEntry): Promise<void> {
     // #1171: 保存前に message / error_message / error_stack / metadata の秘密情報マスキングと
     // 文字数の切り詰めを行い、uuid でない user_id は NULL にする (Next.js 側の src/lib/db-logger.ts と同じ処理)
     const { error } = await supabase.from('app_logs').insert(sanitizeLogEntry(entry));
+    if (!error) return;
 
-    if (error) {
+    // #2259 P3: user_id が auth.users に無い (外部キー違反) なら、user_id を外して 1 回だけ入れ直す
+    // (元の user_id は metadata に残す。Next.js 側と同じ処理)。それ以外の失敗は従来どおり console にだけ残す
+    const retryEntry = entryForForeignKeyRetry(error, entry);
+    if (!retryEntry) {
       console.error('Failed to save log to DB:', error);
+      return;
+    }
+    console.warn(FOREIGN_KEY_RETRY_CONSOLE_MESSAGE, error);
+    const retry = await supabase.from('app_logs').insert(sanitizeLogEntry(retryEntry));
+    if (retry.error) {
+      console.error('Failed to save log to DB:', retry.error);
     }
   } catch (e) {
     console.error('Failed to save log to DB:', e);
@@ -138,9 +153,12 @@ export function createLogger(functionName: string, requestId?: string) {
   const log = (level: LogLevel, message: string, metadata?: Record<string, unknown>) => {
     const timestamp = new Date().toISOString();
     const logLine = `[${timestamp}] [${level.toUpperCase()}] [${functionName}] ${message}`;
-    
+    // #2259 P3: app_logs への保存と同じく、コンソール出力の metadata にも秘密情報マスキングと切り詰めを通す
+    // (Supabase の関数ログに生の metadata を残さない。Next.js 側の src/lib/db-logger.ts と同じ形)
+    const sanitizedMetadata = sanitizeMetadata(metadata);
+
     // コンソール出力 (水準に合ったメソッドで。#2254 M3)
-    writeConsole(level, logLine, metadata || '');
+    writeConsole(level, logLine, sanitizedMetadata || '');
     
     // DB保存（非同期、待たない。保存が終わるまで関数は止めさせない (#1909)）
     saveLogInBackground({
@@ -160,7 +178,7 @@ export function createLogger(functionName: string, requestId?: string) {
       const errorStack = error instanceof Error ? error.stack : undefined;
       
       const timestamp = new Date().toISOString();
-      console.error(`[${timestamp}] [ERROR] [${functionName}] ${message}`, error, metadata || '');
+      console.error(`[${timestamp}] [ERROR] [${functionName}] ${message}`, error, sanitizeMetadata(metadata) || '');
       
       saveLogInBackground({
         ...baseEntry,
@@ -181,7 +199,7 @@ export function createLogger(functionName: string, requestId?: string) {
       const userLog = (level: LogLevel, message: string, metadata?: Record<string, unknown>) => {
         const timestamp = new Date().toISOString();
         // 無印のロガーと同じく、水準に合った console のメソッドで出す (warn は console.warn。#2254 M3)
-        writeConsole(level, `[${timestamp}] [${level.toUpperCase()}] [${functionName}] [user:${userId}] ${message}`, metadata || '');
+        writeConsole(level, `[${timestamp}] [${level.toUpperCase()}] [${functionName}] [user:${userId}] ${message}`, sanitizeMetadata(metadata) || '');
         
         saveLogInBackground({
           ...userEntry,
@@ -199,7 +217,7 @@ export function createLogger(functionName: string, requestId?: string) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           const errorStack = error instanceof Error ? error.stack : undefined;
           
-          console.error(`[${new Date().toISOString()}] [ERROR] [${functionName}] [user:${userId}] ${message}`, error, metadata || '');
+          console.error(`[${new Date().toISOString()}] [ERROR] [${functionName}] [user:${userId}] ${message}`, error, sanitizeMetadata(metadata) || '');
           
           saveLogInBackground({
             ...userEntry,
