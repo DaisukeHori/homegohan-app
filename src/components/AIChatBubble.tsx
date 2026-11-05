@@ -431,6 +431,29 @@ function isDayMenuDateSelectable(date: string, range: { min: string; max: string
   return range.max === null || date <= range.max;
 }
 
+/**
+ * 1 日分の献立の日付の欄が空・形の崩れ・範囲の外で「作成する」を止めているときに、欄の下に出す理由の一文 (#2245 L1。以前は
+ * ボタンが薄くなるだけで、なぜ押せないかが見えなかった。欄の下の『今日から2週間先まで選択できます』の案内とは別に出す)
+ */
+export const DAY_MENU_DATE_UNSELECTABLE_MESSAGE = 'この日付では作成できません。今日から2週間先までの日を選んでください';
+
+/**
+ * 1 日分の献立の日付の欄の既定の日 (#2245 L1)。週の画面の表示の日 (weeklyDate) が、今日以外の実在する暦日で、欄の範囲
+ * (dayMenuDateRangeOf(today)) の中ならその日 (Bug-5 #21)。表示の日が無い・今日・範囲の外 (過去の週・15 日以上先・0 時を
+ * またいだ前日) なら明日 (今日を黙って作り直さないため)。以前は範囲の外の表示の日もそのまま既定にしていて、K1 で範囲の外を
+ * 止めてから「作成する」が理由も出ずに押せなかった。明日を暦の計算で扱えない日 (9999-12-31) は今日
+ */
+function defaultDayMenuDateOf(today: string, weeklyDate: unknown): string {
+  if (
+    typeof weeklyDate === 'string' &&
+    weeklyDate !== today &&
+    isDayMenuDateSelectable(weeklyDate, dayMenuDateRangeOf(today))
+  ) {
+    return weeklyDate;
+  }
+  return shiftCalendarDayOrNull(today, DAY_MENU_DEFAULT_OFFSET_DAYS) ?? today;
+}
+
 /** 献立の作成が、同意が無くて止められたときにチャットに出す一文 (T15 / #1154。同意画面は AiConsentRequiredHost が出す) */
 const V4_CONSENT_REQUIRED_CHAT_NOTE =
   'AI へのデータ提供への同意が必要なため、献立は作成しませんでした。同意したあとに、もう一度お試しください。';
@@ -499,17 +522,10 @@ export default function AIChatBubble() {
   // page (published via window.__weeklyCurrentDate). If unavailable, fall back
   // to *tomorrow* rather than today to avoid silently overwriting today's
   // existing menu when the user opens this modal for a future day.
-  // 明日は、時計を 1 回だけ読んだ JST の今日から暦の計算でずらす (#2235 I8)。翌日を暦の計算で扱えない日 (9999-12-31) は今日
-  const computeDefaultDayMenuDate = (): string => {
-    const todayStr = todayLocal();
-    if (typeof window !== 'undefined') {
-      const fromWeekly = window.__weeklyCurrentDate;
-      if (typeof fromWeekly === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(fromWeekly)) {
-        if (fromWeekly !== todayStr) return fromWeekly;
-      }
-    }
-    return shiftCalendarDayOrNull(todayStr, DAY_MENU_DEFAULT_OFFSET_DAYS) ?? todayStr;
-  };
+  // 明日は、時計を 1 回だけ読んだ JST の今日から暦の計算でずらす (#2235 I8)。翌日を暦の計算で扱えない日 (9999-12-31) は今日。
+  // 表示の日が日付の欄の範囲の外なら明日 (#2245 L1。defaultDayMenuDateOf)
+  const computeDefaultDayMenuDate = (): string =>
+    defaultDayMenuDateOf(todayLocal(), typeof window === 'undefined' ? undefined : window.__weeklyCurrentDate);
   const [selectedDate, setSelectedDate] = useState<string>(() => computeDefaultDayMenuDate());
 
   // Recompute default whenever the modal is opened, so it picks up the
@@ -1663,8 +1679,10 @@ export default function AIChatBubble() {
   const dayMenuToday = dayMenuRange === null ? null : dayMenuRange.min;
   const dayMenuMaxDate = dayMenuRange === null ? null : dayMenuRange.max;
   // 作成するを押せるか: 作成中・相談を閉じる応答待ちの最中でなく、日付が実在する暦日で欄の範囲の中のとき (#2245 K1)
+  // 日付の欄が空・形の崩れ・範囲の外か (#2245 L1。欄の下に理由の一文を出す)
+  const dayMenuDateUnselectable = dayMenuRange !== null && !isDayMenuDateSelectable(selectedDate, dayMenuRange);
   const dayMenuCreatable =
-    !isGeneratingDayMenu && !isClosingSession && dayMenuRange !== null && isDayMenuDateSelectable(selectedDate, dayMenuRange);
+    !isGeneratingDayMenu && !isClosingSession && dayMenuRange !== null && !dayMenuDateUnselectable;
   // 1日献立変更を押せるか: 送信中・作成中・相談を閉じる応答待ちの最中でないとき (#2245 K1。閉じる応答待ちを足した)
   const dayMenuButtonLocked = isSending || isGeneratingDayMenu || isClosingSession;
 
@@ -2222,6 +2240,15 @@ export default function AIChatBubble() {
                 <p style={{ fontSize: 11, color: colors.textMuted, marginTop: 6, textAlign: 'center' }}>
                   今日から2週間先まで選択できます
                 </p>
+                {dayMenuDateUnselectable && (
+                  <p
+                    role="alert"
+                    data-testid="day-menu-date-unselectable"
+                    style={{ fontSize: 12, color: colors.primary, marginTop: 6, textAlign: 'center' }}
+                  >
+                    {DAY_MENU_DATE_UNSELECTABLE_MESSAGE}
+                  </p>
+                )}
               </div>
 
               <div className="flex gap-2">
