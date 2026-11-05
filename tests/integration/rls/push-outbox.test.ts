@@ -1385,3 +1385,118 @@ describe('#1136 前回の実行の残りを消す: weekly_menu_requests (#2254 M
     expect(await requestPromptsOf(ids)).toEqual({ [currentId]: null });
   });
 });
+
+// ================================================================
+// 前回の実行の残りを消す: 目印より前の weekly_menu_requests (#2259 P4)
+//   この節もファイルの末尾に置く (上の節と同じく、前の節の行番号をずらさないため。ここで beforeAll を足す)
+// ================================================================
+/**
+ * newUser が作る利用者のメールの頭と尾 (newUser の `rls-1136-push-${TS}-${label}@homegohan.test`。#1729 の段 A から変わっていない)。
+ * 目印 (OLD_REQUEST_PROMPT) を入れる前 (#2254 M4 より前) の insertRequest は、created_at を 2000 年にした行に prompt を入れなかったので、
+ * 実行が途中で止まって残った行は prompt が null で、purgeLeftoverMenuRequests (目印で消す) には当たらない。weekly_menu_requests.user_id は
+ * auth.users を ON DELETE CASCADE で参照するので、そうした行が残っているなら、その持ち主 (このファイルの利用者) も消えずに残っている。
+ * 持ち主のメールでこのファイルの行と分かるので、それで消す
+ */
+const OWN_USER_EMAIL_PREFIX = 'rls-1136-push-';
+const OWN_USER_EMAIL_DOMAIN = '@homegohan.test';
+/**
+ * 既定の purgeUnmarkedLeftoverMenuRequests (OWN_USER_EMAIL_PREFIX だけ) が消さないことを確かめるための、ほかの頭の利用者 (ほかのテストの
+ * 利用者の代わり)。OWN_USER_EMAIL_PREFIX で始まらない。このファイルの purge のテストだけが作る利用者なので、その前回の残りは beforeAll
+ * (LEFTOVER_USER_EMAIL_PREFIXES) が消す
+ */
+const OTHER_USER_EMAIL_PREFIX = 'rls-1136-other-push-';
+/** このファイルが作る利用者のメールの頭の全部。beforeAll は、これらの利用者の目印の無い 2000 年の行を消す */
+const LEFTOVER_USER_EMAIL_PREFIXES: readonly string[] = [OWN_USER_EMAIL_PREFIX, OTHER_USER_EMAIL_PREFIX];
+/** 候補の行を読む 1 回の select の行数。PostgREST の 1 回の上限 (max_rows。supabase/config.toml で変えていないので既定の 1000) を超えない */
+const LEFTOVER_SCAN_PAGE_ROWS = 1000;
+
+function isUserEmailOf(email: string | undefined, prefixes: readonly string[]): boolean {
+  if (!email || !email.endsWith(OWN_USER_EMAIL_DOMAIN)) return false;
+  return prefixes.some((prefix) => email.startsWith(prefix));
+}
+
+/**
+ * 前回の実行が途中で止まって残った、目印の無い (prompt が null の) 2000 年の weekly_menu_requests の行のうち、持ち主のメールが prefixes の頭の
+ * (このファイルの) 利用者のものを消す。status は問わない。ほかのテストの利用者の行・目印のある行・今の時刻の行は消さない。
+ * 今回の実行の insertRequest は 2000 年の行に必ず目印を入れるので、テストの間に呼んでも今回のほかのテストの行には当たらない。
+ * prefixes の既定は OWN_USER_EMAIL_PREFIX だけ (purge のテストが、ほかの頭の利用者の行を消さないことを確かめる形)。
+ * beforeAll は LEFTOVER_USER_EMAIL_PREFIXES を渡す
+ */
+async function purgeUnmarkedLeftoverMenuRequests(prefixes: readonly string[] = [OWN_USER_EMAIL_PREFIX]): Promise<void> {
+  const ownerIsOurs = new Map<string, boolean>();
+  let afterId: string | null = null;
+  for (;;) {
+    let query = srAdmin
+      .from('weekly_menu_requests')
+      .select('id, user_id')
+      .is('prompt', null)
+      .lt('created_at', OLD_TIMESTAMP_END)
+      .order('id')
+      .limit(LEFTOVER_SCAN_PAGE_ROWS);
+    if (afterId) query = query.gt('id', afterId);
+    const { data, error } = await query;
+    if (error) throw new Error(`select unmarked leftover weekly_menu_requests: ${error.message}`);
+    const rows = (data ?? []) as Array<{ id: string; user_id: string }>;
+    for (const row of rows) {
+      if (ownerIsOurs.has(row.user_id)) continue;
+      const owner = await srAdmin.auth.admin.getUserById(row.user_id);
+      if (owner.error) throw new Error(`getUserById ${row.user_id}: ${owner.error.message}`);
+      ownerIsOurs.set(row.user_id, isUserEmailOf(owner.data.user?.email, prefixes));
+    }
+    if (rows.length < LEFTOVER_SCAN_PAGE_ROWS) break;
+    afterId = rows[rows.length - 1].id;
+  }
+  const ownerIds = [...ownerIsOurs].filter(([, ours]) => ours).map(([userId]) => userId);
+  if (ownerIds.length === 0) return;
+  const { error } = await srAdmin
+    .from('weekly_menu_requests')
+    .delete()
+    .in('user_id', ownerIds)
+    .is('prompt', null)
+    .lt('created_at', OLD_TIMESTAMP_END);
+  if (error) throw new Error(`delete unmarked leftover weekly_menu_requests: ${error.message}`);
+}
+
+beforeAll(async () => {
+  await purgeUnmarkedLeftoverMenuRequests(LEFTOVER_USER_EMAIL_PREFIXES);
+}, 60_000);
+
+describe('#1136 前回の実行の残りを消す: 目印より前の weekly_menu_requests (#2259 P4)', () => {
+  it('purgeUnmarkedLeftoverMenuRequests は、既定では newUser の利用者の目印の無い 2000 年の行だけを消し、目印のある行・今の時刻の行・ほかの頭の利用者の行は残す。beforeAll の形 (LEFTOVER_USER_EMAIL_PREFIXES) はほかの頭の利用者の目印の無い 2000 年の行も消す', async () => {
+    // 前回の実行 (目印を入れる前) が残した形: newUser の利用者の、created_at が 2000 年で prompt が null の行
+    // (insertRequest は 2000 年の行に目印を入れるので、目印を外して前の形にする)
+    const userId = await newUser('purge-unmarked');
+    const unmarkedId = await insertRequest(userId, { status: 'pending', createdAt: oldTimestamp() });
+    expect((await srAdmin.from('weekly_menu_requests').update({ prompt: null }).eq('id', unmarkedId)).error).toBeNull();
+    // 残す行: 同じ利用者の今の時刻の行と、ほかの頭の利用者の目印の無い 2000 年の行
+    const currentId = await insertRequest(userId, { status: 'pending' });
+    const otherEmail = `${OTHER_USER_EMAIL_PREFIX}${TS}-purge-unmarked${OWN_USER_EMAIL_DOMAIN}`;
+    const created = await srAdmin.auth.admin.createUser({ email: otherEmail, password: PASSWORD, email_confirm: true });
+    if (created.error || !created.data.user) throw new Error(`createUser ${otherEmail}: ${created.error?.message}`);
+    createdUserIds.push(created.data.user.id);
+    const otherUnmarkedId = await insertRequest(created.data.user.id, { status: 'pending', createdAt: oldTimestamp() });
+    expect((await srAdmin.from('weekly_menu_requests').update({ prompt: null }).eq('id', otherUnmarkedId)).error).toBeNull();
+
+    // 目印で消す purge (#2254 M4 の beforeAll の形) は、目印の無い 2000 年の行を消さない (この節が要る理由)
+    await purgeLeftoverMenuRequests(LEFTOVER_REQUEST_PROMPTS);
+    const unmarkedIds = [unmarkedId, currentId, otherUnmarkedId];
+    expect(await requestPromptsOf(unmarkedIds)).toEqual({ [unmarkedId]: null, [currentId]: null, [otherUnmarkedId]: null });
+
+    // 残す行: 同じ利用者の目印のある 2000 年の行 (目印の行は purgeLeftoverMenuRequests の受け持ち)
+    const markedId = await insertRequest(userId, { status: 'pending', createdAt: oldTimestamp() });
+    const ids = [...unmarkedIds, markedId];
+    expect(await requestPromptsOf(ids)).toEqual({
+      [unmarkedId]: null,
+      [currentId]: null,
+      [otherUnmarkedId]: null,
+      [markedId]: OLD_REQUEST_PROMPT,
+    });
+
+    await purgeUnmarkedLeftoverMenuRequests();
+    expect(await requestPromptsOf(ids)).toEqual({ [currentId]: null, [otherUnmarkedId]: null, [markedId]: OLD_REQUEST_PROMPT });
+
+    // beforeAll の形は、この purge のテストが残しうるほかの頭の利用者の行も消す。今の時刻の行・目印のある行は残す
+    await purgeUnmarkedLeftoverMenuRequests(LEFTOVER_USER_EMAIL_PREFIXES);
+    expect(await requestPromptsOf(ids)).toEqual({ [currentId]: null, [markedId]: OLD_REQUEST_PROMPT });
+  });
+});
