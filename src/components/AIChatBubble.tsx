@@ -1602,15 +1602,18 @@ export default function AIChatBubble() {
   const executeAction = async (actionId: string, messageId: string) => {
     // 相談を閉じる (/close) の応答待ちの間は実行しない (#2245 K1。1日献立変更と同じ。実行の結果の一文が閉じる側の新しい相談の画面の
     // 置き換えで消え、実行したかが見えなくなる。ボタンも止めている。ref で見るのは、閉じると同じ描画のうちの押下も止めるため)
-    if (closingSessionRef.current) return;
+    // 会話の読み込みの最中も実行しない (#2254 M1。結果の一文が、あとから返った読み込みの会話の置き換えで消える。読み込みの最中は
+    // 読み込み中の輪がカードを隠す。ref で見るのは、読み込みを始めたのと同じ描画のうちの押下も止めるため。送信と同じ)
+    if (closingSessionRef.current || loadingRef.current) return;
     setExecutingActionIds(prev => new Set(prev).add(messageId));
     // この実行が応答待ちの件数に入れたか (finally で入れた分だけ出す)
     let actionRequestBegun = false;
     try {
       // 提案の実行は、サーバーで献立の生成などの AI の処理を始めることがある。未同意なら同意画面を出す (「同意しない」なら実行しない)
       if ((await ensureAiConsent()) === 'declined') return;
-      // 同意の確認を待つ間に相談を閉じ始めた: 実行しない (#2245 K1。上と同じ)
-      if (closingSessionRef.current) return;
+      // 同意の確認を待つ間に相談を閉じ始めた・会話の読み込みを始めた (相談の切り替え・新しい相談): 実行しない (#2245 K1・#2254 M1。
+      // 上と同じ。提案は残っているので、読み込みのあとにもう一度押せる)
+      if (closingSessionRef.current || loadingRef.current) return;
       // ここから応答 (結果の一文) までは『相談を終了』・新しい相談・相談の切り替えを止める (#2254 M1。finally で件数から出す)
       beginActionRequest();
       actionRequestBegun = true;
@@ -1852,7 +1855,10 @@ export default function AIChatBubble() {
     // 画面の置き換え (createNewSession) で消え、作成の結果が見えなくなる。ボタンも止めている。ref で見るのは、閉じると同じ描画のうちの
     // 押下も止めるため)
     // 作成の最中 (dayMenuInFlightRef) も作らない (#2254 M1。作成は一度に 1 つ。重ねると、先の作成の完了で『相談を終了』の止めが外れる)
-    if (isGeneratingDayMenu || dayMenuInFlightRef.current || closingSessionRef.current) return;
+    // 会話の読み込みの最中も作らない (#2254 M1。作成中の一文が、あとから返った読み込みの会話の置き換えで消える。1日献立のモーダルは
+    // チャットの下に重なるので、モーダルを開いたまま相談の切り替え・新しい相談を押せる。「作成する」も止めている。ref で見るのは、
+    // 読み込みを始めたのと同じ描画のうちの押下も止めるため)
+    if (isGeneratingDayMenu || dayMenuInFlightRef.current || closingSessionRef.current || loadingRef.current) return;
     // 日付の欄が空・範囲の外なら作らない (#2245 K1。ボタンも止めている)
     if (!isDayMenuDateSelectable(selectedDate, dayMenuDateRangeOf(todayLocal()))) return;
 
@@ -1860,8 +1866,9 @@ export default function AIChatBubble() {
 
     // 未同意なら同意画面を出す (「同意しない」なら生成しない)
     if ((await ensureAiConsent()) === 'declined') return;
-    // 同意の確認を待つ間に相談を閉じ始めた: 作らない (#2245 K1。上と同じ)。同意の確認を待つ間に別の作成が始まった: 作らない (#2254 M1)
-    if (closingSessionRef.current || dayMenuInFlightRef.current) return;
+    // 同意の確認を待つ間に相談を閉じ始めた: 作らない (#2245 K1。上と同じ)。同意の確認を待つ間に別の作成が始まった・会話の読み込みを
+    // 始めた: 作らない (#2254 M1。上と同じ)
+    if (closingSessionRef.current || dayMenuInFlightRef.current || loadingRef.current) return;
     // ここから作成が終わる (完了・失敗の一文を足す) までは『相談を終了』・新しい相談・相談の切り替えを止める (#2254 M1。作成中の一文を
     // 会話の置き換えで消さない)
     markDayMenuInFlight(true);
@@ -1955,11 +1962,12 @@ export default function AIChatBubble() {
   const dayMenuRange = showDayMenuModal ? dayMenuDateRangeOf(todayLocal()) : null;
   const dayMenuToday = dayMenuRange === null ? null : dayMenuRange.min;
   const dayMenuMaxDate = dayMenuRange === null ? null : dayMenuRange.max;
-  // 作成するを押せるか: 作成中・相談を閉じる応答待ちの最中でなく、日付が実在する暦日で欄の範囲の中のとき (#2245 K1)
+  // 作成するを押せるか: 作成中・相談を閉じる応答待ちの最中 (#2245 K1)・会話の読み込みの最中 (#2254 M1。モーダルを開いたまま相談の
+  // 切り替え・新しい相談を押せる) でなく、日付が実在する暦日で欄の範囲の中のとき (#2245 K1)
   // 日付の欄が空・形の崩れ・範囲の外か (#2245 L1。欄の下に理由の一文を出す)
   const dayMenuDateUnselectable = dayMenuRange !== null && !isDayMenuDateSelectable(selectedDate, dayMenuRange);
   const dayMenuCreatable =
-    !isGeneratingDayMenu && !isClosingSession && dayMenuRange !== null && !dayMenuDateUnselectable;
+    !isGeneratingDayMenu && !isClosingSession && !isLoading && dayMenuRange !== null && !dayMenuDateUnselectable;
   // 1日献立変更を押せるか: 送信中・作成中・相談を閉じる応答待ちの最中でないとき (#2245 K1。閉じる応答待ちを足した)
   // 会話の読み込みの最中 (読み込み中の輪) も止める (#2254 M1。作成中の一文を足しても、読み込んだ会話で置き換わって消える)。
   // 作成の最中 (isDayMenuInFlight) も止める (作成は一度に 1 つ。generateDayMenu の入口でも止めている)

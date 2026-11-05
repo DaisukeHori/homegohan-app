@@ -2086,3 +2086,163 @@ describe('#2254 M1 同じ型: 送信も画面の操作。会話の読み込み�
     expect(text()).toContain(SENT_TEXT);
   });
 });
+
+describe('#2254 M1 同じ型: 会話の読み込みの最中は、1日献立の「作成する」・提案の実行もしない (足した一文が読み込みの置き換えで消える)', () => {
+  const PROPOSAL_ID = 'proposal-load';
+  const executeKey = `POST /api/ai/consultation/actions/${PROPOSAL_ID}/execute`;
+  const PROPOSAL_MESSAGES = [
+    {
+      id: PROPOSAL_ID,
+      role: 'assistant',
+      content: MAIN_REPLY_TEXT,
+      proposedActions: { type: 'add_pantry_item', params: { name: '卵' } },
+      createdAt: '2026-11-01T00:00:00.000Z',
+    },
+  ];
+
+  beforeEach(() => {
+    v4.generate.mockResolvedValue({ requestId: DAY_MENU_REQUEST_ID });
+    handlers[executeKey] = async () => json(200, { success: true, actionType: 'add_pantry_item', result: {} });
+  });
+
+  /** 相談の一覧を開き、別の相談の会話の読み込みを止めたまま切り替える (読み込みを返す関数を返す) */
+  async function switchWithHeldLoad(): Promise<() => Promise<void>> {
+    await openSessionList();
+    const load = hold(messagesKey(OTHER_SESSION_ID));
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === 1);
+    return async () => {
+      await act(async () => {
+        load.resolve(json(200, { messages: OTHER_MESSAGES }));
+      });
+      await waitFor(() => text().includes(OTHER_REPLY_TEXT) && !loadingSpinnerShown());
+    };
+  }
+
+  it('1日献立のモーダルを開いたまま相談を切り替えると、読み込みの最中は「作成する」が止まり、押しても作らない。読み込みのあとに作ると作成中の一文が残る', async () => {
+    await openChat();
+    await act(async () => {
+      dayMenuButton().click();
+    });
+    expect(createDayMenuButton().disabled).toBe(false);
+    const release = await switchWithHeldLoad();
+    expect(createDayMenuButton().disabled).toBe(true);
+
+    await act(async () => {
+      createDayMenuButton().click();
+    });
+    await settle();
+    expect(v4.generate).not.toHaveBeenCalled();
+
+    await release();
+    expect(createDayMenuButton().disabled).toBe(false);
+    await act(async () => {
+      createDayMenuButton().click();
+    });
+    await waitFor(() => v4.generate.mock.calls.length === 1);
+    await settle();
+    expect(text()).toContain(DAY_MENU_STARTED_TEXT);
+    expect(text()).toContain(OTHER_REPLY_TEXT);
+  });
+
+  it('入口の側: 相談の行を押したのと同じ描画のうちに (止める描画の前に) モーダルの「作成する」を押しても作らない', async () => {
+    await openChat();
+    await act(async () => {
+      dayMenuButton().click();
+    });
+    await openSessionList();
+    const load = hold(messagesKey(OTHER_SESSION_ID));
+    await act(async () => {
+      buttonWithText(OTHER_SESSION_TITLE)!.click();
+      // まだ止める描画の前 (「作成する」は押せる) に押す
+      expect(createDayMenuButton().disabled).toBe(false);
+      createDayMenuButton().click();
+    });
+    await settle();
+    expect(v4.generate).not.toHaveBeenCalled();
+
+    await act(async () => {
+      load.resolve(json(200, { messages: OTHER_MESSAGES }));
+    });
+    await waitFor(() => text().includes(OTHER_REPLY_TEXT) && !loadingSpinnerShown());
+    expect(v4.generate).not.toHaveBeenCalled();
+    expect(text()).not.toContain(DAY_MENU_STARTED_TEXT);
+  });
+
+  it('入口の側: 「作成する」の同意の確認を待つ間に相談を切り替え、読み込みの最中なら、確認のあとも作らない', async () => {
+    await openChat();
+    await act(async () => {
+      dayMenuButton().click();
+    });
+    const consentAnswer = deferred<void>();
+    consent.gate = consentAnswer.promise;
+    await act(async () => {
+      createDayMenuButton().click();
+    });
+    const release = await switchWithHeldLoad();
+    await act(async () => {
+      consentAnswer.resolve();
+    });
+    await settle();
+    expect(v4.generate).not.toHaveBeenCalled();
+
+    await release();
+    expect(v4.generate).not.toHaveBeenCalled();
+    expect(text()).not.toContain(DAY_MENU_STARTED_TEXT);
+  });
+
+  it('入口の側: 相談の行を押したのと同じ描画のうちに (止める描画の前に) 提案の「実行する」を押しても実行の API を呼ばない', async () => {
+    handlers[messagesKey(SESSION_ID)] = async () => json(200, { messages: PROPOSAL_MESSAGES });
+    await openChat();
+    await openSessionList();
+    const load = hold(messagesKey(OTHER_SESSION_ID));
+    await act(async () => {
+      buttonWithText(OTHER_SESSION_TITLE)!.click();
+      // まだ読み込み中の輪を出す描画の前 (カードが見えている) に押す
+      buttonWithText('実行する')!.click();
+    });
+    await settle();
+    expect(requestCount(executeKey)).toBe(0);
+
+    await act(async () => {
+      load.resolve(json(200, { messages: OTHER_MESSAGES }));
+    });
+    await waitFor(() => text().includes(OTHER_REPLY_TEXT) && !loadingSpinnerShown());
+    expect(requestCount(executeKey)).toBe(0);
+  });
+
+  it('入口の側: 提案の「実行する」の同意の確認を待つ間に相談を切り替え、読み込みの最中なら、確認のあとも実行の API を呼ばない', async () => {
+    handlers[messagesKey(SESSION_ID)] = async () => json(200, { messages: PROPOSAL_MESSAGES });
+    await openChat();
+    const consentAnswer = deferred<void>();
+    consent.gate = consentAnswer.promise;
+    await act(async () => {
+      buttonWithText('実行する')!.click();
+    });
+    const release = await switchWithHeldLoad();
+    await act(async () => {
+      consentAnswer.resolve();
+    });
+    await settle();
+    expect(requestCount(executeKey)).toBe(0);
+
+    await release();
+    expect(requestCount(executeKey)).toBe(0);
+  });
+
+  it('対照: 読み込みの最中でなければ、モーダルの「作成する」で作り、提案の「実行する」で実行の API を呼ぶ', async () => {
+    handlers[messagesKey(SESSION_ID)] = async () => json(200, { messages: PROPOSAL_MESSAGES });
+    await openChat();
+    await act(async () => {
+      buttonWithText('実行する')!.click();
+    });
+    await waitFor(() => requestCount(executeKey) === 1);
+    await act(async () => {
+      dayMenuButton().click();
+    });
+    await act(async () => {
+      createDayMenuButton().click();
+    });
+    await waitFor(() => v4.generate.mock.calls.length === 1);
+  });
+});
