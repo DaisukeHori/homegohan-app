@@ -3547,18 +3547,15 @@ describe('#2265 Q2 (1) 一覧・会話の読み込みと新しい相談の作成
     expect(text()).toContain(OTHER_REPLY_TEXT);
   });
 
-  it('開き直しの一覧を待つ間に『相談を終了』を押したら、一覧が失敗 (500) で返っても一覧の一文を出さない (閉じる側に任せる)', async () => {
+  it('『相談を終了』の応答を待つ間にチャットを閉じて開き直し、その一覧が失敗 (500) しても一覧の一文を出さない (閉じる側に任せる)', async () => {
     await openChat();
-    await closeChatWindow();
-    const reopenSessions = hold(SESSIONS_KEY);
-    await pressFab();
-    await waitFor(() => requestCount(SESSIONS_KEY) === 2);
     const close = hold(closeKey(SESSION_ID));
     await clickClose();
-
-    await act(async () => {
-      reopenSessions.resolve(json(500, { error: 'internal' }));
-    });
+    // 閉じるは入口で画面の操作を進めるので、そのあとに開き直した一覧の操作の番号は変わらない (閉じる応答待ちかだけで止める)
+    await closeChatWindow();
+    handlers[SESSIONS_KEY] = async () => json(500, { error: 'internal' });
+    await pressFab();
+    await waitFor(() => requestCount(SESSIONS_KEY) === 2);
     await settle();
     expect(text()).not.toContain(SESSIONS_LOAD_FAILED_MESSAGE);
 
