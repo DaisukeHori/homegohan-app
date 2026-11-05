@@ -3690,3 +3690,116 @@ describe('#2265 Q2 (3) 『相談を終了』を受け付けたあとの例外で
     expect(text()).not.toContain(CONSULTATION_CLOSE_FAILED_MESSAGE);
   });
 });
+
+describe('#2272 S2 新しい相談の作成の時間切れからの回復のまれな縁・作成の 401', () => {
+  /** 応答を返さない (打ち切られたら AbortError で失敗する。#2265 Q2 の同名の関数と同じ) */
+  function neverResponds(): FetchHandler {
+    return (_url, init) =>
+      new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('The user aborted a request.', 'AbortError')));
+      });
+  }
+
+  /** 既定の一覧の 2 つの相談 (beforeEach の SESSIONS_KEY と同じ) */
+  const LISTED_SESSIONS = [
+    { id: SESSION_ID, title: MAIN_SESSION_TITLE, messageCount: 2 },
+    { id: OTHER_SESSION_ID, title: OTHER_SESSION_TITLE, messageCount: 1 },
+  ];
+  /** サーバーで作れていた、メッセージの無い相談 (一覧の読み直しで見える) */
+  const CREATED_ON_SERVER = { id: NEW_SESSION_ID, title: 'AI相談', messageCount: 0, status: 'active' };
+
+  it('(1) 閉じたあとの一覧の読み直しが失敗し、作成が時間切れでも、作成の中の一覧の読み直しが読めて作れていた相談を出せたら、一覧の一文を足さない', async () => {
+    await openChat();
+    // 閉じたあとの 1 回目の読み直しは失敗 (500)、作成の時間切れのあとの 2 回目は作れていた相談を含む一覧
+    let reloads = 0;
+    handlers[SESSIONS_KEY] = async () => {
+      reloads += 1;
+      return reloads === 1
+        ? json(500, { error: 'internal' })
+        : json(200, { sessions: [CREATED_ON_SERVER, ...LISTED_SESSIONS] });
+    };
+    handlers[CREATE_SESSION_KEY] = neverResponds();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await clickClose();
+    await waitFor(() => requestCount(CREATE_SESSION_KEY) === 1);
+
+    await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+    await waitFor(() => text().includes(WELCOME_TEXT) && !loadingSpinnerShown() && !closeButton().disabled);
+    await settle();
+    expect(reloads).toBe(2);
+    // 直す前: 一覧はもう読み直せているのに『相談の一覧を読み込めませんでした』を足した
+    expect(text()).not.toContain(SESSIONS_LOAD_FAILED_MESSAGE);
+    expect(text()).not.toContain(SESSIONS_LOAD_TIMEOUT_MESSAGE);
+    expect(text()).not.toContain(SESSION_CREATE_TIMEOUT_MESSAGE);
+    expect(chatInput().disabled).toBe(false);
+  });
+
+  it('(1) 対照: 閉じたあとの一覧の読み直しが失敗し、作成がすぐに作れた (作成の中で一覧を読み直していない) ときは、一覧の一文を足す', async () => {
+    await openChat();
+    handlers[SESSIONS_KEY] = async () => json(500, { error: 'internal' });
+    await clickClose();
+    await waitFor(() => text().includes(WELCOME_TEXT) && text().includes(SESSIONS_LOAD_FAILED_MESSAGE));
+    expect(requestCount(SESSIONS_KEY)).toBe(2);
+  });
+
+  it('(2) この画面で前に作った (一覧ではまだ見ていない) 空の相談を、次の作成の時間切れのあとに『作れていた相談』として選ばない', async () => {
+    await openChat();
+    // 1 つ目の新しい相談は作れる (一覧は読み直さないので、この相談を一覧ではまだ見ていない)
+    await openSessionList();
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => text().includes(WELCOME_TEXT) && !loadingSpinnerShown());
+    expect(requestCount(SESSIONS_KEY)).toBe(1);
+    // 別の相談へ切り替える
+    await openSessionList();
+    await pressSessionRow(OTHER_SESSION_TITLE);
+    await waitFor(() => text().includes(OTHER_REPLY_TEXT) && !loadingSpinnerShown());
+
+    // 2 つ目の作成はサーバーに届かずに時間切れ。読み直した一覧には 1 つ目の空の相談だけが新しく出ている
+    handlers[CREATE_SESSION_KEY] = neverResponds();
+    handlers[SESSIONS_KEY] = async () => json(200, { sessions: [CREATED_ON_SERVER, ...LISTED_SESSIONS] });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await openSessionList();
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => requestCount(CREATE_SESSION_KEY) === 2 && loadingSpinnerShown());
+
+    await advanceFakeTime(AI_CHAT_LOAD_TIMEOUT_MS);
+    // 直す前: 1 つ目の空の相談を作れていた相談として選び、ようこその一文の画面にした (作成の一文は出なかった)
+    await waitFor(() => text().includes(SESSION_CREATE_TIMEOUT_MESSAGE) && !loadingSpinnerShown());
+    expect(requestCount(SESSIONS_KEY)).toBe(2);
+    expect(text()).toContain(OTHER_REPLY_TEXT);
+    expect(text()).not.toContain(WELCOME_TEXT);
+    expect(chatInput().disabled).toBe(false);
+  });
+
+  it('(3) 新しい相談の作成が未ログイン (401) なら、開く (openChat) と同じく『ログインが必要です』の画面にし、作成の失敗の一文を出さない', async () => {
+    await openChat();
+    handlers[CREATE_SESSION_KEY] = async () => json(401, { error: 'unauthorized' });
+    await openSessionList();
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => requestCount(CREATE_SESSION_KEY) === 1 && !loadingSpinnerShown());
+    await settle();
+    // 直す前: 『少し待ってから、もう一度』の作成の失敗の一文を出した (ログインしないと作れない)
+    expect(text()).toContain('ログインが必要です');
+    expect(text()).not.toContain(SESSION_CREATE_FAILED_MESSAGE);
+    expect(text()).not.toContain(SESSION_CREATE_TIMEOUT_MESSAGE);
+    // 一覧は読み直さない (未ログインと分かった)
+    expect(requestCount(SESSIONS_KEY)).toBe(1);
+  });
+
+  it('(3) 対照: 新しい相談の作成が 401 以外の失敗の応答 (403) なら、作成の失敗の一文を出す (以前のまま)', async () => {
+    await openChat();
+    handlers[CREATE_SESSION_KEY] = async () => json(403, { error: 'forbidden' });
+    await openSessionList();
+    await act(async () => {
+      buttonWithText('新しい相談を始める')!.click();
+    });
+    await waitFor(() => text().includes(SESSION_CREATE_FAILED_MESSAGE) && !loadingSpinnerShown());
+    expect(text()).not.toContain('ログインが必要です');
+  });
+});
