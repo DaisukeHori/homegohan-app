@@ -399,7 +399,9 @@ describe('#2254 M1 遅れて返った読み込みは、あとの操作の画面�
     });
     await pressArchive();
     await waitForNewSession();
-    await waitFor(() => expect(sessionsGetCount()).toBe(sessionsBefore + 2));
+    // 開き直しの 1 回 + アーカイブのあとの 2 回 (作成の前の読み直し (#2272 S1。Web の showFreshSessionAfterClose と同じ順) と、
+    // 作成のあとの読み直し (作った相談を一覧に出す))
+    await waitFor(() => expect(sessionsGetCount()).toBe(sessionsBefore + 3));
 
     // アーカイブの前に始めた開き直しの一覧 (閉じた相談がまだ終了でない) が後から返る
     await act(async () => {
