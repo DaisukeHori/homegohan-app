@@ -1,5 +1,5 @@
 /**
- * アプリ内課金のユースケース (src/lib/billing/iap-service.ts) の単体テスト (billing/03 §14.1 のテスト 17〜24・136)。
+ * アプリ内課金のユースケース (src/lib/billing/iap-service.ts) の単体テスト (billing/03 §14.1 のテスト 17〜24・136・164)。
  * RevenueCat の gateway と repository は偽物を渡す (DB も RevenueCat も使わない)。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';

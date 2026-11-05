@@ -34,7 +34,7 @@ const DECEMBER = '12';
 
 /**
  * 時刻 date の現地の日付が紀元前か (#2254 M2)。month は toLocaleDateString('sv-SE') が返した現地の月。
- * タイムゾーンの UTC からのずれは 1 日より小さい (実在する最大は 14 時間) ので、紀元 1 年 1 月 1 日 0 時 (UTC) の前後 1 日の外は
+ * タイムゾーンの UTC からのずれは 1 日より小さい (今のタイムゾーンの最大は 14 時間。tz database の古い地方平均時も 16 時間に届かない) ので、紀元 1 年 1 月 1 日 0 時 (UTC) の前後 1 日の外は
  * 時刻だけで決まり、その内側の現地の日付は紀元前 1 年の 12 月末か紀元 1 年の 1 月初めなので、月で決まる。
  */
 function isBeforeCommonEra(date: Date, month: string): boolean {
@@ -49,7 +49,8 @@ function isBeforeCommonEra(date: Date, month: string): boolean {
  * UTC 偏移によるズレを防ぐためにロケール 'sv-SE' を使用する。
  * 年は 0 埋めの 4 桁で書く (#2254 M2。toLocaleDateString('sv-SE') のままでは 1000 年より前の年を "101-01-02" と書き、
  * isCalendarDate (CALENDAR_DATE_MIN = 0101-01-02 から) を通った日付の週の格子が YYYY-MM-DD にならなかった)。
- * 4 桁で書けない年 (紀元前・10000 年以降) は Date#toISOString と同じ符号つきの 6 桁 (Edge Functions の formatJstDate と同じ形)。
+ * 4 桁で書けない年 (紀元前・10000 年以降) は Date#toISOString と同じ符号つきの 6 桁 (Edge Functions の formatJstDate と一致するのは
+ * 0〜9999 年だけ。formatJstDate は toISOString().slice(0, 10) なので 6 桁の年では切れる)。
  * (Intl.DateTimeFormat の formatToParts は使わない。モバイルのアプリの JS エンジン (Hermes) の iOS では使えないことがある)
  * 不正な Date (Invalid Date) は "Invalid Date" を返す (以前と同じ。投げない)。
  */
