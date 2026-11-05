@@ -20,7 +20,7 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -90,9 +90,14 @@ const PASSWORD = `${randomBytes(18).toString('base64url')}Aa1!`;
 const SUB_PREFIX = `sub_it_iap_reconcile_${RUN}_`;
 let seq = 0;
 
-const PRODUCT_MONTH = `it.iap-reconcile.${RUN}.pro.month`;
+/**
+ * このファイルがストアの行に入れる iap_product_id の頭。RUN は実行ごとに変わるので、頭で前回の実行の行も見分けられる
+ * (前回の残りを消す purgeLeftoverStoreUsers。ファイルの末尾)
+ */
+const PRODUCT_PREFIX = 'it.iap-reconcile.';
+const PRODUCT_MONTH = `${PRODUCT_PREFIX}${RUN}.pro.month`;
 /** 同じ利用者に 2 本目のストアの行を置く 41 だけが使う (同じ利用者・ストア・商品は 1 行の一意の索引があるため) */
-const PRODUCT_YEAR = `it.iap-reconcile.${RUN}.pro.year`;
+const PRODUCT_YEAR = `${PRODUCT_PREFIX}${RUN}.pro.year`;
 
 const profileBase = { age_group: '30s', gender: 'other' };
 
@@ -133,6 +138,9 @@ async function deleteTestUsers(ids: string[]): Promise<void> {
     if (error) throw new Error(`deleteUser: ${error.message}`);
     const index = createdUserIds.indexOf(id);
     if (index >= 0) createdUserIds.splice(index, 1);
+    // 前回の残りを消す purge が it の中で今回の利用者を消したときも、afterEach がもう一度消そうとしないように外す
+    const current = currentTestUserIds.indexOf(id);
+    if (current >= 0) currentTestUserIds.splice(current, 1);
   }
   for (const table of ['personal_subscriptions', 'iap_reconcile_attempts'] as const) {
     const left = await srAdmin.from(table).select('user_id').in('user_id', ids);
@@ -515,5 +523,63 @@ describe('billing/04 段 A: billing_iap_reconcile_candidates (候補を読む関
     expect(directUpdate.error?.code).toBe('42501');
     // 書き込みが拒まれた後も、印は変わっていない
     expect((await attemptsOf([u1.id]))[0]?.attemptedAtMs).toBe(ms(at(-1)));
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// 前回の実行の残りを消す (#2254 M4)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * 既定の purgeLeftoverStoreUsers (PRODUCT_PREFIX だけ) が消さないことを確かめるための、ほかの商品の頭 (ほかのテスト・本物の購読の代わり)。
+ * このファイルの purge のテストだけが使う頭なので、その前回の残りは beforeAll (LEFTOVER_PRODUCT_PREFIXES) が消す
+ */
+const OTHER_PRODUCT_PREFIX = 'it.iap-reconcile-other.';
+/** このファイルがストアの行に入れる商品の頭の全部。beforeAll は、これらの頭の前回の残りを消す */
+const LEFTOVER_PRODUCT_PREFIXES: readonly string[] = [PRODUCT_PREFIX, OTHER_PRODUCT_PREFIX];
+
+/**
+ * 前回の実行が途中で止まって残った、このファイルの利用者 (ストアの行の iap_product_id が prefixes のどれかで始まる利用者) を、その行ごと消す。
+ * 候補を読む関数は personal_subscriptions の全体を読み、期限 (2000 年の at(…)) を過ぎた行を返すので、afterEach / afterAll の前に
+ * 実行が止まって残った行は、次の実行の候補に出て、候補の完全一致 (toEqual) を崩す。afterEach / afterAll は今回の利用者だけを消すので、
+ * 前回の残りは次の実行の beforeAll が頭で消す。頭はこのファイルだけが使うので、ほかのテストの行・本物の購読の行は消さない。
+ * prefixes の既定は PRODUCT_PREFIX だけ (purge のテストが、ほかの頭の行を消さないことを確かめる形)。beforeAll は LEFTOVER_PRODUCT_PREFIXES を渡す
+ */
+async function purgeLeftoverStoreUsers(prefixes: readonly string[] = [PRODUCT_PREFIX]): Promise<void> {
+  const userIds = new Set<string>();
+  for (const prefix of prefixes) {
+    const { data, error } = await srAdmin.from('personal_subscriptions').select('user_id').like('iap_product_id', `${prefix}%`);
+    if (error) throw new Error(`select leftover personal_subscriptions: ${error.message}`);
+    for (const row of (data ?? []) as Array<{ user_id: string }>) userIds.add(row.user_id);
+  }
+  await deleteTestUsers([...userIds]);
+}
+
+beforeAll(async () => {
+  await purgeLeftoverStoreUsers(LEFTOVER_PRODUCT_PREFIXES);
+});
+
+describe('前回の実行の残りを消す (#2254 M4)', () => {
+  it('a store row left by an interrupted earlier run (iap_product_id under PRODUCT_PREFIX with another RUN) is returned as a candidate until purgeLeftoverStoreUsers deletes the user with its rows; by default a row under another prefix stays, and the beforeAll form (LEFTOVER_PRODUCT_PREFIXES) deletes it too', async () => {
+    const leftover = await createUser('leftover');
+    const keep = await createUser('leftover-keep');
+    // 前回の実行が残した形: 別の RUN の商品のストアの行 (期限を過ぎた live な行)
+    await insertStoreRow(leftover.id, { status: 'active', periodEnd: at(-3), syncedAt: null, product: `${PRODUCT_PREFIX}previous-run.pro.month` });
+    // 既定では残す行: PRODUCT_PREFIX で始まらない商品のストアの行 (ほかのテスト・本物の購読の代わり)
+    await insertStoreRow(keep.id, { status: 'active', periodEnd: at(-2), syncedAt: null, product: `${OTHER_PRODUCT_PREFIX}${RUN}.pro.month` });
+    expect(await candidates()).toEqual([expected(leftover.id, at(-3)), expected(keep.id, at(-2))]);
+
+    await purgeLeftoverStoreUsers();
+
+    expect(await candidates()).toEqual([expected(keep.id, at(-2))]);
+    const left = await srAdmin.from('personal_subscriptions').select('user_id').in('user_id', [leftover.id, keep.id]);
+    expect(left.error).toBeNull();
+    expect((left.data ?? []).map((row) => row.user_id)).toEqual([keep.id]);
+    expect((await srAdmin.auth.admin.getUserById(leftover.id)).data.user).toBeNull();
+
+    // beforeAll の形は、この purge のテストが残しうるほかの頭の行も、その利用者ごと消す (途中で止まった実行の残りが、次の実行の候補に出ない)
+    await purgeLeftoverStoreUsers(LEFTOVER_PRODUCT_PREFIXES);
+    expect(await candidates()).toEqual([]);
+    expect((await srAdmin.auth.admin.getUserById(keep.id)).data.user).toBeNull();
   });
 });
