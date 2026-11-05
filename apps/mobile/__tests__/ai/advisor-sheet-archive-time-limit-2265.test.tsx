@@ -12,7 +12,10 @@
  * で画面をサーバーの状態に合わせる。直す前は、時間切れでは何もせず、それ以外では『セッションのアーカイブに失敗しました。』と
  * 言い切り、どちらもアーカイブ済みの相談が今の相談のまま残った (一覧の status も open のまま。送ると閉じた相談に保存された)。
  *
- * 上限は本物 (315 秒) を待たず、短い値に差し替える (判定と待ち方は本物の部品)。
+ * 上限は本物の値 (AI_CHAT_REQUEST_TIME_LIMIT_MS) のまま、実時間では待たない。アーカイブを押す前に setTimeout を jest の偽のタイマーに
+ * して (holdTimeLimit)、止めが立ったことを確かめてから偽の時刻を進めて時間切れを起こす (判定と待ち方は本物の部品)。
+ * #2275 T4: 以前は上限を jest.mock で 30ms に差し替えて実時間で待っていたので、止めが立ったことを確かめる waitFor が負荷で問い直し
+ * (50ms ごと) に回ると、確かめる前に上限が過ぎて止めが下り、mobile の jest の全件と並走したときに赤になった (単独では緑)。
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
@@ -38,15 +41,6 @@ jest.mock('../../src/lib/supabase', () => ({
   },
 }));
 
-jest.mock('../../src/lib/ai-consultation-request-time-limit', () => {
-  // 本物の上限 (315 秒) はテストで待てないので、短い上限に差し替える。ほか (待ち方・時間切れの判定・文) は本物
-  const TIME_LIMIT_FOR_TEST_MS = 30;
-  return {
-    ...jest.requireActual('../../src/lib/ai-consultation-request-time-limit'),
-    AI_CHAT_REQUEST_TIME_LIMIT_MS: TIME_LIMIT_FOR_TEST_MS,
-  };
-});
-
 jest.mock('expo-router', () => ({
   router: { back: jest.fn(), push: jest.fn(), replace: jest.fn() },
 }));
@@ -60,11 +54,15 @@ jest.mock('expo-linear-gradient', () => ({
 import React from 'react';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
 import {
-  AI_CHAT_REQUEST_TIME_LIMIT_DEFAULT_MS,
   AI_CHAT_REQUEST_TIME_LIMIT_MS,
   ARCHIVE_SESSION_TIMEOUT_MESSAGE,
   ARCHIVE_SESSION_TIMEOUT_TITLE,
 } from '../../src/lib/ai-consultation-request-time-limit';
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.timeouts.js は jest.config.js から require される CommonJS
+const { resolveMobileJestTimeouts } = require('../../jest.timeouts') as {
+  resolveMobileJestTimeouts: (env: Record<string, string | undefined>) => { testTimeout: number; asyncUtilTimeout: number };
+};
 
 const SESSION = { id: 'session-1', title: 'AI相談', messageCount: 2, status: 'active' };
 const OTHER_SESSION = { id: 'session-other', title: 'AI相談', messageCount: 1, status: 'closed' };
@@ -113,8 +111,50 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // holdTimeLimit で偽にした setTimeout を戻す (部品を外す後始末のあとに走るので、外すときの取り消しも偽のタイマーに効く)
+  jest.useRealTimers();
   jest.restoreAllMocks();
 });
+
+/** holdTimeLimit で偽にしない時計の API (偽にするのは setTimeout と clearTimeout だけ。advisor-sheet-reload-running.test.tsx の holdRecheck と同じ) */
+const REAL_TIMER_APIS = [
+  'Date',
+  'hrtime',
+  'nextTick',
+  'performance',
+  'queueMicrotask',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'requestIdleCallback',
+  'cancelIdleCallback',
+  'setImmediate',
+  'clearImmediate',
+  'setInterval',
+  'clearInterval',
+] as const;
+
+/**
+ * アーカイブの上限の予約 (withinConsultationRequestTimeLimit の setTimeout) を jest の偽のタイマーにして、advanceFakeTime で進める
+ * まで動かさない (#2275 T4)。上限は本物の AI_CHAT_REQUEST_TIME_LIMIT_MS のまま偽の時刻で止めるので、RNTL の waitFor が偽の時刻を
+ * 少しずつ進めても (1 回の間隔は既定の 50ms) 上限には届かず、止めが立ったことを確かめる前に止めが下りることはない (負荷に依らない)。
+ * シートを開いたあと、アーカイブを押す前に呼ぶ
+ */
+function holdTimeLimit() {
+  jest.useFakeTimers({ doNotFake: [...REAL_TIMER_APIS] });
+}
+
+/**
+ * 上限の途中まで (半分) 偽の時刻を進める長さ。止めを確かめる waitFor が偽の時刻を少し進めていても (1 回 50ms)、上限には届かない長さ
+ * にする (届かないことは『前提』の it が確かめる)
+ */
+const PART_OF_TIME_LIMIT_MS = AI_CHAT_REQUEST_TIME_LIMIT_MS / 2;
+
+/** holdTimeLimit で止めた予約を、偽の時刻を ms だけ進めて動かす */
+async function advanceFakeTime(ms: number) {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(ms);
+  });
+}
 
 async function openSheet() {
   render(<AIAdvisorSheet visible onClose={jest.fn()} />);
@@ -132,8 +172,9 @@ const closeSignal = (): AbortSignal | undefined => {
   return (call?.[1] as RequestInit | undefined)?.signal ?? undefined;
 };
 
-/** アーカイブを押し、/close が送られて止めが立ったこと (新しい相談・切り替えが止まる) を確かめる */
+/** 上限の予約を止めて (holdTimeLimit) アーカイブを押し、/close が送られて止めが立ったこと (新しい相談・切り替えが止まる) を確かめる */
 async function pressArchiveAndExpectLocked() {
+  holdTimeLimit();
   fireEvent.press(screen.getByTestId('ai-toggle-sessions'));
   await act(async () => {
     fireEvent.press(screen.getByTestId('ai-archive-btn'));
@@ -172,14 +213,27 @@ async function expectFreshSessionAfterAcceptedArchive(listReadsBefore: number) {
   expect(createSessionCalls()).toHaveLength(1);
 }
 
-/** 上限を過ぎて止めが下りるのを待つ (アーカイブのボタンがまた押せる) */
+/** 止めが下りるのを待つ (アーカイブのボタンがまた押せる) */
 async function waitForUnlock() {
   await waitFor(() => expect(screen.getByTestId('ai-archive-btn')).not.toBeDisabled());
 }
 
+/**
+ * 上限の途中 (半分) まで偽の時刻を進めても止めは下りず時間切れの一文も出ないことを確かめてから、上限を過ぎるまで進め、止めが
+ * 下りるのを待つ (holdTimeLimit のあとに呼ぶ)
+ */
+async function passTimeLimitAndWaitForUnlock() {
+  await advanceFakeTime(PART_OF_TIME_LIMIT_MS);
+  expect(screen.getByTestId('ai-archive-btn')).toBeDisabled();
+  expect(alertCalls()).not.toContainEqual([ARCHIVE_SESSION_TIMEOUT_TITLE, ARCHIVE_SESSION_TIMEOUT_MESSAGE]);
+  await advanceFakeTime(AI_CHAT_REQUEST_TIME_LIMIT_MS);
+  await waitForUnlock();
+}
+
 describe('#2265 Q1 前提', () => {
-  it('テストの上限は本物 (Web と同じ既定) より短く差し替えている (本物を待たない)', () => {
-    expect(AI_CHAT_REQUEST_TIME_LIMIT_MS).toBeLessThan(AI_CHAT_REQUEST_TIME_LIMIT_DEFAULT_MS);
+  it('上限の途中 (半分) までの偽の時刻は、RNTL の 1 つの waitFor が進めうる偽の時刻 (最大で待ちの既定) より長い (#2275 T4)', () => {
+    // 止めを確かめる waitFor が偽の時刻を進めても上限に届かないので、止めが立ったことを確かめる前に時間切れが起きない
+    expect(PART_OF_TIME_LIMIT_MS).toBeGreaterThan(resolveMobileJestTimeouts(process.env).asyncUtilTimeout);
   });
 });
 
@@ -189,7 +243,7 @@ describe('#2265 Q1 アーカイブの応答が返らないと、上限で止め�
     fetchMock.mockImplementationOnce(() => new Promise<never>(() => {}));
     await pressArchiveAndExpectLocked();
 
-    await waitForUnlock();
+    await passTimeLimitAndWaitForUnlock();
     // 『失敗しました』と言い切らず、一覧で確かめてもらう
     expect(alertCalls()).toContainEqual([ARCHIVE_SESSION_TIMEOUT_TITLE, ARCHIVE_SESSION_TIMEOUT_MESSAGE]);
     expect(alertCalls().some(([, message]) => message === ARCHIVE_FAILED_MESSAGE)).toBe(false);
@@ -221,7 +275,7 @@ describe('#2265 Q1 アーカイブの応答が返らないと、上限で止め�
     await openSheet();
     fetchMock.mockImplementationOnce(() => new Promise<never>(() => {}));
     await pressArchiveAndExpectLocked();
-    await waitForUnlock();
+    await passTimeLimitAndWaitForUnlock();
 
     // 相談の切り替え
     await act(async () => {
@@ -255,7 +309,7 @@ describe('#2265 Q1 アーカイブの応答が返らないと、上限で止め�
     );
     await pressArchiveAndExpectLocked();
 
-    await waitForUnlock();
+    await passTimeLimitAndWaitForUnlock();
     expect(alertCalls()).toContainEqual([ARCHIVE_SESSION_TIMEOUT_TITLE, ARCHIVE_SESSION_TIMEOUT_MESSAGE]);
     expect(alertCalls().some(([, message]) => message === ARCHIVE_FAILED_MESSAGE)).toBe(false);
     expect(screen.getByTestId('ai-new-session')).not.toBeDisabled();
@@ -264,13 +318,14 @@ describe('#2265 Q1 アーカイブの応答が返らないと、上限で止め�
   it('トークンの取り出し (getSession) が返らない: 上限で止めを下ろし、/close は送らない', async () => {
     await openSheet();
     mockGetSession.mockImplementationOnce(() => new Promise<never>(() => {}));
+    holdTimeLimit();
     fireEvent.press(screen.getByTestId('ai-toggle-sessions'));
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-archive-btn'));
     });
     expect(screen.getByTestId('ai-new-session')).toBeDisabled();
 
-    await waitForUnlock();
+    await passTimeLimitAndWaitForUnlock();
     expect(alertCalls()).toContainEqual([ARCHIVE_SESSION_TIMEOUT_TITLE, ARCHIVE_SESSION_TIMEOUT_MESSAGE]);
     expect(sentUrls()).not.toContain(CLOSE_URL);
     expect(screen.getByTestId('ai-new-session')).not.toBeDisabled();
@@ -288,12 +343,18 @@ describe('#2265 Q1 アーカイブの応答が返らないと、上限で止め�
 
     // 会話の画面のまま (相談の一覧を開かずに) アーカイブを押す。応答待ちの間は取り直しのボタンを止める
     fetchMock.mockImplementationOnce(() => new Promise<never>(() => {}));
+    holdTimeLimit();
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-archive-btn'));
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(CLOSE_URL, expect.objectContaining({ method: 'POST' })));
     expect(screen.getByTestId('ai-timeout-reload')).toBeDisabled();
 
+    // 上限の途中 (半分) までは取り直しのボタンも止めたまま。上限を過ぎると下りる
+    await advanceFakeTime(PART_OF_TIME_LIMIT_MS);
+    expect(screen.getByTestId('ai-timeout-reload')).toBeDisabled();
+    expect(screen.getByTestId('ai-archive-btn')).toBeDisabled();
+    await advanceFakeTime(AI_CHAT_REQUEST_TIME_LIMIT_MS);
     await waitForUnlock();
     expect(screen.getByTestId('ai-timeout-reload')).not.toBeDisabled();
   });
@@ -306,7 +367,7 @@ describe('#2265 Q5 受け付けたあとの例外は、成功と同じく新し�
     const listReadsBefore = sessionListReads();
     await pressArchiveAndExpectLocked();
 
-    await waitForUnlock();
+    await passTimeLimitAndWaitForUnlock();
     // 本文の読み取りは上限で打ち切った
     expect(closeSignal()?.aborted).toBe(true);
     await expectFreshSessionAfterAcceptedArchive(listReadsBefore);
@@ -322,6 +383,8 @@ describe('#2265 Q5 受け付けたあとの例外は、成功と同じく新し�
       },
     }));
     const listReadsBefore = sessionListReads();
+    // 上限の予約は止めたまま進めない (止めが下りるのは応答による。時間切れによらない)
+    holdTimeLimit();
     // 応答はすぐ返る (応答待ちの止めは同じ act のうちに下りる) ので、止めが立ったことは確かめない
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-archive-btn'));
@@ -336,6 +399,8 @@ describe('#2265 Q5 受け付けたあとの例外は、成功と同じく新し�
     await openSheet();
     fetchMock.mockImplementationOnce(async () => ({ ok: true, status: 200, json: async () => null }));
     const listReadsBefore = sessionListReads();
+    // 上限の予約は止めたまま進めない (止めが下りるのは応答による。時間切れによらない)
+    holdTimeLimit();
     // 応答はすぐ返る (応答待ちの止めは同じ act のうちに下りる) ので、止めが立ったことは確かめない
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-archive-btn'));
@@ -351,11 +416,14 @@ describe('#2265 Q1 対照: 上限までに返った応答は今までどおり',
   it('成功の応答: 新しい相談を 1 つ作り要約を出す。時間切れの一文は出さず、予約した上限で打ち切らない', async () => {
     await openSheet();
     fetchMock.mockImplementationOnce(async () => ({ ok: true, status: 200, json: async () => ({ summary: { summary: SUMMARY_TEXT } }) }));
+    holdTimeLimit();
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-archive-btn'));
     });
     await waitFor(() => expect(screen.getByText(SUMMARY_LINE)).toBeTruthy());
     expect(createSessionCalls()).toHaveLength(1);
+    // 上限を過ぎるまで偽の時刻を進めても、予約は取り消してあるので打ち切らず、時間切れの一文も出さない
+    await advanceFakeTime(AI_CHAT_REQUEST_TIME_LIMIT_MS);
     expect(closeSignal()?.aborted).toBe(false);
     expect(alertCalls().some(([, message]) => message === ARCHIVE_SESSION_TIMEOUT_MESSAGE)).toBe(false);
   });
@@ -365,11 +433,15 @@ describe('#2265 Q1 対照: 上限までに返った応答は今までどおり',
     fetchMock.mockImplementationOnce(async () => {
       throw new TypeError('Network request failed');
     });
+    holdTimeLimit();
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-archive-btn'));
     });
     await waitFor(() => expect(alertCalls()).toContainEqual(['エラー', ARCHIVE_FAILED_MESSAGE]));
+    // 止めは失敗の応答で下りる (上限の予約は進めていない)
     await waitForUnlock();
+    // 上限を過ぎるまで偽の時刻を進めても、予約は取り消してあるので時間切れの一文は出さない
+    await advanceFakeTime(AI_CHAT_REQUEST_TIME_LIMIT_MS);
     expect(alertCalls().some(([, message]) => message === ARCHIVE_SESSION_TIMEOUT_MESSAGE)).toBe(false);
   });
 });
