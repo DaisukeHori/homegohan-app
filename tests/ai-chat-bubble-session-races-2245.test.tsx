@@ -3994,7 +3994,7 @@ describe('#2275 T1 相談の切り替えの読み込みの失敗・作れたが�
       expect(text()).not.toContain(MAIN_REPLY_TEXT);
     });
 
-    it('一覧の一文を出したあとに送って返答が出ても (送信の確定)、一覧の一文を残す', async () => {
+    it('対照: 一覧の一文を出したあとに送って返答が出ても (送信の確定)、一覧の一文を残す (Web の送信の確定は会話を置き換えず、送った文と返答の行だけを差し替える)', async () => {
       await showListFailureOverMainSession();
       const SENT_TEXT = '鶏むね肉で何か作れますか';
       const SENT_REPLY_TEXT = '照り焼きはいかがでしょう';
