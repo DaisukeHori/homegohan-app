@@ -79,8 +79,10 @@ export async function withinConsultationRequestTimeLimit<T>(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      controller.abort();
+      // 時間切れの例外を先に決めてから打ち切る (打ち切りで run がすぐ失敗しても、待ちの結果は時間切れの例外にする。
+      // 逆の順だと、fetch の AbortError が先に届き、呼び出し側が時間切れの文で見分けられない)
       reject(new ConsultationRequestTimeoutError());
+      controller.abort();
     }, timeLimitMs);
   });
   const running = run(controller.signal);
