@@ -31,12 +31,27 @@ export interface IapDeps {
   now?: () => Date;
 }
 
-/** 監査は fail-open (核と同じ)。失敗はログに残し、本体の操作は止めない */
-async function audit(repository: IapRepository, entry: Parameters<IapRepository['recordIapAudit']>[0]): Promise<void> {
+/**
+ * 監査は fail-open (核と同じ)。失敗はログに残し、本体の操作は止めない。
+ * 監査の行 (entry) には利用者を入れない (IapAuditEntry の details の注) ので、失敗のログは呼び出し元が渡す利用者
+ * (イベントの app_user_id・TRANSFER の移動元と移動先) の withUser で出す。利用者ごとに 1 行ずつ出し、どの利用者で
+ * app_logs の user_id 列を絞っても出てくるようにする (#2254 M3)。利用者が分からないときは無印のロガーで 1 行
+ */
+async function audit(
+  repository: IapRepository,
+  entry: Parameters<IapRepository['recordIapAudit']>[0],
+  userIds: readonly string[],
+): Promise<void> {
   try {
     await repository.recordIapAudit(entry);
   } catch (error) {
-    logger.error('アプリ内課金の監査ログの記録に失敗しました', error, { action_type: entry.action_type });
+    const message = 'アプリ内課金の監査ログの記録に失敗しました';
+    const metadata = { action_type: entry.action_type };
+    if (userIds.length === 0) {
+      logger.error(message, error, metadata);
+      return;
+    }
+    for (const userId of userIds) logger.withUser(userId).error(message, error, metadata);
   }
 }
 
@@ -115,10 +130,15 @@ export async function handleRevenueCatEvent(deps: IapDeps, event: RevenueCatEven
 /** 処理に失敗したイベントを記録する (route の catch)。finish(ok=false) の失敗は投げる (route が 500) */
 export async function recordRevenueCatEventFailure(deps: IapDeps, event: RevenueCatEvent, errorCode: string): Promise<void> {
   await deps.repository.finishRevenueCatEvent(event.id, { ok: false, errorCode });
-  await audit(deps.repository, {
-    actor_id: null, action_type: 'system.revenuecat.event_failed', target_type: 'revenuecat_event', target_id: null, severity: 'warn',
-    details: { event_id: event.id, event_type: event.type, error_code: errorCode },
-  });
+  await audit(
+    deps.repository,
+    {
+      actor_id: null, action_type: 'system.revenuecat.event_failed', target_type: 'revenuecat_event', target_id: null, severity: 'warn',
+      details: { event_id: event.id, event_type: event.type, error_code: errorCode },
+    },
+    // 失敗したイベントの利用者 (handleRevenueCatEvent が取り直す利用者と同じ。匿名 ID だけ・ignore のイベントは空)
+    appUserIdsToSync(event),
+  );
 }
 
 /**

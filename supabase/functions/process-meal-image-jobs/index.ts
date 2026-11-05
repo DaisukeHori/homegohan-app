@@ -33,6 +33,15 @@ const FUNCTION_NAME = "process-meal-image-jobs";
 const logger = createLogger(FUNCTION_NAME);
 
 /**
+ * ジョブのログを書くロガー。ジョブの持ち主 (meal_image_jobs.user_id) が分かれば withUser で app_logs の user_id 列に入れる
+ * (metadata の jobId だけだと、運営が user_id 列で利用者を絞ったときにそのログが出てこない。#2254 M3)。
+ * 持ち主の分からないジョブ (user_id が null・空) は無印のロガーで書く (ログは捨てない)
+ */
+function jobLogger(job: Pick<MealImageJobRow, "user_id">) {
+  return typeof job.user_id === "string" && job.user_id !== "" ? logger.withUser(job.user_id) : logger;
+}
+
+/**
  * ジョブを取るときにつける貸し出しの長さ (ミリ秒)。この間に終わらなかったジョブ (関数の実行が打ち切られたなど) は、
  * pg_cron のジョブ requeue-stale-meal-image-jobs (public.requeue_stale_meal_image_jobs) が、期限からさらに 5 分過ぎたら取り戻す (#1561)。
  * 長さを変えるときは、migration 20261015180000_meal_image_jobs_pickup_cron.sql の c_stale_grace の説明も確かめる
@@ -449,7 +458,7 @@ async function markDishFailure(
       read: () => readMealSnapshot(job.planned_meal_id),
     });
   } catch (error: unknown) {
-    logger.error("料理を失敗の印にできず、生成中 (pending) のまま残りました", error, {
+    jobLogger(job).error("料理を失敗の印にできず、生成中 (pending) のまま残りました", error, {
       jobId: job.id,
       plannedMealId: job.planned_meal_id,
       dishIndex: job.dish_index,
@@ -484,7 +493,7 @@ async function recordDishLeftPending(
     // 0 行 = finalizeJob のあとにジョブの行が変わった (積み直しなど)。新しい状態を上書きしない
     if (!Array.isArray(data) || data.length === 0) throw new Error("the finalized job row was changed afterwards");
   } catch (error: unknown) {
-    logger.error("料理が生成中のまま残ったことを、ジョブの last_error に書けませんでした", error, {
+    jobLogger(job).error("料理が生成中のまま残ったことを、ジョブの last_error に書けませんでした", error, {
       jobId: job.id,
       plannedMealId: job.planned_meal_id,
       dishIndex: job.dish_index,
@@ -503,17 +512,18 @@ async function removeJobUploadedImage(
   why: MealDishWriteSkipReason | "write_exhausted",
 ): Promise<void> {
   const context = { jobId: job.id, plannedMealId: job.planned_meal_id, uploadPath, why };
+  const log = jobLogger(job);
   if (!isOwnJobUploadPath(uploadPath, { plannedMealId: job.planned_meal_id, jobId: job.id })) {
-    logger.warn("ジョブの画像のパスではないので、Storage から消しませんでした", context);
+    log.warn("ジョブの画像のパスではないので、Storage から消しませんでした", context);
     return;
   }
   try {
     const { error } = await supabase.storage.from(STORAGE_BUCKET).remove([uploadPath]);
     if (error) {
-      logger.warn("書かなかった料理の画像を Storage から消せませんでした", { ...context, error: error.message });
+      log.warn("書かなかった料理の画像を Storage から消せませんでした", { ...context, error: error.message });
     }
   } catch (error: unknown) {
-    logger.warn("書かなかった料理の画像を Storage から消せませんでした", {
+    log.warn("書かなかった料理の画像を Storage から消せませんでした", {
       ...context,
       error: error instanceof Error ? error.message : String(error),
     });
