@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { X, ChevronDown, ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
@@ -38,7 +38,12 @@ interface ShoppingRangeModalProps {
   currentWeekStart: Date;
   onClose: () => void;
   onToggleTodayExpanded: (expanded: boolean) => void;
-  onGenerate: (servingsConfig: ServingsConfig | null) => Promise<void>;
+  /**
+   * 「この設定で買い物リストを生成」を押したとき。rangeShownAt は、欄が範囲の日付を出すのに読んだ時刻 (#2254 M2)。
+   * 買い物リストを作る範囲は、この時刻から shoppingRangeRequest で求める (押した時刻で求め直すと、欄を開いたまま 0 時をまたいだとき、
+   * 欄に出した日付と送る範囲が 1 日ずれる)
+   */
+  onGenerate: (servingsConfig: ServingsConfig | null, rangeShownAt: Date) => Promise<void>;
 }
 
 // UX2-09: 「日付範囲」文字列を作る（単日なら1つ、範囲なら「〜」で連結）
@@ -64,7 +69,13 @@ export function ShoppingRangeModal({
   // 時計を 1 回だけ読んだ JST の今日から暦の計算だけでずらす。端末のローカル時刻で日をずらすと、夏時間の切り替えの日に JST の日付が 1 日ずれうる)
   // 「○日分」の日数は欄の min / max の範囲に丸めたものを表示にも範囲にも使う (範囲の外の値で日付の計算が投げないように)
   const daysCount = clampShoppingRangeDays(shoppingRange.daysCount);
-  const rangeBasis = { now: new Date(), daysCount, currentWeekStart };
+  // この描画の時計 (描画ごとに 1 回だけ読む)。範囲の日付はこの時刻の JST の今日から数える
+  const renderedAt = new Date();
+  // 範囲の日付を出した描画の時刻 (#2254 M2)。「次へ」で人数の確認 (日付を出さない段) へ進むときに、範囲を選んだ描画の時刻を覚え、
+  // 生成のときにこの時刻の範囲を送る (人数の確認の段は描画のたびに時計を読み直すので、0 時をまたぐと選んだときの日付とずれる)。
+  // 人数の確認の段から開いた (範囲の日付を出していない) ときは null で、その描画の時刻を使う
+  const [rangeShownAt, setRangeShownAt] = useState<Date | null>(null);
+  const rangeBasis = { now: renderedAt, daysCount, currentWeekStart };
   const todayStr = shoppingRangeDates('today', rangeBasis).startDate;
   const tomorrowStr = shoppingRangeDates('tomorrow', rangeBasis).startDate;
   const dayAfterStr = shoppingRangeDates('dayAfterTomorrow', rangeBasis).startDate;
@@ -290,7 +301,11 @@ export function ShoppingRangeModal({
 
           {/* 次へボタン */}
           <button
-            onClick={() => setShoppingRangeStep('servings')}
+            onClick={() => {
+              // 範囲を選んだ (日付を出した) 描画の時刻を覚える (#2254 M2)
+              setRangeShownAt(renderedAt);
+              setShoppingRangeStep('servings');
+            }}
             disabled={(shoppingRange.type === 'today' && shoppingRange.todayMeals.length === 0) || isSelectedRangeUnavailable}
             className="w-full mt-4 p-3.5 rounded-xl font-semibold text-[14px] disabled:opacity-50 flex items-center justify-center gap-2"
             style={{ background: colors.accent, color: '#fff' }}
@@ -424,7 +439,7 @@ export function ShoppingRangeModal({
 
           {/* 生成開始ボタン */}
           <button
-            onClick={() => onGenerate(servingsConfig)}
+            onClick={() => onGenerate(servingsConfig, rangeShownAt ?? renderedAt)}
             data-testid="generate-shopping-list-button"
             className="w-full mt-2 p-3.5 rounded-xl font-semibold text-[14px] flex items-center justify-center gap-2"
             style={{ background: colors.accent, color: '#fff' }}

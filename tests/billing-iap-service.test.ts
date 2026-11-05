@@ -4,8 +4,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const logs = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), userWarn: vi.fn() }));
+const logs = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), userWarn: vi.fn(), userError: vi.fn() }));
 // withUser(userId).warn は logs.warn にも流し、logs.userWarn に利用者を添えて残す (app_logs の user_id 列に入る形か。#2245 K5)
+// withUser(userId).error も同じく logs.error に流し、logs.userError に利用者を添えて残す (#2254 M3)
 vi.mock('@/lib/db-logger', () => ({
   createLogger: () => ({
     debug: vi.fn(),
@@ -16,6 +17,10 @@ vi.mock('@/lib/db-logger', () => ({
       warn: (message: string, metadata?: Record<string, unknown>) => {
         logs.userWarn(userId, message, metadata);
         logs.warn(message, metadata);
+      },
+      error: (message: string, error?: unknown, metadata?: Record<string, unknown>) => {
+        logs.userError(userId, message, error, metadata);
+        logs.error(message, error, metadata);
       },
     }),
   }),
@@ -115,6 +120,7 @@ beforeEach(() => {
   logs.warn.mockReset();
   logs.error.mockReset();
   logs.userWarn.mockReset();
+  logs.userError.mockReset();
 });
 
 describe('billing/03 §8.4 syncStoreSubscriber', () => {
@@ -286,6 +292,39 @@ describe('billing/03 §8.4 handleRevenueCatEvent / recordRevenueCatEventFailure'
     // finish(ok=false) の失敗は投げる (route が 500)
     const failingFinish = makeRepository({ finishRevenueCatEvent: vi.fn(async () => Promise.reject(new Error('db down'))) });
     await expect(recordRevenueCatEventFailure(deps(gateway, failingFinish.repository), event(), 'SYS_INTERNAL_ERROR')).rejects.toThrow('db down');
+  });
+
+  it('監査の記録に失敗した error は、イベントの利用者の user_id 列に入れる (運営が利用者で絞ったときに出てくる。#2254 M3)', async () => {
+    const { gateway } = makeGateway({});
+    const auditDown = new Error('audit down');
+    const failingAudit = () => makeRepository({ recordIapAudit: vi.fn(async () => Promise.reject(auditDown)) }).repository;
+
+    // 利用者 1 人のイベント: その利用者で 1 行
+    await recordRevenueCatEventFailure(deps(gateway, failingAudit()), event({ id: 'evt_one' }), 'SYS_INTERNAL_ERROR');
+    expect(logs.userError.mock.calls).toEqual([
+      [USER, 'アプリ内課金の監査ログの記録に失敗しました', auditDown, { action_type: 'system.revenuecat.event_failed' }],
+    ]);
+    expect(logs.error).toHaveBeenCalledTimes(1);
+
+    // TRANSFER: 移動元と移動先のそれぞれの利用者で 1 行ずつ (どちらで絞っても出てくる)
+    logs.userError.mockReset();
+    logs.error.mockReset();
+    await recordRevenueCatEventFailure(
+      deps(gateway, failingAudit()),
+      event({ id: 'evt_transfer', type: 'TRANSFER', app_user_id: undefined, transferred_from: [USER], transferred_to: [OTHER_USER] }),
+      'SYS_INTERNAL_ERROR',
+    );
+    expect(logs.userError.mock.calls.map((call) => call[0])).toEqual([USER, OTHER_USER]);
+    expect(logs.error).toHaveBeenCalledTimes(2);
+
+    // 利用者の分からないイベント (匿名 ID だけ): 無印のロガーで 1 行 (user_id 列は空のまま)
+    logs.userError.mockReset();
+    logs.error.mockReset();
+    await recordRevenueCatEventFailure(deps(gateway, failingAudit()), event({ id: 'evt_anon', app_user_id: '$RCAnonymousID:abc' }), 'SYS_INTERNAL_ERROR');
+    expect(logs.userError).not.toHaveBeenCalled();
+    expect(logs.error.mock.calls).toEqual([
+      ['アプリ内課金の監査ログの記録に失敗しました', auditDown, { action_type: 'system.revenuecat.event_failed' }],
+    ]);
   });
 });
 

@@ -37,7 +37,7 @@ import { useAiConsultationReceiver, type AiConsultationPlaceResult, type AiConsu
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, isCalendarDate, addDays, daysUntilFrom, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, formatCalendarDate, todayLocal, parseLocalDate, isCalendarDate, addDays, daysUntilFrom, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
 // isUltimateModeWeeklyMenuRequest (究極モードの生成かの判定) は、Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609)
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
@@ -3699,14 +3699,17 @@ export default function WeeklyMenuPage() {
 
   // 買い物範囲から日付範囲を計算
   // 範囲を選ぶ欄 (ShoppingRangeModal) が出す日付と同じ関数で求める (#2235 I3。今日から数える範囲は、時計を 1 回だけ読んだ
-  // JST の今日から暦の計算だけでずらす。端末のローカル時刻で日をずらすと、夏時間の切り替えの日に JST の日付が 1 日ずれうる)
+  // JST の今日から暦の計算だけでずらす。端末のローカル時刻で日をずらすと、夏時間の切り替えの日に JST の日付が 1 日ずれうる)。
+  // 時計は読まず、欄が範囲の日付を出すのに読んだ時刻 (rangeShownAt) から求める (#2254 M2。押した時刻で求め直すと、欄を開いたまま
+  // 0 時をまたいだとき、欄に出した日付と送る範囲が 1 日ずれる)
   const calculateDateRange = useCallback(
-    () => shoppingRangeRequest(shoppingRange, { now: new Date(), currentWeekStart: weekStart }),
+    (rangeShownAt: Date) => shoppingRangeRequest(shoppingRange, { now: rangeShownAt, currentWeekStart: weekStart }),
     [shoppingRange, weekStart],
   );
 
   // Regenerate shopping list from menu (非同期版)
-  const regenerateShoppingList = async () => {
+  // rangeShownAt は、範囲を選ぶ欄が範囲の日付を出すのに読んだ時刻 (送る範囲はこの時刻から求める。#2254 M2)
+  const regenerateShoppingList = async (rangeShownAt: Date) => {
     if (isRegeneratingShoppingList) return;
     // #73 #91: 献立データが存在しない場合はサイレント失敗を防ぎ、メッセージを表示して終了
     if (!currentPlan || currentPlan.days.every(d => !d.meals?.length)) {
@@ -3726,7 +3729,7 @@ export default function WeeklyMenuPage() {
     // 日付の計算が投げると作成中の表示が残った。表示中の週が扱える日付の外なら範囲は null で、作らずに知らせる)
     const dateRange = (() => {
       try {
-        return calculateDateRange();
+        return calculateDateRange(rangeShownAt);
       } catch {
         return null;
       }
@@ -3803,12 +3806,12 @@ export default function WeeklyMenuPage() {
     } catch (e: any) {
       // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約し、
       // 直前の呼び出しをそのまま再実行できる「もう一度試す」を付ける
-      // （calculateDateRange/currentPlan は関数内で毎回読み直すため再実行は安全）。
+      // （calculateDateRange/currentPlan は関数内で毎回読み直すため再実行は安全。範囲は欄に出した日付の範囲のまま。#2254 M2）。
       setSuccessMessage({
         title: '買い物リストの再生成に失敗しました',
         message: e.message || '再生成に失敗しました。もう一度お試しください。',
         type: 'error',
-        onRetry: () => regenerateShoppingList(),
+        onRetry: () => regenerateShoppingList(rangeShownAt),
       });
       setIsRegeneratingShoppingList(false);
       setShoppingListProgress(null);
@@ -6727,7 +6730,7 @@ export default function WeeklyMenuPage() {
                 currentWeekStart={weekStart}
                 onClose={() => { setActiveModal('shopping'); setShoppingRangeStep('range'); }}
                 onToggleTodayExpanded={setIsTodayExpanded}
-                onGenerate={async (cfg) => {
+                onGenerate={async (cfg, rangeShownAt) => {
                   if (cfg) {
                     // 人数の設定の書き込み (#2201 U2。保存の前に読んだ取り直しの応答で、保存した人数を戻さない)
                     const endWrite = receiver.beginWrite();
@@ -6745,7 +6748,7 @@ export default function WeeklyMenuPage() {
                   }
                   setActiveModal('shopping');
                   setShoppingRangeStep('range');
-                  regenerateShoppingList();
+                  regenerateShoppingList(rangeShownAt);
                 }}
               />
             )}
@@ -7140,10 +7143,8 @@ export default function WeeklyMenuPage() {
 // parseLocalDate/addDays（ホストのローカル暦フィールドのみで完結する純粋関数）で解析・加算し、
 // 同じくホストのローカル暦フィールド(getFullYear/getMonth/getDate)でそのまま文字列化することで、
 // 実行環境のタイムゾーンに関わらず常に同じカレンダー演算結果になるようにする。
+// 年は formatCalendarDate (packages/shared) で 0 埋めの 4 桁にする (#2254 M2。以前は年を getFullYear() のまま書き、1000 年より前の週
+// (?date=0101-01-10 など) の終わりの日を "101-01-16" と書いて /api/meal-plans に断られた)
 function addDaysStr(dateStr: string, days: number): string {
-  const date = addDays(parseLocalDate(dateStr), days);
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  return formatCalendarDate(addDays(parseLocalDate(dateStr), days));
 }

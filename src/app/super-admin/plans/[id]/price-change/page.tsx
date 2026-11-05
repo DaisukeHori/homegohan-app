@@ -36,6 +36,9 @@
  * 「変更がありません」に加えて、なぜ Stripe の Price を作れないか (Product ID が未設定・この環境に Stripe の鍵が無い) を出す
  * (stripePriceUnavailableReasonOf)。以前は「変更がありません」とだけ出し、販売開始の手順がどこで止まっているかが分からなかった。
  * 適用範囲の名前は src/lib/super-admin/plans-schemas.ts の PRICE_APPLIES_TO_LABELS から引く (プラン詳細の履歴のタブと同じ。#2112 Z1-2)。
+ * #2254 M2: 適用開始日時 (datetime-local) は日本時間で読み書きする (src/lib/admin/jst-datetime-local.ts。運営の画面の日時は日本時間に固定する)。
+ * 以前は既定値が UTC の壁時計 (toISOString().slice(0, 16)) で、送るときは端末のローカル時刻として読んだので、日本の端末では既定のままの
+ * 適用開始が押した時刻の 9 時間前になった。欄を空にした・形が違うときは送らず、文を出す。
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -66,6 +69,7 @@ import {
 import { planDetailHref } from '@/lib/super-admin/plan-detail-tab';
 import { PRICE_APPLIES_TO_LABELS } from '@/lib/super-admin/plans-schemas';
 import { rereadDetailRow } from '@/lib/super-admin/detail-reread';
+import { jstDateTimeLocalToIso, jstDateTimeLocalValue } from '@/lib/admin/jst-datetime-local';
 
 type ImpactData = {
   /** 新規契約のみなので常に 0 (既存契約は現行価格のまま) */
@@ -168,6 +172,8 @@ const STRIPE_PRICE_CREATED_NOTE = 'Stripe の Price を作ります';
 /** 入力の画面で、価格を変えずに Stripe の Price を作るだけのときの案内 (#2107 Y2) */
 const STRIPE_PRICE_MISSING_NOTE =
   'このプランは、月額・年額のどちらかの Stripe の Price がまだありません。今と同じ価格のまま進めると、その Stripe の Price を作って登録します (販売開始の手順)。';
+/** 適用開始日時の欄が空・形が違うときの文 (#2254 M2) */
+const EFFECTIVE_AT_INVALID_MESSAGE = '適用開始日時を入力してください';
 /** 実行のボタンの文 (価格を変えるとき) */
 const EXECUTE_PRICE_CHANGE_LABEL = '価格変更を実行する';
 /** 実行のボタンの文 (価格は変えず、Price ID がまだ無い間隔の Stripe の Price を作るだけのとき。#2107 Y2) */
@@ -182,7 +188,8 @@ export default function PriceChangePage() {
   const [newMonthlyPrice, setNewMonthlyPrice] = useState('');
   const [newYearlyPrice, setNewYearlyPrice] = useState('');
   const [reason, setReason] = useState('');
-  const [effectiveAt, setEffectiveAt] = useState(new Date().toISOString().slice(0, 16));
+  // 適用開始日時 (datetime-local の値。日本時間)。既定値は開いた時刻の日本時間 (#2254 M2。以前は UTC の壁時計で、日本の端末では 9 時間前になった)
+  const [effectiveAt, setEffectiveAt] = useState(() => jstDateTimeLocalValue(new Date()));
   const [impact, setImpact] = useState<ImpactData | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -322,6 +329,13 @@ export default function PriceChangePage() {
       setError('変更がありません');
       return;
     }
+    // 適用開始日時は日本時間として読む (#2254 M2)。欄を空にした・形が違うときは送らない
+    // (以前は new Date(値).toISOString() が送信の try の中で投げ、応答を受け取れなかったものとして読み直していた)
+    const effectiveAtIso = jstDateTimeLocalToIso(effectiveAt);
+    if (effectiveAtIso === null) {
+      setError(EFFECTIVE_AT_INVALID_MESSAGE);
+      return;
+    }
     // 月額・年額入力欄は常に現在価格で prefill されているため、変更していない方までそのまま送ると、
     // 変えていない方の Stripe Price も新しく作られ、いまの Price が無効化されてしまう (#1041 round-3 (C2))。
     // 変更されたフィールドのみ送る。月額・年額の両方を変えたときは、両方を送る (1 回のリクエストで
@@ -344,7 +358,7 @@ export default function PriceChangePage() {
             // 価格変更は新規契約のみに適用される (#1102)。API はこの値だけを受け付ける
             applies_to: 'new_only',
             reason,
-            effective_at: new Date(effectiveAt).toISOString(),
+            effective_at: effectiveAtIso,
           }),
         });
       } catch {
@@ -626,8 +640,9 @@ export default function PriceChangePage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">適用開始日時</label>
+              <label htmlFor="price-change-effective-at" className="block text-sm font-medium text-slate-700 mb-1">適用開始日時 (日本時間)</label>
               <input
+                id="price-change-effective-at"
                 type="datetime-local"
                 value={effectiveAt}
                 onChange={(e) => setEffectiveAt(e.target.value)}
