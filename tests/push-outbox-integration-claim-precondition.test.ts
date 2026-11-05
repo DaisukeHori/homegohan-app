@@ -7,7 +7,7 @@
  *       claimRowsAtHead / claimReceiptsAtHead / claimReceiptsOldestFirst はこれを中で呼ぶ)
  * #2245 K6 の欠陥: createOutboxStore の検査の store.claimQueued(workerId, 1, …) → toEqual([row.id]) の前に (b) が無かった。
  * また、前回の実行が途中で止まって残った 2000 年の行を消さなかった (afterEach は今回 seed した行だけを消す) ので、
- * ファイルの先頭で前回の残りを消す beforeAll (purgeLeftoverRows) が、このファイルが積む全部の種類 (LEFTOVER_KINDS) を消すことも確かめる。
+ * 前回の残りを消す、ファイルの末尾に置いたトップレベルの beforeAll (全部のテストの前に走る。purgeLeftoverRows) が、このファイルが積む全部の種類 (LEFTOVER_KINDS) を消すことも確かめる。
  * #2254 M4: weekly_menu_requests にも 2000 年の行 (attempt_limit_exceeded の検査の行) を積むので、その行が目印 (prompt) を持ち、
  * 前回の残りを消す beforeAll (purgeLeftoverMenuRequests) がこのファイルの全部の目印 (LEFTOVER_REQUEST_PROMPTS) を消すことと、
  * claim_menu_request (表の全体から最も古い取れる行を 1 件取る) の戻りの行を比べないことも確かめる。
@@ -129,7 +129,7 @@ describe('#2245 K6 push-outbox の結合テストの claim は表に残ったほ
     }
   });
 
-  it('ファイルの先頭で、前回の実行の残りの行を消す (トップレベルの beforeAll が、このファイルの全部の種類で purgeLeftoverRows を呼ぶ)', () => {
+  it('ファイルの全部のテストの前に (トップレベルの beforeAll が)、前回の実行の残りの行を消す (このファイルの全部の種類で purgeLeftoverRows を呼ぶ)', () => {
     expect(source).toMatch(/^beforeAll\(async \(\) => \{\n\s*await purgeLeftoverRows\(LEFTOVER_KINDS\);\n\}/m);
     expect(source).toMatch(/^async function purgeLeftoverRows\(kinds: readonly string\[\] = \[TEST_KIND\]\): Promise<void> \{/m);
     // このファイルが enqueue に渡す種類の定数 (p_kind: 名前) は、どれも beforeAll が消す種類 (LEFTOVER_KINDS) に入っている
@@ -142,7 +142,7 @@ describe('#2245 K6 push-outbox の結合テストの claim は表に残ったほ
     expect(enqueuedKinds.filter((k) => !listed.has(k))).toEqual([]);
   });
 
-  it('weekly_menu_requests の 2000 年の行は目印を持ち、ファイルの先頭で前回の残りを消す。claim_menu_request の戻りの行は比べない (#2254 M4)', () => {
+  it('weekly_menu_requests の 2000 年の行は目印を持ち、ファイルの全部のテストの前に (トップレベルの beforeAll が) 前回の残りを消す。claim_menu_request の戻りの行は比べない (#2254 M4)', () => {
     expect(source).toMatch(/^beforeAll\(async \(\) => \{\n\s*await purgeLeftoverMenuRequests\(LEFTOVER_REQUEST_PROMPTS\);\n\}/m);
     expect(source).toMatch(/^async function purgeLeftoverMenuRequests\(prompts: readonly string\[\] = \[OLD_REQUEST_PROMPT\]\): Promise<void> \{/m);
     // weekly_menu_requests の行は insertRequest だけが積み、created_at を指定した (2000 年にした) 行には目印を入れる

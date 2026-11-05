@@ -1,16 +1,17 @@
 /**
  * billing/04 (ストアの購読の定期の取り直し) 段 A: 候補を読む関数 billing_iap_reconcile_candidates と、
  * 試した印を書く関数 billing_iap_reconcile_mark_attempted と、印の表 iap_reconcile_attempts の結合テスト
- * (設計: docs/design/billing/04-iap-reconcile.md §6.2・§12.3 の 38〜45)
+ * (設計: docs/design/billing/04-iap-reconcile.md §6.2・§12.3 の 38〜45 と前回の残りを消す it)
  *
  * 段 A のテストなので、段 B の src/lib/billing/iap-reconcile-*.ts を import しない (段 B の定数も使わない。ここで同じ値をリテラルの定数で書く)。
  * 写像 billing_apply_store_subscription (43) には、関数の本体が p_snapshot->>'…' で読むキーの JSON をこのファイルで組んで渡す。
  *
- * 候補を読む関数は personal_subscriptions の全体を読むので、「候補に出るのは、いま走っている it が作った利用者だけ」を次の 3 つで保つ
+ * 候補を読む関数は personal_subscriptions の全体を読むので、「候補に出るのは、いま走っている it が作った利用者だけ」を次の 4 つで保つ
  * (設計 §12.3。時刻と片付けの型は tests/integration/rls/org-challenge-diff-privacy.test.ts と同じ):
  *   1. 時刻は固定の過去の年 (2000 年。at(hours)): ほかの結合テストのファイルが作る行の期限 (Date.now() からの相対) は、どれもこのファイルの p_now より後
  *   2. it ごとの片付け (afterEach)。印の表は service_role が SELECT しかできないので、印の行は auth.users の ON DELETE CASCADE で消す
  *   3. it ごとに新しい利用者 (describe の beforeAll で共有しない)
+ *   4. ファイルの最上位の beforeAll が、前回の実行の残り (iap_product_id が LEFTOVER_PRODUCT_PREFIXES で始まるストアの行の利用者) を消す (#2254 M4)
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (RPC と PostgREST を直接呼ぶ)。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local

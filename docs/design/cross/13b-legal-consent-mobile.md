@@ -188,7 +188,7 @@ v2.1〜v2.10 の R-15 (「同意が済んだら元の画面に戻る (画面の�
 | S24 | `LEGAL_CONSENT_ENFORCE` が off → status は `required: false` → 同意画面は出ない (13a の S8 と同じ) |
 | S25 | ハンズオンツアーの途中で改定 → 次の API (写真の保存など) が 403 → 同意画面だけになる (ツアーは外れる。skip も完了も記録しない) → 同意 → 入口からホーム → 設定の「ツアーをもう一度」で開き直せる |
 | S27 | タブの AI の FAB から AI 相談のシート (RN の Modal) を開いたまま改定 → 送信 (または「相談を閉じる」) の API が 403 → 同意画面だけになる (タブもシートも外れる) → 同意 → 入口からホーム。シートは閉じたまま (もう一度 FAB から開く) |
-| S28 | 初期設定の途中で同意が要るようになる (S18 の `unknown` のまま初期設定へ進んだ・初期設定の途中で改定が入った) → 同意が要るようになったあとの最初の答えの保存で、答えの保存 (`saveProgress` の `user_profiles` の upsert) のあとの `POST /api/profile/completeness` が 403 (ただし、最後の質問に答える直前に改定が入ったときは、最後の分岐の `POST /api/onboarding/complete` が 403 になり、catch の `Alert.alert("保存失敗", …)` が出る (`questions.tsx` の `handleAnswer` の最後の分岐)) → 同意画面だけになる → 同意 → 入口から初期設定の再開の画面 (`/onboarding/resume`) →「続きから」で次の質問 (それまでの答えは保存から戻る) → 続きを答えて完了 |
+| S28 | 初期設定の途中で同意が要るようになる (S18 の `unknown` のまま初期設定へ進んだ・初期設定の途中で改定が入った) → 同意が要るようになったあとの最初の答えの保存で、答えの保存 (`saveProgress` の `user_profiles` の upsert) のあとの `POST /api/profile/completeness` が 403 (ただし、最後の質問に答える直前に改定が入ったときは、最後の分岐 (`questions.tsx` の `handleAnswer`) の `POST /api/onboarding/complete` (`getApi`) が 403 になると、`withFriendlyErrors` が `notifyLegalConsentRequired()` を呼んで同意画面へ切り替わり、同時に catch の `Alert.alert("保存失敗", …)` も出る。同意のあとは再開で最後の質問に戻る) → 同意画面だけになる → 同意 → 入口から初期設定の再開の画面 (`/onboarding/resume`) →「続きから」で次の質問 (それまでの答えは保存から戻る) → 続きを答えて完了 |
 
 ### 3.3 今の main に残るネイティブの画面と起動の流れ (実コードで列挙。R-7)
 

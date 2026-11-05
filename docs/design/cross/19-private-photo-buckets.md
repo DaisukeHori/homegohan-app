@@ -142,7 +142,7 @@ origin/main 81e963d5 (2026-10-16 の突き合わせ) までに入った変更は
 | `meals.photo_url` | 0 | 0 | 書く側: `src/lib/handson-tour/sandbox-photo-meal.ts:78` (`saveSandboxPhotoMeal`。`POST /api/meal-plans/add-from-photo` の体験ツアーの経路が呼ぶ)。読む側: `lib/converter.ts:292` (`toMeal`)・運営の審査と、退会の掃除・完全削除 (§3.3 RD-3・RD-5) |
 | `recipes.image_url` | 0 | 0 | `POST /api/recipes` は `body.imageUrl` をそのまま入れる (利用者が書ける) |
 | `weekly_menu_requests.inventory_image_url` | 0 | 0 | 週の献立の依頼 (S-8) |
-| `meal_image_jobs.result_image_url` / `reference_image_urls` | 0 / 0 | 0 / 0 | `reference_image_urls` はコードが常に `[]` を入れる (`supabase/functions/_shared/meal-image.ts` の `reconcileDishImages` が種に `referenceImageUrls: []` を入れ、行には `seed.referenceImageUrls ?? []` を書く) |
+| `meal_image_jobs.result_image_url` / `reference_image_urls` | 0 / 0 | 0 / 0 | `reference_image_urls` はコードが常に `[]` を入れる (種の作り手は 2 つで、どちらも `referenceImageUrls: []`: `supabase/functions/_shared/meal-image.ts` の `reconcileDishImages` と、積み直しの道具の `scripts/lib/meal-image-backfill.ts`。行には `seed.referenceImageUrls ?? []` を書く) |
 | `health_checkups.image_url`・`blood_test_results.report_image_url` | 0 / 0 | – | 別バケット (`health-checkups`) 向け。保存のコードは未実装 (`health/checkups/new/page.tsx:450` の注記) |
 | `planned_meals.dishes` (jsonb) に `/storage/v1/` を含む行 | 0 | – | 料理ごとの `image_url` を持つ行はまだ無い |
 
