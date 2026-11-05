@@ -27,8 +27,18 @@ function formatIsoYear(year: number): string {
 
 /** toLocaleDateString('sv-SE') の書き方 (紀元の年・2 桁の月・2 桁の日。年は 0 埋めされず、紀元前でも紀元の印が付かない) */
 const SV_SE_DATE_PATTERN = /^(\d+)-(\d{2})-(\d{2})$/;
-/** 紀元 1 年 1 月 1 日 0 時 (UTC) の時刻 (Date.UTC は 0〜99 年を 1900 年代に読み替えるので、ISO 8601 の文字列から作る) */
-const COMMON_ERA_START_MS = Date.parse('0001-01-01T00:00:00Z');
+/**
+ * 年 (天文学的な年)・月 (0 始まり)・日の UTC の 0 時の時刻。
+ * Date.UTC と new Date(y, m, d) は 0〜99 年を 1900 年代に読み替えるので、setUTCFullYear で年をそのまま置く。
+ * 文字列を読まない (#2259 P2。Date.parse の ISO 8601 の読み方はエンジンに任されていて、読めなければ NaN になる)。
+ */
+function utcMidnightMs(year: number, monthIndex: number, date: number): number {
+  // 時刻 0 (1970-01-01T00:00:00Z) の年月日だけを置き換えるので、時刻は UTC の 0 時のまま
+  return new Date(0).setUTCFullYear(year, monthIndex, date);
+}
+
+/** 紀元 1 年 1 月 1 日 0 時 (UTC) の時刻 (#2259 P2。以前は Date.parse('0001-01-01T00:00:00Z') で、読めないエンジンでは NaN だった) */
+const COMMON_ERA_START_MS = utcMidnightMs(1, 0, 1);
 /** 12 月 (toLocaleDateString('sv-SE') の 2 桁の月) */
 const DECEMBER = '12';
 
@@ -38,6 +48,9 @@ const DECEMBER = '12';
  * 時刻だけで決まり、その内側の現地の日付は紀元前 1 年の 12 月末か紀元 1 年の 1 月初めなので、月で決まる。
  */
 function isBeforeCommonEra(date: Date, month: string): boolean {
+  // 境目の時刻が求まらない (NaN) エンジンでは紀元前と決めない (#2259 P2。比較が両方 false になり、12 月の日付が全部紀元前の形になった)。
+  // 紀元前の日付は実際には来ないので、紀元の年として書く
+  if (!Number.isFinite(COMMON_ERA_START_MS)) return false;
   const time = date.getTime();
   if (time < COMMON_ERA_START_MS - MS_PER_DAY) return true;
   if (time >= COMMON_ERA_START_MS + MS_PER_DAY) return false;
@@ -128,9 +141,15 @@ export function daysUntilLocal(dateStr: string | null | undefined, timeZone = 'A
  */
 export function daysUntilFrom(dateStr: string | null | undefined, today: string): number | null {
   if (!dateStr) return null;
-  const target = parseLocalDate(dateStr);
-  const now = parseLocalDate(today);
-  return Math.ceil((target.getTime() - now.getTime()) / MS_PER_DAY);
+  // 暦の差だけを数える (#2259 P2)。以前は端末の 0 時どうし (parseLocalDate) の差を 1 日の長さで割って Math.ceil していたので、
+  // 端末に夏時間がある地域で、間に夏時間の終わり (25 時間の日) があると 1 日多かった (America/Los_Angeles で 10/31 から 11/05 が 6 日)
+  return (calendarDayStartMs(dateStr) - calendarDayStartMs(today)) / MS_PER_DAY;
+}
+
+/** YYYY-MM-DD の UTC の 0 時の時刻 (暦の差を求める。どの日も UTC の 0 時なので、2 つの差は 1 日の長さのちょうど整数倍) */
+function calendarDayStartMs(dateStr: string): number {
+  const [year, month, date] = dateStr.split('-').map(Number);
+  return utcMidnightMs(year, month - 1, date);
 }
 
 /** YYYY-MM-DD の形 (ゼロ埋め) */

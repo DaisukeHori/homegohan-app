@@ -103,6 +103,7 @@ import {
   RECIPE_SHOPPING_NO_INGREDIENTS_TITLE,
   recipeShoppingAddedMessage,
 } from './_state/recipeShoppingList';
+import { monthKeysBetween } from './_state/calendarMonthKeys';
 
 // #182/#322: dynamic import で初期バンドルを削減 (LCP 改善)
 const V4GenerateModal = dynamic(
@@ -587,19 +588,7 @@ const monthWindowOf = (displayMonth: Date): [Date, Date] => {
   const lastDay = new Date(displayMonth.getFullYear(), displayMonth.getMonth() + 1, 0); // 翌月の 0 日 = 今月の末日
   return [shiftDays(firstDay, -CALENDAR_MEAL_DATES_MONTH_PADDING_DAYS), shiftDays(lastDay, CALENDAR_MEAL_DATES_MONTH_PADDING_DAYS)];
 };
-/** その日の月の鍵 ('YYYY-MM') */
-const monthKeyOf = (date: Date): string => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-/** 範囲 [startDate, endDate] にかかる月の鍵 ('YYYY-MM') を古い順に */
-const monthKeysBetween = (startDate: Date, endDate: Date): string[] => {
-  const keys: string[] = [];
-  const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
-  const lastMonth = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
-  while (cursor <= lastMonth) {
-    keys.push(monthKeyOf(cursor));
-    cursor.setMonth(cursor.getMonth() + 1);
-  }
-  return keys;
-};
+// 範囲にかかる月の鍵 ('YYYY-MM') は _state/calendarMonthKeys.ts の monthKeysBetween (#2259 P2。年を 0 埋めの 4 桁で書く)
 /** 月の鍵 ('YYYY-MM') の初日と末日 (YYYY-MM-DD) */
 const monthRangeOf = (monthKey: string): { first: string; last: string } => {
   const [year, month] = monthKey.split('-').map(Number);

@@ -351,6 +351,8 @@ describe('/menus/weekly の ?date= は isCalendarDate を通ったときだけ�
     // 直す前は formatLocalDate が年を 4 桁で書かず、週の格子の 7 日を "101-01-10".."101-01-16" で読んで /api/meal-plans に断られた
     await renderWeeklyPage({ date: '0101-01-10' });
     expect(mealPlanRangesRead()).toContain('0101-01-10..0101-01-16');
+    // 月のカレンダーの印は、週の窓と月の窓 (0100-12-25〜0101-02-07) にかかる月を 1 か月ずつ読む (#2259 P2。月の鍵の年を 0 埋めの 4 桁で書く)
+    expect(mealPlanRangesRead()).toEqual(expect.arrayContaining(['0100-12-01..0100-12-31', '0101-01-01..0101-01-31', '0101-02-01..0101-02-28']));
     const modal = await openShoppingRangeModal();
     expect(currentWeekOption(modal).textContent).toBe('表示中の週（1月10日〜1月16日）');
     expect(currentWeekOption(modal).disabled).toBe(false);
