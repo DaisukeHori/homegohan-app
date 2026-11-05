@@ -10,6 +10,10 @@
  *      終える (fetch が打ち切りに応じなくても終える)。両方の部品を同じ手順で確かめる
  *   4. 文: 時間切れの一文は Web の CLOSE_SESSION_TIMEOUT_MESSAGE と同じ扱い (失敗と言い切らず、相談の一覧で確かめてもらう)
  *   5. 写しが走査の対象: アーカイブ (AIAdvisorSheet の archiveSession) がこの部品の上限で待っている
+ *
+ * 時間切れの一文を出すのは、アーカイブを受け付ける (ok の応答が返る) 前の時間切れだけ。受け付けたあとの例外 (本文の読み取りの
+ * 時間切れ・本文が JSON でない など) では一文を出さず、Web の『相談を終了』の closeSession (#2265 Q2) と同じく新しい相談を出して
+ * 一覧を読み直す (#2265 Q5)。その振る舞いは apps/mobile/__tests__/ai/advisor-sheet-archive-time-limit-2265.test.tsx (jest) が確かめる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
