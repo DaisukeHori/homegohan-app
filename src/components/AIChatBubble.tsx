@@ -1,6 +1,6 @@
 "use client";
 
-import { createElement, useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { createElement, useState, useRef, useEffect, useCallback, useMemo, type SetStateAction } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MessageCircle, X, Send, Sparkles, ChevronDown,
@@ -348,7 +348,7 @@ function isNotRetryableBody(body: unknown): boolean {
 const ACTION_NOT_EXECUTABLE_RESPONSE_STATUSES: ReadonlySet<number> = new Set([400, 404]);
 
 /** 自動実行の結果のメッセージを、AI の応答を確定させてから足すまでの間 (ミリ秒)。応答の表示の直後に重ねず、少し遅らせて出す */
-const AUTO_ACTION_OUTCOME_MESSAGE_DELAY_MS = 300;
+export const AUTO_ACTION_OUTCOME_MESSAGE_DELAY_MS = 300;
 
 /**
  * チャットを開いてから、続けて押しても開き直さない (二重に開かない) 間 (ミリ秒)。
@@ -508,7 +508,17 @@ export default function AIChatBubble() {
   const { ensureAiConsent, consentModal } = useAiConsent({ prefetch: isOpen });
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessagesState] = useState<Message[]>([]);
+  // 画面の会話を変えた回数 (#2254 M1)。画面の会話は必ず下の setMessages で変えるので、どの経路から変えても (送信の仮のメッセージと
+  // 返答・送信の失敗の文・遅れて出す自動実行の結果の一文・前の依頼の一文・『相談を終了』の失敗の一文・読み込んだ会話など) 1 つ進む。
+  // 開く (openChat) は、一覧を待つ間にこれが進んだら会話を読み直さない (読み直すと、一覧を待つ間に変えた画面の会話がサーバーの写しで
+  // 置き換わり、足した一文が消える)。以前は画面を変える側がそれぞれ画面の操作の番号 (viewGenRef) を進める決まりだけで、進め忘れた
+  // 経路 (『相談を終了』の失敗の一文・送信の失敗の文・遅れて出す結果の一文) の一文を消した
+  const messagesRevisionRef = useRef(0);
+  const setMessages = useCallback((update: SetStateAction<Message[]>) => {
+    messagesRevisionRef.current += 1;
+    setMessagesState(update);
+  }, []);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -765,10 +775,12 @@ export default function AIChatBubble() {
   };
   // 最新の画面の操作の番号 (#2254 M1。モバイルの AIAdvisorSheet の viewGenRef と同じ決まり)。チャットを開く (openChat)・新しい相談を
   // 作る (createNewSession)・出す相談を変える (showSessionId)・送る (sendMessage)・1日献立の作成と提案の実行を始める・終える (作成中・
-  // 完了・結果の一文を今の画面に足す。settleDayMenuRequest・endActionRequest) たびに 1 つ進める。開く・作るは始めたときの番号を
-  // 持ち、一覧・作成の応答が返ったときに番号が進んでいれば、出す相談と会話を変えない (最後の操作が勝つ)。以前は開く側が閉包の古い
-  // currentSessionId を見て、一覧を待つ間に始めた新しい相談・選んだ相談を、一覧を読んだ時点の相談で上書きした (一覧を待つ間に
-  // 送った文と返答も、一覧のあとの会話の読み直しで消した)
+  // 完了・結果の一文を今の画面に足す。settleDayMenuRequest・endActionRequest)・『相談を終了』の失敗の一文を足す (showCloseFailure) たびに
+  // 1 つ進める。開く・作るは始めたときの番号を持ち、一覧・作成の応答が返ったときに番号が進んでいれば、出す相談と会話を変えない (最後の
+  // 操作が勝つ)。以前は開く側が閉包の古い currentSessionId を見て、一覧を待つ間に始めた新しい相談・選んだ相談を、一覧を読んだ時点の
+  // 相談で上書きした (一覧を待つ間に送った文と返答も、一覧のあとの会話の読み直しで消した)。
+  // 利用者の操作でない、遅れて出す一文 (送信の返答のあとの自動実行の結果・前の依頼の一文) と送信の終わりでは進めない (進めると、その
+  // 間に押した新しい相談の作成の結果を捨てる)。開く側はそれらを画面の会話を変えた回数 (messagesRevisionRef) で見る
   const viewGenRef = useRef(0);
   /** 画面の操作を 1 つ始め、その番号を返す */
   function startViewOperation(): number {
@@ -803,6 +815,12 @@ export default function AIChatBubble() {
   // 読み込み中の印が下り、送信・1日献立の作成を始められる。そのあとに遅れて返った前の読み込みの写しで、送った文・作成中の一文を消さない)。
   // 新しい相談の作成 (createNewSession) は数えない (作成を待つ間に返った切り替えた相談の会話は、作成が失敗したときの画面になる)
   const messagesRequestSeqRef = useRef(0);
+  // 会話の読み込みの最中に今の画面に足した『相談を終了』の失敗の一文の id と、足したときに出していた相談・最後に始めていた会話の
+  // 読み込みの番号 (#2254 M1)。読み込みの最中も『相談を終了』は押せる (#2245 K1。切り替えの直後・開き直しの読み込みの最中に閉じる) ので、
+  // 読み込みを待つ間に閉じるが失敗すると、失敗の一文が読み込み中の輪の下で足され、あとから返った読み込みの会話の置き換えで一度も出ずに
+  // 消えた (サーバーの会話には失敗が残らないので、何も起きなかったように見えた)。会話の読み込み (fetchMessages) は、読み込んだ会話で
+  // 画面を置き換えるときに、その読み込みを始めたあとに同じ相談の画面に足したこの一文を後ろに残す
+  const closeFailureNotesDuringLoadRef = useRef(new Map<string, { sessionId: string; messagesRequest: number }>());
   // 届いたかを確かめられなかった送信 (取り直せなかった・送った文が見つからなかった) と、送信に当てた送った文の保存行の id (#2227 H1)。
   // 後の取り直しで前の送信の保存行が見つかったら、入力欄に戻した文を消し (届いていたのにそのまま送ると二重に届く)、今回の送信の
   // 保存行を探すときはそれを除く (同じ文を続けて送ったときに、前の送信の保存行を今回の送信と取り違えない)。決まりは共有の
@@ -965,6 +983,8 @@ export default function AIChatBubble() {
   // メッセージ取得。会話を画面に置くのは、返ったときにまだその相談を出しているときだけ (#2245 K1。相談を A→B と切り替えた・閉じたあとの
   // 新しい相談に変わったあとに遅れて返った A の会話を、今の相談の画面に置かない。置くと、画面の会話と違う相談へ送られる)。
   // 同じ相談でも、あとに始めた会話の読み込みがあれば置かない (#2254 M1。messagesRequestSeqRef)。
+  // 置くときは、この読み込みを始めたあとに同じ相談の画面に足した『相談を終了』の失敗の一文を、読み込んだ会話の後ろに残す (#2254 M1。
+  // closeFailureNotesDuringLoadRef)。
   // 確かめられなかった送信の settle は、今の相談でなくても行う (その相談の写しで届いたかが分かる。入力欄に触るのは今の相談のときだけ)。
   // 決まりはモバイルの AIAdvisorSheet の loadMessages と同じ (あとに始めた読み込みの番号を見るのは Web だけ。モバイルは送信の結果を
   // id で足し直すので、遅れた写しで送った文と返答を失わない)
@@ -980,10 +1000,18 @@ export default function AIChatBubble() {
       if (res.ok) {
         const data = await res.json();
         if (currentSessionIdRef.current === sessionId && messagesRequestSeqRef.current === messagesRequest) {
-          setMessages((data.messages || []).map((m: any) => ({
+          // この読み込みを始めたあと (番号が同じか後) に、この相談の画面に足した失敗の一文を残す。これが最後に始めた読み込みなので、
+          // 記録はここで片付ける (あとの読み込みはこのあとに始まるので、ここまでの記録の一文はどれも残さない)
+          const keptNoteIds = new Set<string>();
+          for (const [noteId, note] of closeFailureNotesDuringLoadRef.current) {
+            if (note.sessionId === sessionId && note.messagesRequest >= messagesRequest) keptNoteIds.add(noteId);
+          }
+          closeFailureNotesDuringLoadRef.current.clear();
+          const loadedMessages: Message[] = (data.messages || []).map((m: Message) => ({
             ...m,
             isImportant: m.isImportant || false,
-          })));
+          }));
+          setMessages(prev => [...loadedMessages, ...prev.filter(m => keptNoteIds.has(m.id))]);
         }
         // 確かめられなかった前の送信が届いていたら、入力欄に戻した文を消す (#2227 H1)
         const loaded = loadedMessagesOf(data);
@@ -996,7 +1024,7 @@ export default function AIChatBubble() {
       // B の読み込みの最中の印を消さない)
       endLoading(loading);
     }
-  }, [settleUnconfirmedSends, beginLoading, endLoading]);
+  }, [settleUnconfirmedSends, beginLoading, endLoading, setMessages]);
 
   // チャットを開く
   // Bug-6: 隣接 UI からの誤クリックでチャットが意図せず開くのを防ぐため、
@@ -1024,22 +1052,35 @@ export default function AIChatBubble() {
       // 相談を閉じる (/close) の応答待ちの間は、会話を読み込まない (#2245 K1。閉じる側が応答のあと一覧を読み直し、新しい相談を出す。
       // ここで読み込むと、閉じたあとの新しい相談の画面を、遅れて返った閉じた相談の会話や一覧で上書きしうる)。開くだけはする
       if (closingSessionRef.current) return;
-      // 開くのも画面の操作 (#2254 M1)。一覧を待つ間にほかの画面の操作があったかを、この番号で見る
+      // 開くのも画面の操作 (#2254 M1)。一覧を待つ間にほかの画面の操作があったかを、この番号で見る。画面の会話が変わったかは、
+      // 変えた回数 (messagesRevisionRef) で見る
       const startedAt = startViewOperation();
+      const messagesRevisionAtStart = messagesRevisionRef.current;
       const fetchedSessions = await fetchSessions();
 
       if (fetchedSessions === null) {
         return; // 認証されていない場合は何もしない
       }
       // 一覧を待つ間に閉じるを押した: 読み込みは閉じる側に任せる (#2245 K1。上と同じ)。
-      // 一覧を待つ間にほかの画面の操作 (新しい相談・相談の切り替え・開き直し・送信) があった: 出す相談を変えず、会話も読み込まない
-      // (#2254 M1。最後の操作が勝つ。以前は閉包の古い currentSessionId を見て、始めた新しい相談を一覧の相談で上書きした。
-      // 開き直しの一覧を待つ間に送ると、一覧のあとの会話の読み直しが送った文と返答の仮のメッセージを写しで置き換え、返答が画面に出なかった)
-      if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
-      // 1日献立の作成の最中・提案の実行の応答待ちの最中 (チャットを閉じて開き直した): 出す相談を変えず、会話も読み直さない (#2254 M1。
-      // 読み直すと会話がサーバーの写しで置き換わり、作成中の一文が消える。画面はもうその相談の会話を出している)。
-      // 一覧を待つ間に作成・実行を始めた・終わった (完了・失敗・結果の一文を足した) ときは、始める・終わるのが画面の操作なので上の番号で止まる
-      if (resultRequestInFlight()) return;
+      // 一覧を待つ間にほかの画面の操作 (新しい相談・相談の切り替え・開き直し・送信・『相談を終了』の失敗) があった: 出す相談を変えず、
+      // 会話も読み込まない (#2254 M1。最後の操作が勝つ。以前は閉包の古い currentSessionId を見て、始めた新しい相談を一覧の相談で
+      // 上書きした。開き直しの一覧を待つ間に送ると、一覧のあとの会話の読み直しが送った文と返答の仮のメッセージを写しで置き換え、
+      // 返答が画面に出なかった。閉じるが失敗すると『終了できませんでした』が読み直しで消え、何も起きなかったように見えた)。
+      // 一覧を待つ間に画面の会話が変わった (送信の返答・失敗の文・遅れて出す自動実行の結果の一文・前の依頼の一文が届いた) ときも
+      // 読み直さない (#2254 M1。読み直すと、足した一文がサーバーの写しで置き換わって消える。画面はもうその相談の会話を出している)
+      if (
+        closingSessionRef.current ||
+        viewGenRef.current !== startedAt ||
+        messagesRevisionRef.current !== messagesRevisionAtStart
+      ) {
+        return;
+      }
+      // 1日献立の作成の最中・提案の実行の応答待ちの最中・送信の最中 (チャットを閉じて開き直した): 出す相談を変えず、会話も読み直さない
+      // (#2254 M1。読み直すと会話がサーバーの写しで置き換わり、作成中の一文が消える。送信の最中なら送った文と返答の仮のメッセージが
+      // 消え、流れてきた返答と最後の置き換えが当たる行を失って、返答が次の読み込みまで画面に出なかった。画面はもうその相談の会話を
+      // 出している)。一覧を待つ間に作成・実行を始めた・終わった (完了・失敗・結果の一文を足した) ときは、始める・終わるのが画面の操作
+      // なので上の番号で止まる
+      if (resultRequestInFlight() || sendingRef.current) return;
 
       // 既存のアクティブセッションがあればそれを使う、なければ新規作成
       // ※ fetchSessions() の返り値を直接参照（stale state 回避）。今出している相談も閉包の state でなく ref で見る (#2254 M1)
@@ -1824,29 +1865,37 @@ export default function AIChatBubble() {
         const body: unknown = await res.json().catch(() => null);
         const failure = consultationCloseFailureOf(res.status, body);
         if (failure.kind === 'already-closed') await fetchSessions();
-        showCloseFailure(failure.message);
+        showCloseFailure(currentSessionId, failure.message);
       }
     } catch (e) {
       console.error('Failed to close session:', e);
       // 通信の失敗 (応答が返らなかった): 固定の失敗の文を出す (#2245 K1)
-      if (!closeAccepted) showCloseFailure(CONSULTATION_CLOSE_FAILED_MESSAGE);
+      if (!closeAccepted) showCloseFailure(currentSessionId, CONSULTATION_CLOSE_FAILED_MESSAGE);
     } finally {
       closingSessionRef.current = false;
       setIsClosingSession(false);
     }
   };
 
-  /** 相談を終了できなかったことをチャットに出す (#2245 K1。ほかの失敗と同じく alert ではなくチャットに出す。#2189 W1-a) */
-  const showCloseFailure = (content: string) => {
-    setMessages(prev => [
-      ...prev,
-      {
-        id: `close-failed-${Date.now()}`,
-        role: 'assistant',
-        content,
-        createdAt: new Date().toISOString(),
-      },
-    ]);
+  /**
+   * 相談 (sessionId) を終了できなかったことをチャットに出す (#2245 K1。ほかの失敗と同じく alert ではなくチャットに出す。#2189 W1-a)。
+   * 失敗の一文を足すのも画面の操作 (#2254 M1。1日献立の作成・提案の実行が終わったとき (settleDayMenuRequest・endActionRequest) と
+   * 同じ『終わるのも画面の操作』)。閉じるを押す前に始めた開く (openChat) の一覧のあとの会話の読み直しと、新しい相談の作成
+   * (createNewSession) の画面の置き換えで、失敗の一文を消させない (以前は消え、#2245 K1 が直す前の『何も起きなかったように見える』に
+   * 戻った)。会話の読み込みの最中なら、その読み込みが会話を置き換えるときに後ろに残す (closeFailureNotesDuringLoadRef)
+   */
+  const showCloseFailure = (sessionId: string, content: string) => {
+    startViewOperation();
+    const note: Message = {
+      id: `close-failed-${Date.now()}`,
+      role: 'assistant',
+      content,
+      createdAt: new Date().toISOString(),
+    };
+    if (loadingRef.current) {
+      closeFailureNotesDuringLoadRef.current.set(note.id, { sessionId, messagesRequest: messagesRequestSeqRef.current });
+    }
+    setMessages(prev => [...prev, note]);
   };
 
   // 1日献立変更を実行（V4直接呼び出し）
@@ -1952,7 +2001,8 @@ export default function AIChatBubble() {
   const inputLocked = isSending || isClosingSession || isLoading;
   // 1日献立の作成の最中か・提案の実行の応答待ちが 1 件でもあるか (#2254 M1。描画の側)
   const resultRequestPending = isDayMenuInFlight || actionRequestsInFlight > 0;
-  // 『相談を終了』を止めるか: 閉じる応答待ち・送信中 (#2235 I8)・1日献立の作成の最中・提案の実行の応答待ちの最中 (#2254 M1)・相談が無い
+  // 『相談を終了』を止めるか: 閉じる応答待ち・送信中 (#2235 I8)・1日献立の作成の最中・提案の実行の応答待ちの最中 (#2254 M1)・相談が無い。
+  // 会話の読み込みの最中は止めない (#2245 K1。切り替えの直後に閉じられる。失敗の一文は、読み込んだ会話の後ろに残す。#2254 M1)
   const closeSessionLocked = isClosingSession || isSending || resultRequestPending || !currentSessionId;
   // 『新しい相談を始める』・相談の行を止めるか: 閉じる応答待ち (#2235 I8。送信中は止めない)・1日献立の作成の最中・提案の実行の
   // 応答待ちの最中 (#2254 M1)
