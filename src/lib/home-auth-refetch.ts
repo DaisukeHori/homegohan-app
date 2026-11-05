@@ -4,7 +4,8 @@ import type { AuthChangeEvent } from "@supabase/supabase-js";
  * ホームのデータを読み直すログインの状態の変化 (supabase.auth.onAuthStateChange の event。#2206 G3)。
  * INITIAL_SESSION (購読を始めたときに 1 回。開いたときの読み込みと重なる)・TOKEN_REFRESHED (トークンの更新。ログインしている人は
  * 変わらない) では読み直さない (読み直すたびに AI つきの栄養の分析を読み、LLM と上限に数えない枠の安全弁 nutrition_advice_auto を使う)。
- * SIGNED_IN は shouldRefetchHomeOnAuthChange が、前回読んだ利用者と違うときだけに絞る (#2227 H3)
+ * SIGNED_IN は shouldRefetchHomeOnAuthChange が絞る (#2227 H3・#2235 I2。自分で setSession している間は数えない。それ以外は、
+ * 前回読んだ利用者がまだ無い・セッションに利用者が無い・前回と違うときに読み直す)
  */
 export const HOME_REFETCH_AUTH_EVENTS: ReadonlySet<AuthChangeEvent> = new Set<AuthChangeEvent>([
   "SIGNED_IN",

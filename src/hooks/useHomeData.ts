@@ -203,7 +203,8 @@ export const useHomeData = () => {
   /**
    * 出している今日の献立を読んだ読み取りの今日 (JST の暦日。#2245 K2)。まだ置いていなければ null。ホームの見出しの日付は
    * この日に合わせる (0 時をまたいで開いたままの画面の読み直しが新しい今日を読んだら、見出しも同じ日になる)。
-   * 週の棒の今日の印・期限までの日数は、それぞれの値を置いた読み取りの今日 (weeklyStatsToday・expiringItemsToday。#2254 M2)
+   * 週の棒の今日の印・期限までの日数は、それぞれの値を置いた読み取りの今日 (weeklyStatsToday・expiringItemsToday。#2254 M2) と
+   * 見出しの今日を比べて home/page.tsx が決める (weeklyBarsToday・expiringDaysToday。#2259 P2)
    */
   const [homeToday, setHomeToday] = useState<string | null>(null);
   // 今日のアドバイスの帯 (文と出所。#2206 G3)
@@ -225,16 +226,17 @@ export const useHomeData = () => {
   });
   /**
    * 週の集計 (weeklyStats) を読んだ読み取りの今日 (JST の暦日。#2254 M2)。まだ置いていなければ null。週の棒はこの日で終わる 7 日
-   * (calendarDaysEndingAt) なので、棒の今日の印はこの日に付ける。見出しの今日 (homeToday) に合わせると、0 時をまたいだ取り直しで
+   * (calendarDaysEndingAt)。棒の今日の印は、この日が見出しの今日 (homeToday) より前でなければこの日に付け、前なら付けない
+   * (home/page.tsx の weeklyBarsToday。#2259 P2)。見出しの今日にそのまま合わせると、0 時をまたいだ取り直しで
    * 今日の献立の読み取りだけが失敗したとき、新しい日で終わる 7 日の 6 本目 (前の日) に印が付く
    */
   const [weeklyStatsToday, setWeeklyStatsToday] = useState<string | null>(null);
   const [expiringItems, setExpiringItems] = useState<PantryItem[]>([]);
   /**
    * 期限の近い食材 (expiringItems) を読んだ読み取りの今日 (JST の暦日。#2254 M2)。まだ置いていなければ null。
-   * 期限までの日数はこの日から数える (食材は「この日から期限の近いもの」で絞って読んだので、同じ日から数える)。
-   * 見出しの今日 (homeToday) は今日の献立を置いた読み取りの今日なので、0 時をまたいだ取り直しで今日の献立の読み取りだけが失敗すると、
-   * 見出しは前の日のまま、食材は新しい日で置かれる。見出しの今日から数えると、残りの日数が 1 日多くなる
+   * 期限までの日数は、この日と見出しの今日 (homeToday) の遅い方から数える (home/page.tsx の expiringDaysToday・laterCalendarDay。
+   * #2259 P2)。見出しの今日は今日の献立を置いた読み取りの今日なので、0 時をまたいだ取り直しで今日の献立の読み取りだけが失敗すると、
+   * 見出しは前の日のまま、食材は新しい日で置かれる。見出しの今日だけから数えると、残りの日数が 1 日多くなる
    */
   const [expiringItemsToday, setExpiringItemsToday] = useState<string | null>(null);
   const [shoppingRemaining, setShoppingRemaining] = useState(0);
@@ -419,7 +421,8 @@ export const useHomeData = () => {
       // place が番兵と書き込みの窓を見る)。読み取りの失敗では今の表示を残す (置かない)
       if (!dailyMealError) {
         read.place(KEY_TODAY_PLAN, () => {
-          // 置いた今日の献立の日 (見出しの日付はこの日に合わせる。#2245 K2。週の棒の今日の印・期限までの日数は、それぞれを置いた読み取りの今日。#2254 M2)
+          // 置いた今日の献立の日 (見出しの日付はこの日に合わせる。#2245 K2。週の棒の今日の印・期限までの日数は、それぞれを置いた読み取りの今日と
+          // この日を比べて home/page.tsx が決める。#2254 M2・#2259 P2)
           setHomeToday(today);
           if (dailyMealData && dailyMealData.planned_meals) {
             const mealsData = dailyMealData.planned_meals;
@@ -608,7 +611,8 @@ export const useHomeData = () => {
         };
         read.place(KEY_WEEKLY_STATS, () => {
           setWeeklyStats(weekly);
-          // 7 日を終えた今日 (棒の今日の印はこの日に付ける。#2254 M2)
+          // 7 日を終えた今日 (棒の今日の印は、この日が見出しの今日より前でなければこの日に付け、前なら付けない。
+          // home/page.tsx の weeklyBarsToday。#2254 M2・#2259 P2)
           setWeeklyStatsToday(today);
         });
       }
@@ -691,7 +695,7 @@ export const useHomeData = () => {
         }));
         read.place(KEY_EXPIRING_ITEMS, () => {
           setExpiringItems(items);
-          // 食材を絞った今日 (期限までの日数はこの日から数える。#2254 M2)
+          // 食材を絞った今日 (期限までの日数は、この日と見出しの今日の遅い方から数える。home/page.tsx の expiringDaysToday。#2254 M2・#2259 P2)
           setExpiringItemsToday(today);
         });
       }
@@ -1015,8 +1019,9 @@ export const useHomeData = () => {
   const loading = receiver.isLoading(KEY_HOME_LOADING);
 
   /**
-   * ページの読み取り: 開いたとき・ログインの状態の変化 (HOME_REFETCH_AUTH_EVENTS の 3 つだけ。#2206 G3。SIGNED_IN は前回読んだ利用者と
-   * 違うときだけ。#2227 H3)・完了の切り替えの巻き戻し・
+   * ページの読み取り: 開いたとき・ログインの状態の変化 (HOME_REFETCH_AUTH_EVENTS の 3 つだけ。#2206 G3。SIGNED_IN は
+   * shouldRefetchHomeOnAuthChange の条件で読み直す: 自分で setSession している間は数えない・前回読んだ利用者がまだ無い・
+   * セッションに利用者が無い・前回と違う。#2227 H3・#2235 I2)・完了の切り替えの巻き戻し・
    * 献立の変更の実行のあと。全画面の読み込み中の表示を主のデータの読み取りの終わりまで出す。
    * 分析は分析ごとに別のページの読み取りで始める (AI つき。読み込み中の印は分析の鍵で、分析を置くか分析の読み取りが終わるまで)。
    * 返す Promise は分析を待たない
@@ -1295,8 +1300,9 @@ export const useHomeData = () => {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
       // SIGNED_IN・SIGNED_OUT・USER_UPDATED (HOME_REFETCH_AUTH_EVENTS) で読み直す (INITIAL_SESSION・TOKEN_REFRESHED では読まない。#2206 G3)。SIGNED_OUT・USER_UPDATED は毎回。
-      // SIGNED_IN はタブを前に戻したときにも同じ人で来ることがあるので、前回読んだ利用者と違うときだけ読み直す (#2227 H3)
-      // ホームの読み取りが自分で setSession している間の SIGNED_IN は、その読み取りの同期の知らせなので読み直さない (#2235 I2)
+      // SIGNED_IN はタブを前に戻したときにも同じ人で来ることがあるので、shouldRefetchHomeOnAuthChange の条件で読み直す (#2227 H3):
+      // ホームの読み取りが自分で setSession している間の SIGNED_IN は、その読み取りの同期の知らせなので数えない (#2235 I2)。
+      // それ以外は、前回読んだ利用者がまだ無い・セッションに利用者が無い・前回と違うときに読み直す
       if (shouldRefetchHomeOnAuthChange(event, session?.user.id, lastReadAuthUserIdRef.current, ownSessionSyncsRef.current > 0)) {
         void fetchHomeDataRef.current();
       }
@@ -1364,11 +1370,13 @@ export const useHomeData = () => {
     // 新規追加
     cookingStreak,
     weeklyStats,
-    // 週の集計を読んだ今日 (週の棒の 7 日はこの日で終わる。まだ置いていなければ null。#2254 M2)
+    // 週の集計を読んだ今日 (週の棒の 7 日はこの日で終わる。棒の今日の印は、この日が見出しの今日より前でなければこの日に付け、前なら付けない
+    // (home/page.tsx の weeklyBarsToday。#2259 P2)。まだ置いていなければ null。#2254 M2)
     weeklyStatsToday,
     monthlyStats,
     expiringItems,
-    // 期限の近い食材を読んだ今日 (期限までの日数はこの日から数える。まだ置いていなければ null。#2254 M2)
+    // 期限の近い食材を読んだ今日 (期限までの日数は、この日と見出しの今日の遅い方から数える (home/page.tsx の expiringDaysToday。#2259 P2)。
+    // まだ置いていなければ null。#2254 M2)
     expiringItemsToday,
     shoppingRemaining,
     badgeCount,

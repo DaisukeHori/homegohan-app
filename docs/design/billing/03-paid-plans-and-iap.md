@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.22 (2026-11-05) |
+| 版 | v1.23 (2026-11-05) |
 | Status | 設計ゲート通過 (v1.7 は wf_865452dc-990 の R2 で Opus・Sonnet PASS。発注者の選択 (Q-2・Q-3・Q-4・Q-16) を反映した改定の版 v1.10 は wf_cd8e522d-fa9 の R3 で 4 枠 PASS)。段 A〜E は main に実装済み (段 A〜E: #1925 83d90a88・#1928 3caa7c49・#1929 ba9f8492・#1930 f14f1741・#1931 0fb02e52。段 A の後の是正: #1927 a079d559。実装の後の追随: #1932 fe426b34・#1933 d950a7b1・#1934 c1ecc93b・#1935 7532a77c・#1940 d7732969・#1942 cb32fb42・#1949 a71db66f・#1952 895cc2e6・#1954 622699ed)。利用規約・プライバシーポリシーは v2026.3 (施行日 2026-10-22) |
 | Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。関連: #1911 (「準備中」の撤去。main にマージ済み)・#1901 (規約とポリシーの作り込み。正典 `docs/design/cross/20-terms-privacy-text.md` が main にマージ済み)・#1567 (特定商取引法の表記の残り)・#1113 (本番の Stripe の鍵) |
 | 範囲の正本 | Issue #1912 の本文とコメント。本冊の §0.4 に、発注者の決定を逐語で写す |
@@ -2120,7 +2120,9 @@ export interface IapDeps {
  * 監査は fail-open (核と同じ)。失敗はログに残し、本体の操作は止めない。
  * 監査の行 (entry) には利用者を入れない (IapAuditEntry の details の注) ので、失敗のログは呼び出し元が渡す利用者
  * (イベントの app_user_id・TRANSFER の移動元と移動先) の withUser で出す。利用者ごとに 1 行ずつ出し、どの利用者で
- * app_logs の user_id 列を絞っても出てくるようにする (#2254 M3)。利用者が分からないときは無印のロガーで 1 行
+ * app_logs の user_id 列を絞っても出てくるようにする (#2254 M3。利用者が auth.users に無い (退会した・TRANSFER の移動元が退会済みなど)
+ * ときは、db-logger が user_id 列を空にして入れ直し、id を metadata (user_id_not_in_auth_users) に残す。#2259 P3)。
+ * 利用者が分からないときは無印のロガーで 1 行
  */
 async function audit(
   repository: IapRepository,
@@ -5399,3 +5401,4 @@ INSERT INTO public.plan_store_products (plan_key, store, billing_interval, produ
 | v1.20 | 2026-11-03 | 整合ゲートの候補の追随 (#2199 docs-1103b。製品の挙動は変えない): §2.2 の F23 の AI 相談のアクションに「究極モードでなければ。究極モードは `menu_generation_ultimate`。F8」を足した・§8.8 の表の AI 相談の自動実行の結果 (`dailyLimitResult`) の行を、変える手順の文から今の実装の事実の文 (`code` は `planLocked` で分ける・戻り値の型) にした |
 | v1.21 | 2026-11-04 | 整合ゲートの候補の追随 (#2206 docs-1103c。製品の挙動は変えない): §2.2 の F23 の行番号の参照 (`menu_generation` を数える 7 つの route・Edge の `generate-menu-v4` / `generate-menu-v5`・`process-menu-queue`・`generate-menu-v4-retry.ts` / `generate-menu-v5-retry.ts`・`weekly-menu-request-stale.ts`・`ai-queue-tables.ts`・`menu-plans/add`) を関数・定数の名前の参照にし、`v4/generate` にも「究極モードでなければ。究極モードは `menu_generation_ultimate`」を添えた |
 | v1.22 | 2026-11-05 | 記録の追随 (#2254 N docs-1105e。製品の挙動は変えない): #2254 M3 (#2255) が audit と recordRevenueCatEventFailure の正典コードを withUser の形に合わせた (監査の記録の失敗のログを、イベントの利用者ごとに withUser で出す。利用者が分からないときは無印のロガーで 1 行)。§14.1 の `tests/billing-iap-service.test.ts` に、M3 で足した it を 164 として足した |
+| v1.23 | 2026-11-05 | 記録の追随 (#2265 R docs-1105h。製品の挙動は変えない): §8.4 の `audit` の正典コードの JSDoc に、利用者が auth.users に無い (退会した・TRANSFER の移動元が退会済みなど) ときは db-logger が user_id 列を空にして入れ直し、id を metadata (`user_id_not_in_auth_users`) に残すこと (#2259 P3 (#2260)) を 1 句足した (写し元の `src/lib/billing/iap-service.ts` の JSDoc と同じ文) |

@@ -12,8 +12,8 @@
  * - 送るのは auth.admin.deleteUser が成功した後の 1 回だけ。409 (組織のオーナー・家族の代表者) や途中の失敗 (500) では送らない。
  *   すでに消えていたユーザーの退会のやり直し (deleteUser が 404) でも送らない (最初の退会で送っている)。
  * - best-effort: 送信に失敗しても退会は成功のまま (アカウントはもう消えている)。このモジュールの関数は例外を投げない。
- *   失敗は構造化ログ (db-logger / app_logs) に残す。削除の後なので user_id は付けない
- *   (app_logs.user_id は auth.users への外部キーで、削除後に付けると記録が保存できない)。
+ *   失敗は構造化ログ (db-logger / app_logs) に残す。削除の後なので user_id は付けない (削除後は auth.users に行が無いので、付けても
+ *   user_id 列には入らない (db-logger が外部キー違反で user_id を外して入れ直し、元の id を metadata に残す。#2259 P3)。消えた利用者の id をログに残さないため)。
  * - 送信回数の制限 (invite-throttle) を通さない理由 (tests/email-send-throttle-contract.test.ts の EXEMPT_EMAIL_SENDERS):
  *   宛先は退会した本人の登録アドレスに固定で、利用者は宛先を指定できない。アカウント 1 つにつき 1 回しか送れない
  *   (送るのは deleteUser が実際に削除した 1 回だけ)。

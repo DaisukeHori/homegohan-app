@@ -6,6 +6,7 @@
 | v1.1 | 2026-11-04 | 段 A (#2221)・B (#2223)・C (#2222)・D (#2224)・E (#2225)・F (#2226) を実装しマージ済み。旧 hook `src/hooks/useAiConsultationDataRefetch.ts` と旧番兵 `tests/ai-consultation-refetch-placement-guard-2201.test.ts` は段 F で削除済み。§3 は基点 `eb1ad85da` の事実の記録。記録の追随 (#2227 docs-1104b。製品の挙動は変えない): §6.10 の限界の欄・§10.3 の番兵ありの行の副作用・§19 の受入条件 (2) を今の番兵とコードに合わせた |
 | v1.2 | 2026-11-05 | #2227 H3 (#2229)・#2234・#2235 I2 (#2238) の追随と記録の追随 (#2235 J。製品の挙動は変えない): R-1 に、/health/graphs のページの読み取り (開いたとき・期間の切り替え・再読み込み) で記録か健診を読めなければ「記録を読み込めませんでした」と再読み込みのボタンを出すこと (`loadFailedPeriod`) を足した。§7.5 に、`shouldRefetchHomeOnAuthChange` の絞り・自分で setSession している間の SIGNED_IN は数えない・前回読んだ利用者は主のデータを place で置けたときに覚える、を足した。§9 #14 には SIGNED_IN の絞り (`shouldRefetchHomeOnAuthChange`・`lastReadAuthUserIdRef`) だけを足した。/health/graphs のページの読み取りの記述を H3 の実装に合わせた (§9 #11 は #2229。§10.1 の『失敗の応答』『一部だけ読めた』の行と §11 の『ページの読み取り ('mount') で失敗』の行は #2234。§11 の keepOnFailure の行は #2235 J) |
 | v1.3 | 2026-11-05 | #2245 K2 (#2252)・#2254 M2 (#2256) の追随と記録の追随 (#2254 N docs-1105e。製品の挙動は変えない): §7.5 の正典コードを今の `src/hooks/useHomeData.ts` の形に合わせた (`StartHomeAnalyses` の 3 つ目の引数 `today`・読み取りごとに 1 回読む `todayLocal()`・`fetchPerformanceAnalysis` の `today`・`KEY_TODAY_PLAN` の apply の中の `setHomeToday(today)`・購読から呼ぶ `fetchHomeDataRef`・戻り値の `homeToday`・`weeklyStatsToday`・`expiringItemsToday`)。§6 の /home・§7.5・§9 #14・§10 の表・Q-17 の SIGNED_IN の絞りの言い方を `shouldRefetchHomeOnAuthChange` の条件 (setSession の間は数えない・前回読んだ利用者がまだ無い・セッションに利用者が無い・前回読んだ利用者と違う) にそろえ、§9 #14 に見出しの今日 (`homeToday`) を足した。§15 の廃止 (段 F)・§17 G-5・§18 の docs-1103c の行を、済んだことの記述にした |
+| v1.4 | 2026-11-05 | 記録の追随 (#2265 R docs-1105h。製品の挙動は変えない): §7.5 の正典コードの `readHomeData` の `Promise.all` を今の `src/hooks/useHomeData.ts` の形に合わせた (#2245 K2 (#2252) で、`fetchCookingStreak`・`fetchWeeklyStats`・`fetchMonthlyStats`・`fetchExpiringItems`・`fetchBestMealThisWeek`・`fetchHealthSummary` の 6 つに第 3 引数 `today` が入った。`fetchShoppingRemaining`・`fetchBadgeInfo` は 2 引数のまま。`fetchWeeklyStats` / `fetchExpiringItems` の注に `weeklyStatsToday` / `expiringItemsToday` を足した)。§15 の「関数 (献立表)」の行から `monthKeysBetween` を外し、#2259 P2 (#2264) で移した置き場 (`src/app/(main)/menus/weekly/_state/calendarMonthKeys.ts` の `monthKeysBetween`・`monthKeyOf`) を書いた。§16 の見出しの直後に、段 A〜F は実装済みで表は記録であることを書いた |
 
 要件の正本は Issue #2206 の本文 (「候補の仕分け」の構造の案と、docs-1103c の「受け手の契約を設計書に書く」の節) と、2026-11-03 のコメント (G1 の行)。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/26 (cross/ の既存は 01〜09・12・13a・13b・14〜25。10・11 は欠番)。Issue #2206 の本文の「設計書の欠落」の候補は置き場を `cross/26-ai-consultation-refetch.md` と書いているが、本書の名前は `26-ai-consultation-refetch-receivers.md` で確定する (受け手の契約が主題)。
@@ -1592,14 +1593,14 @@ const readHomeData = async (read: AiConsultationRead, startAnalyses: StartHomeAn
     // …今日の献立: read.place(KEY_TODAY_PLAN, () => { setHomeToday(today); setTodayPlan(…); setDailySummary(…); })。読み取りの失敗では置かない (今と同じ)。
     // 見出しの今日 (homeToday) は今日の献立を置けたときに、この読み取りの today に合わせる (#2245 K2)…
     await Promise.all([
-      fetchCookingStreak(authUser.id, read), // 中は read.place(KEY_COOKING_STREAK, …)。読み取りの失敗 (data が null) ではどちらの mode でも置かない (今と同じ)
-      fetchWeeklyStats(authUser.id, read),
-      fetchMonthlyStats(authUser.id, read),
-      fetchExpiringItems(authUser.id, read),
+      fetchCookingStreak(authUser.id, read, today), // 中は read.place(KEY_COOKING_STREAK, …)。読み取りの失敗 (data が null) ではどちらの mode でも置かない (今と同じ)
+      fetchWeeklyStats(authUser.id, read, today), // 置くときに weeklyStatsToday にこの today を入れる (#2254 M2)
+      fetchMonthlyStats(authUser.id, read, today),
+      fetchExpiringItems(authUser.id, read, today), // 置くときに expiringItemsToday にこの today を入れる (#2254 M2)
       fetchShoppingRemaining(authUser.id, read),
       fetchBadgeInfo(authUser.id, read),
-      fetchBestMealThisWeek(authUser.id, read),
-      fetchHealthSummary(authUser.id, read),
+      fetchBestMealThisWeek(authUser.id, read, today),
+      fetchHealthSummary(authUser.id, read, today),
     ]);
     // isLatest() の門は消す (開いたときの読み取りは取り直しに追い越されても自分で分析を読む。鍵が分かれているので古い応答は置かれない)
     startAnalyses(read, authUser.id, today);
@@ -2552,7 +2553,7 @@ sequenceDiagram
 | 型 | `AiConsultationRead`・`AiConsultationReadOptions`・`AiConsultationReadFn`・`AiConsultationReceiver`・`AiConsultationReceiverOptions` (`AiConsultationReadMode`・`AiConsultationPlaceResult` は旧ファイルと同名。旧は段 F (#2226) で消した (今は無い)) | hook | A |
 | 定数 | `AI_CONSULTATION_WRITES_ATTRIBUTE` (Web・モバイル)・`INITIAL_LOADING_GENERATION` (hook の中) | §14 | A |
 | DOM の属性 | `data-ai-consultation-writes` (`html`) | §6.5 | A |
-| 関数 (献立表) | `releaseWeekLoadingIfShown`・`applyWeekResponse`・`placeWeekReadFailure`・`readDisplayedWeek`・`reloadWeekAfterCompletion`・`readRegeneratedShoppingList` (買い物リストの再生成の完了の読み直し。#2206 G1 R5)・`plannedMealOf`・`checkPendingRequests` (今の effect の中の同名の関数を、名前を変えずに `useCallback` に出す)・`monthKeysBetween`・`monthRangeOf`・`mealDatesOf`・`shiftDays`・`weekWindowOf`・`monthWindowOf`。中身を替える既存の関数: `syncCalendarMealDatesFromDailyMeals` (名前はそのまま。reducer に足す・消すを頼む形・依存なし) | §7.4 | E |
+| 関数 (献立表) | `releaseWeekLoadingIfShown`・`applyWeekResponse`・`placeWeekReadFailure`・`readDisplayedWeek`・`reloadWeekAfterCompletion`・`readRegeneratedShoppingList` (買い物リストの再生成の完了の読み直し。#2206 G1 R5)・`plannedMealOf`・`checkPendingRequests` (今の effect の中の同名の関数を、名前を変えずに `useCallback` に出す)・`monthRangeOf`・`mealDatesOf`・`shiftDays`・`weekWindowOf`・`monthWindowOf`。月の鍵は `src/app/(main)/menus/weekly/_state/calendarMonthKeys.ts` の `monthKeysBetween`・`monthKeyOf` (#2259 P2 でページから移した。§7.4 の正典コードは呼ぶだけ)。中身を替える既存の関数: `syncCalendarMealDatesFromDailyMeals` (名前はそのまま。reducer に足す・消すを頼む形・依存なし) | §7.4 | E |
 | 鍵 (献立表) | `planKey` (関数)・`mealDatesKey` (関数)・`KEY_SHOPPING_LIST`・`KEY_ACTIVE_SHOPPING_LIST` (#2206 G1 R5)・`KEY_PANTRY`・`KEY_SETTINGS`・`KEY_FAMILY` (`KEY_WEEK_LOADING` は下の定数の行) | §7.4・§9 #16 | E |
 | ref (献立表) | `currentPlanRef`・`fetchedMonthsRef`・`weekDatesRef`・`displayMonthRef`・`weekStartRef`・`autoExpandNextMealRef` | §7.4 | E |
 | 型・定数 (献立表) | `WeekPlacement` (`emptyPlan`・`shoppingList`・`calendar`・`expandNextMeal`)・`WEEK_PLACEMENT_WEEK_READ`・`WEEK_PLACEMENT_REREAD`・`WEEK_PLACEMENT_COMPLETION`・`WEEK_PLACEMENT_AFTER_ADD`・`WEEK_PLACEMENT_AFTER_REMOVE`・`WEEK_PLACEMENT_AFTER_REORDER` (§7.4 の置き方の表) | §7.4 | E |
@@ -2571,6 +2572,8 @@ sequenceDiagram
 ---
 
 ## 16. 段分け (6 段・6 WF・親 Issue 1 + 子 Issue 6。各段は 2 枚同時 PASS → マージ)
+
+段 A〜F は実装済み (§20 と同じ)。下の表は段ごとの範囲の記録。
 
 | 段 | 内容 | 触るファイル (母集合) | 前提 |
 |---|---|---|---|
