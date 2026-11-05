@@ -120,6 +120,8 @@ const ENTRY_POINTS: EntryPoint[] = [
       rejectAction: 'AI の返事に付いた提案を断るだけ (DELETE。何も送らない)',
       toggleImportant: '重要マークを付け外しするだけ',
       closeSession: '相談を閉じるだけ (すでに確認を済ませた相談の要約)',
+      recheckDayMenuRequest:
+        '1日献立の作成の依頼の状態を読み直すだけ (GET /api/ai/menu/weekly/status。#2254 M1。Realtime の完了・失敗の通知を取りこぼしたときの保険。作成の依頼そのものは generateDayMenu が確認してから送る)',
     },
   },
   {

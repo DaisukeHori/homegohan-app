@@ -668,8 +668,9 @@ export default function AIChatBubble() {
     subscribeToProgress,
     cancelGeneration: resetDayMenuGeneration,
   } = useV4MenuGeneration({
-    onGenerationComplete: completeDayMenu,
-    onError: failDayMenu,
+    onGenerationComplete: () => completeDayMenu(),
+    // 失敗の文は保存された文のことがあるので、同意で止めた文かを failDayMenu の中で見分ける (handleStoredAiConsentFailure)
+    onError: (error) => failDayMenu(error),
   });
 
   /**
