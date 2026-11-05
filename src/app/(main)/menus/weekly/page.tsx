@@ -104,6 +104,8 @@ import {
   recipeShoppingAddedMessage,
 } from './_state/recipeShoppingList';
 import { monthKeysBetween } from './_state/calendarMonthKeys';
+// 生成中の印の localStorage の読み書きは失敗を握る形だけを使う (保存が禁止された環境でも失敗の表示・完了の後処理を止めない。#2275 T3)
+import { readLocalStorageItem, removeLocalStorageItem, safeLocalStorageSetItem } from './_state/safeLocalStorage';
 
 // #182/#322: dynamic import で初期バンドルを削減 (LCP 改善)
 const V4GenerateModal = dynamic(
@@ -122,37 +124,6 @@ import {
   Clock, Users, BookOpen, Heart, RefreshCw, Send, Package,
   Camera, Pencil, Image as ImageIcon, GripVertical, ArrowUp, ArrowDown
 } from 'lucide-react';
-
-// ============================================
-// Utilities
-// ============================================
-
-/**
- * QuotaExceededError-safe localStorage.setItem (#141).
- * On quota failure, clears stale generation-tracker keys and retries once.
- * If it still fails, logs a warning — the UI state is already set in React,
- * so omitting persistence is acceptable.
- */
-function safeLocalStorageSetItem(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value);
-  } catch (e) {
-    if (e instanceof DOMException && e.name === 'QuotaExceededError') {
-      // 旧い生成中状態キーを削除して再試行
-      const staleKeys = ['weeklyMenuGenerating', 'singleMealGenerating', 'shoppingListRegenerating', 'v4MenuGenerating'];
-      for (const k of staleKeys) {
-        if (k !== key) localStorage.removeItem(k);
-      }
-      try {
-        localStorage.setItem(key, value);
-      } catch {
-        console.warn('[weekly] localStorage quota exceeded: 生成状態を永続化できませんでした', key);
-      }
-    } else {
-      console.warn('[weekly] localStorage.setItem failed:', key, e);
-    }
-  }
-}
 
 // ============================================
 // Types & Constants (Reference UI Style)
@@ -1501,7 +1472,7 @@ export default function WeeklyMenuPage() {
   // ページリロード時に進行中の生成を復元
   useEffect(() => {
     const restoreGeneration = async () => {
-      const stored = localStorage.getItem('v4MenuGenerating');
+      const stored = readLocalStorageItem('v4MenuGenerating');
       if (!stored) return;
 
       try {
@@ -1511,7 +1482,7 @@ export default function WeeklyMenuPage() {
         const restoredUltimateMode = isUltimateModeWeeklyMenuRequest(storedUltimateMode);
         // 30分以上経過していたら古いデータとして削除
         if (Date.now() - timestamp > 30 * 60 * 1000) {
-          localStorage.removeItem('v4MenuGenerating');
+          removeLocalStorageItem('v4MenuGenerating');
           return;
         }
 
@@ -1526,7 +1497,7 @@ export default function WeeklyMenuPage() {
         // すでに完了している場合
         if (currentStatus?.status === 'completed') {
           console.log('[restore] Generation already completed');
-          localStorage.removeItem('v4MenuGenerating');
+          removeLocalStorageItem('v4MenuGenerating');
           refreshMealPlan();
           setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。', refreshOnDismiss: true });
           return;
@@ -1535,7 +1506,7 @@ export default function WeeklyMenuPage() {
         // 失敗している場合
         if (currentStatus?.status === 'failed') {
           console.log('[restore] Generation failed');
-          localStorage.removeItem('v4MenuGenerating');
+          removeLocalStorageItem('v4MenuGenerating');
           // UX2-02: alert() ではなく既存のリトライ付き失敗パネル(generationFailedError)に集約する
           dispatchAiGen({
             type: 'GEN_FAIL',
@@ -1557,13 +1528,13 @@ export default function WeeklyMenuPage() {
           if (progress.status === 'completed') {
             setIsGenerating(false);
             setGenerationProgress(null);
-            localStorage.removeItem('v4MenuGenerating');
+            removeLocalStorageItem('v4MenuGenerating');
             refreshMealPlan();
             setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。', refreshOnDismiss: true });
             return;
           }
           if (progress.status === 'failed') {
-            localStorage.removeItem('v4MenuGenerating');
+            removeLocalStorageItem('v4MenuGenerating');
             // UX2-11: ユーザーが「中止する」を押した後に届く遅延イベントでは alert を出さない
             if (generationCancelledRef.current) {
               generationCancelledRef.current = false;
@@ -1584,7 +1555,7 @@ export default function WeeklyMenuPage() {
         });
       } catch (e) {
         console.error('[restore] Failed to restore V4 generation:', e);
-        localStorage.removeItem('v4MenuGenerating');
+        removeLocalStorageItem('v4MenuGenerating');
       }
     };
 
@@ -1667,14 +1638,14 @@ export default function WeeklyMenuPage() {
               setGenerationProgress(null);
               refreshMealPlan();
               setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。', refreshOnDismiss: true });
-              localStorage.removeItem('v4MenuGenerating');
+              removeLocalStorageItem('v4MenuGenerating');
             } else if (status === 'failed' || status === 'not_found') {
               // not_found = 本人の行が無い (消えた)。以前は completed とも failed とも扱わず、5 秒ごとの確認を続けていた。
               // 失敗と同じく止めて、既定の失敗の文を出す (#1657)
               v4ResolvedRef.current = true;
               clearInterval(v4PollingIntervalRef.current!);
               v4PollingIntervalRef.current = null;
-              localStorage.removeItem('v4MenuGenerating');
+              removeLocalStorageItem('v4MenuGenerating');
               // UX2-02: alert() ではなく既存のリトライ付き失敗パネル(generationFailedError)に集約する
               // (GEN_FAIL が isGenerating/generationProgress のクリアも兼ねる)
               dispatchAiGen({
@@ -1809,7 +1780,7 @@ export default function WeeklyMenuPage() {
   // 買い物リスト再生成の復元（リロード時）
   useEffect(() => {
     const restoreShoppingListRegeneration = async () => {
-      const stored = localStorage.getItem('shoppingListRegenerating');
+      const stored = readLocalStorageItem('shoppingListRegenerating');
       if (!stored) return;
       
       try {
@@ -1818,14 +1789,14 @@ export default function WeeklyMenuPage() {
         
         // 5分以内のみ復元
         if (elapsed > 5 * 60 * 1000) {
-          localStorage.removeItem('shoppingListRegenerating');
+          removeLocalStorageItem('shoppingListRegenerating');
           return;
         }
         
         // ステータス確認
         const statusRes = await fetch(`/api/shopping-list/regenerate/status?requestId=${requestId}`);
         if (!statusRes.ok) {
-          localStorage.removeItem('shoppingListRegenerating');
+          removeLocalStorageItem('shoppingListRegenerating');
           return;
         }
         
@@ -1841,10 +1812,10 @@ export default function WeeklyMenuPage() {
           }
         } else {
           // completed または failed の場合はクリア
-          localStorage.removeItem('shoppingListRegenerating');
+          removeLocalStorageItem('shoppingListRegenerating');
         }
       } catch {
-        localStorage.removeItem('shoppingListRegenerating');
+        removeLocalStorageItem('shoppingListRegenerating');
       }
     };
     
@@ -2153,7 +2124,7 @@ export default function WeeklyMenuPage() {
     // アクティブな requestId を localStorage から探す（v4 / weekly / single meal の順）
     let cancelRequestId: string | null = null;
     for (const key of ['v4MenuGenerating', 'weeklyMenuGenerating', 'singleMealGenerating']) {
-      const stored = localStorage.getItem(key);
+      const stored = readLocalStorageItem(key);
       if (!stored) continue;
       try {
         const parsed = JSON.parse(stored);
@@ -2191,9 +2162,9 @@ export default function WeeklyMenuPage() {
       improveTimeoutRef.current = null;
     }
 
-    localStorage.removeItem('v4MenuGenerating');
-    localStorage.removeItem('weeklyMenuGenerating');
-    localStorage.removeItem('singleMealGenerating');
+    removeLocalStorageItem('v4MenuGenerating');
+    removeLocalStorageItem('weeklyMenuGenerating');
+    removeLocalStorageItem('singleMealGenerating');
 
     setIsGenerating(false);
     setGenerationProgress(null);
@@ -2248,8 +2219,8 @@ export default function WeeklyMenuPage() {
           setIsGenerating(false);
           setGeneratingMeal(null);
           setGenerationProgress(null);
-          localStorage.removeItem('weeklyMenuGenerating');
-          localStorage.removeItem('singleMealGenerating');
+          removeLocalStorageItem('weeklyMenuGenerating');
+          removeLocalStorageItem('singleMealGenerating');
           // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- セッション切れ (401)。ページごと移り、middleware に Cookie とログインの状態を判定し直させる (#142)
           window.location.href = '/login';
           return;
@@ -2272,8 +2243,8 @@ export default function WeeklyMenuPage() {
           setIsGenerating(false);
           setGeneratingMeal(null);
           setGenerationProgress(null);
-          localStorage.removeItem('weeklyMenuGenerating');
-          localStorage.removeItem('singleMealGenerating');
+          removeLocalStorageItem('weeklyMenuGenerating');
+          removeLocalStorageItem('singleMealGenerating');
           cleanupPolling();
           cleanupRealtime();
         } else if (data.status === 'failed' || data.status === 'not_found') {
@@ -2284,8 +2255,8 @@ export default function WeeklyMenuPage() {
           setIsGenerating(false);
           setGeneratingMeal(null);
           setGenerationProgress(null);
-          localStorage.removeItem('weeklyMenuGenerating');
-          localStorage.removeItem('singleMealGenerating');
+          removeLocalStorageItem('weeklyMenuGenerating');
+          removeLocalStorageItem('singleMealGenerating');
           cleanupPolling();
           cleanupRealtime();
           dispatchAiGen({
@@ -2379,8 +2350,8 @@ export default function WeeklyMenuPage() {
               setIsGenerating(false);
               setGeneratingMeal(null);
               setGenerationProgress(null);
-              localStorage.removeItem('weeklyMenuGenerating');
-              localStorage.removeItem('singleMealGenerating');
+              removeLocalStorageItem('weeklyMenuGenerating');
+              removeLocalStorageItem('singleMealGenerating');
               cleanupRealtime();
               // Realtime で終わりを受け取ったら、並行しているポーリングも止める (#1622)。
               // 献立を読む (await) 間は、ポーリングも同じ完了を処理しうる。先に終えた側が印を下ろし (cleanupRealtime)、
@@ -2391,8 +2362,8 @@ export default function WeeklyMenuPage() {
               setIsGenerating(false);
               setGeneratingMeal(null);
               setGenerationProgress(null);
-              localStorage.removeItem('weeklyMenuGenerating');
-              localStorage.removeItem('singleMealGenerating');
+              removeLocalStorageItem('weeklyMenuGenerating');
+              removeLocalStorageItem('singleMealGenerating');
               cleanupRealtime();
               // Realtime で失敗を受け取ったら、並行しているポーリングも止める (#1622。失敗の表示を二重に出さないように)
               cleanupPolling();
@@ -2574,7 +2545,7 @@ export default function WeeklyMenuPage() {
       
       // 3. localStorageからも復元を試みる（後方互換性のため、DBで見つからなかった場合のみ）
       // ただし、requestIdがある場合はまずステータスを確認してから復元する
-      const storedWeekly = localStorage.getItem('weeklyMenuGenerating');
+      const storedWeekly = readLocalStorageItem('weeklyMenuGenerating');
       if (storedWeekly) {
         try {
           const { weekStartDate, timestamp, requestId } = JSON.parse(storedWeekly);
@@ -2595,7 +2566,7 @@ export default function WeeklyMenuPage() {
                 } else if (status === 'failed') {
                   // 失敗の場合はエラーモーダルを表示してlocalStorageをクリア
                   console.log('❌ 週間献立の生成失敗を復元:', requestId);
-                  localStorage.removeItem('weeklyMenuGenerating');
+                  removeLocalStorageItem('weeklyMenuGenerating');
                   dispatchAiGen({
                     type: 'GEN_FAIL',
                     payload: { error: weeklyMenuRequestErrorMessageForDisplay(error_message) || '献立の生成に失敗しました。もう一度お試しください。', requestId },
@@ -2603,23 +2574,23 @@ export default function WeeklyMenuPage() {
                 } else {
                   // completed の場合はlocalStorageをクリア
                   console.log('🗑️ 週間献立のlocalStorageをクリア（status:', status, ')');
-                  localStorage.removeItem('weeklyMenuGenerating');
+                  removeLocalStorageItem('weeklyMenuGenerating');
                 }
               } else {
-                localStorage.removeItem('weeklyMenuGenerating');
+                removeLocalStorageItem('weeklyMenuGenerating');
               }
             } else {
-              localStorage.removeItem('weeklyMenuGenerating');
+              removeLocalStorageItem('weeklyMenuGenerating');
             }
           } else {
-            localStorage.removeItem('weeklyMenuGenerating');
+            removeLocalStorageItem('weeklyMenuGenerating');
           }
         } catch {
-          localStorage.removeItem('weeklyMenuGenerating');
+          removeLocalStorageItem('weeklyMenuGenerating');
         }
       }
       
-      const storedSingle = localStorage.getItem('singleMealGenerating');
+      const storedSingle = readLocalStorageItem('singleMealGenerating');
       if (storedSingle) {
         try {
           const { dayIndex, mealType, dayDate, initialCount, timestamp, requestId } = JSON.parse(storedSingle);
@@ -2640,10 +2611,10 @@ export default function WeeklyMenuPage() {
                 } else {
                   // completed または failed の場合はlocalStorageをクリア
                   console.log('🗑️ 単一食事のlocalStorageをクリア（status:', status, ')');
-                  localStorage.removeItem('singleMealGenerating');
+                  removeLocalStorageItem('singleMealGenerating');
                 }
               } else {
-                localStorage.removeItem('singleMealGenerating');
+                removeLocalStorageItem('singleMealGenerating');
               }
             } else {
               // requestIdがない場合は旧方式でポーリング（古いコードの互換性）
@@ -2653,10 +2624,10 @@ export default function WeeklyMenuPage() {
               console.warn('No requestId found in localStorage, skipping...');
             }
           } else {
-            localStorage.removeItem('singleMealGenerating');
+            removeLocalStorageItem('singleMealGenerating');
           }
         } catch {
-          localStorage.removeItem('singleMealGenerating');
+          removeLocalStorageItem('singleMealGenerating');
         }
       }
     } finally {
@@ -3507,7 +3478,7 @@ export default function WeeklyMenuPage() {
       setIsRegeneratingShoppingList(false);
       setShoppingListProgress(null);
       setShoppingListRequestId(null);
-      localStorage.removeItem('shoppingListRegenerating');
+      removeLocalStorageItem('shoppingListRegenerating');
       cleanupShoppingListSubscription();
       return true;
     };
@@ -3524,7 +3495,7 @@ export default function WeeklyMenuPage() {
           setShoppingListProgress(null);
           setShoppingListRequestId(null);
         }, 5000);
-        localStorage.removeItem('shoppingListRegenerating');
+        removeLocalStorageItem('shoppingListRegenerating');
         cleanupShoppingListSubscription();
         return;
       }
@@ -3557,7 +3528,7 @@ export default function WeeklyMenuPage() {
           setIsRegeneratingShoppingList(false);
           setShoppingListProgress(null);
           setShoppingListRequestId(null);
-          localStorage.removeItem('shoppingListRegenerating');
+          removeLocalStorageItem('shoppingListRegenerating');
           cleanupShoppingListSubscription();
         } else if (data.status === 'failed') {
           console.log('❌ Shopping list regeneration failed (polling)');
@@ -3570,7 +3541,7 @@ export default function WeeklyMenuPage() {
             setShoppingListProgress(null);
             setShoppingListRequestId(null);
           }, 5000);
-          localStorage.removeItem('shoppingListRegenerating');
+          removeLocalStorageItem('shoppingListRegenerating');
           cleanupShoppingListSubscription();
         }
       } catch (e) {
@@ -3637,7 +3608,7 @@ export default function WeeklyMenuPage() {
             setIsRegeneratingShoppingList(false);
             setShoppingListProgress(null);
             setShoppingListRequestId(null);
-            localStorage.removeItem('shoppingListRegenerating');
+            removeLocalStorageItem('shoppingListRegenerating');
             cleanupShoppingListSubscription();
           } else if (newData.status === 'failed') {
             console.log('❌ Shopping list regeneration failed (realtime)');
@@ -3651,7 +3622,7 @@ export default function WeeklyMenuPage() {
               setShoppingListProgress(null);
               setShoppingListRequestId(null);
             }, 5000);
-            localStorage.removeItem('shoppingListRegenerating');
+            removeLocalStorageItem('shoppingListRegenerating');
             cleanupShoppingListSubscription();
           }
         }
@@ -3804,7 +3775,7 @@ export default function WeeklyMenuPage() {
       });
       setIsRegeneratingShoppingList(false);
       setShoppingListProgress(null);
-      localStorage.removeItem('shoppingListRegenerating');
+      removeLocalStorageItem('shoppingListRegenerating');
     } finally {
       endWrite();
     }
@@ -3978,7 +3949,7 @@ export default function WeeklyMenuPage() {
     } catch (error: any) {
       alert(error.message || "エラーが発生しました");
       setIsGenerating(false);
-      localStorage.removeItem('weeklyMenuGenerating');
+      removeLocalStorageItem('weeklyMenuGenerating');
     } finally {
       endWrite();
     }
@@ -4072,7 +4043,7 @@ export default function WeeklyMenuPage() {
           onRetry: () => handleGenerateSingleMeal(),
         });
         setGeneratingMeal(null);
-        localStorage.removeItem('singleMealGenerating');
+        removeLocalStorageItem('singleMealGenerating');
       }
     } catch (error) {
       console.error('Meal generation error:', error);
@@ -4083,7 +4054,7 @@ export default function WeeklyMenuPage() {
         onRetry: () => handleGenerateSingleMeal(),
       });
       setGeneratingMeal(null);
-      localStorage.removeItem('singleMealGenerating');
+      removeLocalStorageItem('singleMealGenerating');
     }
   };
 

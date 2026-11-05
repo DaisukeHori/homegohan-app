@@ -299,8 +299,10 @@ function installStorageFailure(failure: { install: () => () => void }) {
   uninstallStorageFailure = failure.install();
 }
 
-/** 失敗パネルの文 (無ければ null) */
-const failedPanelText = () => container.querySelector(FAILED_PANEL)?.textContent ?? null;
+/** 失敗パネルが無いときの印 (toContain の失敗の文で、パネルが無いことが分かるように) */
+const NO_FAILED_PANEL = '<失敗パネルが無い>';
+/** 失敗パネルの文 */
+const failedPanelText = () => container.querySelector(FAILED_PANEL)?.textContent ?? NO_FAILED_PANEL;
 
 /** 復元の購読に進捗を 1 つ届ける。callback が投げたら、その例外を返す (直す前は removeItem の例外がここから投げた) */
 async function deliverRestoredProgress(progress: { status: string; errorMessage?: string | null }): Promise<unknown> {
