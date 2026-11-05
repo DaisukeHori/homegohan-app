@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.12 (2026-10-19) |
+| 版 | v1.13 (2026-11-05) |
 | Status | 設計ゲート通過。段 A (PR #1711)・段 B (PR #1726)・段 C (画面層。PR #1738) は main に実装済み。#1911 (#1916 4b1e1abe・2026-10-19) が「準備中」の表示を取り除いた後の画面と文に合わせた (v1.12) |
 | Issue | #1151 (購入の入口)・#1125 (Webhook の受け口) の「核」。配線の冊は `02-manual-plan-grant.md` (手動付与。段 A〜D 実装済み) と、配線の残りの冊 (§0.2 右列のうち手動付与以外: 運用バッチ・Finance 画面ほか。未作成) に分かれる。本文の『配線の冊』は、手動付与については 02、それ以外は配線の残りの冊を指す |
 | 範囲の正本 | Issue #1151・#1125 の本文とコメント (オーナーの選択 2026-10-15 は #1701 と本書 §0 に記録) |
@@ -2563,6 +2563,8 @@ export function createBillingRepository(admin: Admin = getSupabaseAdmin()): Bill
 
 ### 8.6 `src/lib/billing/service.ts` (facade。route はこれだけを呼ぶ)
 
+この fence の `getBillingSummary` の `summarizeSubscription` は、billing/03 §8.6 が `features` (`findPlanFeatures`) を足した形に置き換わっている (今の形は billing/03 §8.6)。
+
 ```ts
 // tsc:skip place=src/lib/billing/service.ts — 新設モジュール同士を import するので単独の検査から外す (§8.0 の手順で、置き場所に置いて検査する)
 import { createLogger } from '@/lib/db-logger';
@@ -4103,5 +4105,6 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | v1.10 | 2026-10-15 | 設計ゲート R6 の指摘を反映: (1) `/account/billing` の状態の表示文を `status` × `cancel_at_period_end` の表にし (`active` は「ご利用中」・`paused` は「一時停止中」・解約の予約は 2 行目に足す)、`billingStatusLines` / `formatBillingDate` を core に (§8.1・§10.3。テスト 112・113)。(2) 凍結 (BAN) 中の利用者も解約の予約・契約の要約・Billing Portal ができるように、`FROZEN_ALLOWED_API_PATHS` に 3 本を足し、3 本の route は `requireUserAllowingFrozen` で凍結を見ない (§9.8)。凍結中の解約の画面 `/frozen/billing` と `/frozen` のリンク (§10.5)・§7.1〜§7.3 の凍結の行・S21・§12 の凍結と課金の契約・§16 の追随 (テスト 114〜119)。(3) `handleStripeEvent` が `data.object` から使う値に、`invoice.payment_failed` の監査の `details` の請求の `id`・`attempt_count`・`amount_due` を足して §8.2・JSDoc・§5.2・テスト 33 の文をそろえる |
 | v1.11 | 2026-10-15 | 網羅性 周 7 (続きの走行の周 1) を反映: §7.3 に新規購入の 2 行 (live (S / M) → 409 `OP_SUBSCRIPTION_ALREADY_ACTIVE`・`incomplete` → 新しい Checkout で別の行) と、解約の予約・取り消しの 409 / 冪等の 3 行 (live な S の行が無い → `BILL_NO_LIVE_SUBSCRIPTION`・予約なしの取り消し → `BILL_CANCEL_NOT_SCHEDULED`・予約済みの 2 回目の予約 → 何もせず 200) を足す (§7.1 の新規購入・解約の列と対にする)・テスト 31 に `BILL_NO_LIVE_SUBSCRIPTION` の場合を足す・§16.1 の母集合の問い合わせに 6. (列の一覧を持つ偽の client) と `transfer-accept-fake-client.ts` の変更なしの行を足す |
 | v1.12 | 2026-10-19 | #1911 (#1916) の後の現在形化 (製品の挙動は変えない): 「準備中」の表示を前提にした記述 (F2・R12・S11 とトレース・§7 の状態の表・§10.1 の `PricingPageView` の規則・`listPurchasablePlans` のコメント・`EXT_STRIPE_NOT_CONFIGURED` の文「お支払いを受け付けていません」・テスト 50 の it の名前・§15.2・§16 の E2E の行・§17.3 の前提・§18 の 14・operator/02・03 の追随の行) を、買えるプランが無い間は有料プランのカードを出さず、`/legal` の販売の項目は項目ごと無い今の状態に合わせた |
+| v1.13 | 2026-11-05 | 記録の追随 (#2254 N docs-1105e。製品の挙動は変えない): #2254 M3 (#2255) が §8.6 の audit の正典コードを `service.ts` の withUser の形 (監査の行が利用者の行なら、その利用者を withUser で app_logs の user_id 列に入れる) に合わせた。§8.6 の fence の前に、`getBillingSummary` の `summarizeSubscription` が billing/03 §8.6 の `features` を足した形に置き換わっていることを 1 文足した |
 | v1.1 | 2026-10-15 | 設計ゲート R1 の指摘を反映: 退会の解約を Stripe の顧客の一覧から列挙 (§11)・家族のプランを代表者に従わせるトリガー (作成と交代。§6.4 (10))・`plan_key_cached` を特権列ガードに (§6.4 (11))・Stripe の一時停止 / 再開 / unpaid の遷移 (§7.3)・`billing_customers` を書き出しから除外・処理中のイベントの再送は 409 (§6.4 (7)・§9.6)・`maxDuration` はリテラル (§9.6)・監査の `target_type` (§8.1) |
 

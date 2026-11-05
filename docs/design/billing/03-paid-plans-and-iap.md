@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.21 (2026-11-04) |
+| 版 | v1.22 (2026-11-05) |
 | Status | 設計ゲート通過 (v1.7 は wf_865452dc-990 の R2 で Opus・Sonnet PASS。発注者の選択 (Q-2・Q-3・Q-4・Q-16) を反映した改定の版 v1.10 は wf_cd8e522d-fa9 の R3 で 4 枠 PASS)。段 A〜E は main に実装済み (段 A〜E: #1925 83d90a88・#1928 3caa7c49・#1929 ba9f8492・#1930 f14f1741・#1931 0fb02e52。段 A の後の是正: #1927 a079d559。実装の後の追随: #1932 fe426b34・#1933 d950a7b1・#1934 c1ecc93b・#1935 7532a77c・#1940 d7732969・#1942 cb32fb42・#1949 a71db66f・#1952 895cc2e6・#1954 622699ed)。利用規約・プライバシーポリシーは v2026.3 (施行日 2026-10-22) |
 | Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。関連: #1911 (「準備中」の撤去。main にマージ済み)・#1901 (規約とポリシーの作り込み。正典 `docs/design/cross/20-terms-privacy-text.md` が main にマージ済み)・#1567 (特定商取引法の表記の残り)・#1113 (本番の Stripe の鍵) |
 | 範囲の正本 | Issue #1912 の本文とコメント。本冊の §0.4 に、発注者の決定を逐語で写す |
@@ -4699,6 +4699,7 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 23. `it('recordRevenueCatEventFailure marks the event failed and audits system.revenuecat.event_failed (audit is fail-open)')`
 24. `it('lazyResyncStoreSubscription syncs only when needsLazyResync and swallows failures')`
 136. `it('syncStoreSubscriber applies a superseded App Store entry first as an expired snapshot with the source suffixed :superseded and then the winner with the plain source, so an upgrade during a trial neither throws BILL_LIVE_ROW_CONFLICT nor keeps the old plan')` (S36。偽の repository が受けた `applyStoreSubscription` の引数の順と `source` を見る)
+164. `it('監査の記録に失敗した error は、イベントの利用者の user_id 列に入れる (運営が利用者で絞ったときに出てくる。#2254 M3)')` (1 本の it で 3 つを確かめる: 利用者 1 人のイベントはその利用者の `withUser` で 1 行・TRANSFER は移動元と移動先のそれぞれの利用者で 1 行ずつ (2 行)・利用者の分からないイベント (匿名 ID だけ) は無印のロガーで 1 行)
 
 `tests/webhooks-revenuecat-route.test.ts` (route。署名は本物、ほかは偽物):
 25. `it('returns 413 { error: payload_too_large } for a content-length header or a body over REVENUECAT_WEBHOOK_MAX_BODY_BYTES (256 KiB) before verifying the signature, 401 for a bad signature, 400 for malformed JSON or envelope')` (§13.2 の 413 の行)
@@ -5397,3 +5398,4 @@ INSERT INTO public.plan_store_products (plan_key, store, billing_interval, produ
 | v1.19 | 2026-10-23 | 記録の追い付き (#1949 a71db66f・#1952 895cc2e6・#1954 622699ed の本冊の変更): §6.6 に、招待の行を作る・取り消す書き込みは RPC だけ (`family_invites` の利用者の書き込みのポリシーと権限を外した。migration `20261022150000_family_invites_rpc_only_writes.sql`。#1949) を足した。§6.5 の (5a'') に、組織のプランの段階は運営だけが変える (`20261022170000_org_plan_operator_only.sql` が `authenticated` / `anon` の `plan` の変更を値に関わらず `ORG_PLAN_OPERATOR_ONLY` で拒む。書くのは運営の `POST /api/admin/organizations` と `PATCH /api/admin/organizations/{id}` だけ。#1952) を足した。§8.9 に現在のプランの表示 `currentPlanDisplay`・`CurrentPlanDisplay`・`CurrentPlanSource`・`FAMILY_PLAN_STATUS_SUFFIX` を足し、§10.3・§10.6 の Web の契約の画面をアプリと同じ分岐にした (#1954)。表紙の Status の「実装の後の追随」に 3 本を足した。同じ版で、§8.10 の取り込み元の表の `@homegohan/shared` の行 (`FAMILY_PLAN_STATUS_SUFFIX`・`currentPlanDisplay` を足し、`planDisplayName`・`isCatalogPlanKey`・`isOrgPlanKey` を外した)・§15.2 の触らない一覧 (`src/app/api/super-admin/plans/**` に、段の後の #1960 516c2da1 が変えたファイルの注記を足した)・§15.3 の TS の export の一覧 (`CurrentPlanSource`・`CurrentPlanDisplay`・`FAMILY_PLAN_STATUS_SUFFIX`・`currentPlanDisplay` を足した) も直した |
 | v1.20 | 2026-11-03 | 整合ゲートの候補の追随 (#2199 docs-1103b。製品の挙動は変えない): §2.2 の F23 の AI 相談のアクションに「究極モードでなければ。究極モードは `menu_generation_ultimate`。F8」を足した・§8.8 の表の AI 相談の自動実行の結果 (`dailyLimitResult`) の行を、変える手順の文から今の実装の事実の文 (`code` は `planLocked` で分ける・戻り値の型) にした |
 | v1.21 | 2026-11-04 | 整合ゲートの候補の追随 (#2206 docs-1103c。製品の挙動は変えない): §2.2 の F23 の行番号の参照 (`menu_generation` を数える 7 つの route・Edge の `generate-menu-v4` / `generate-menu-v5`・`process-menu-queue`・`generate-menu-v4-retry.ts` / `generate-menu-v5-retry.ts`・`weekly-menu-request-stale.ts`・`ai-queue-tables.ts`・`menu-plans/add`) を関数・定数の名前の参照にし、`v4/generate` にも「究極モードでなければ。究極モードは `menu_generation_ultimate`」を添えた |
+| v1.22 | 2026-11-05 | 記録の追随 (#2254 N docs-1105e。製品の挙動は変えない): #2254 M3 (#2255) が audit と recordRevenueCatEventFailure の正典コードを withUser の形に合わせた (監査の記録の失敗のログを、イベントの利用者ごとに withUser で出す。利用者が分からないときは無印のロガーで 1 行)。§14.1 の `tests/billing-iap-service.test.ts` に、M3 で足した it を 164 として足した |
