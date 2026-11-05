@@ -12,6 +12,9 @@
  *      『○月○日の献立を作成中...』が閉じる側の新しい相談の画面の置き換えで消えた
  *   3. 『相談を終了』の失敗の応答 (400 など) と通信の失敗で、何も知らせなかった
  *   4. 1 日分の献立の日付の欄を空にして作成を押すと『NaN月NaN日の献立を作成中...』を出し、date '' で依頼した
+ *   5. (L1) 1 日分の献立の既定の日は週の画面の表示の日 (window.__weeklyCurrentDate) をそのまま使い、その日が欄の範囲 (今日〜14 日後)
+ *      の外 (過去の週・15 日以上先・0 時をまたいだ前日) だと、K1 で止めた「作成する」が開いた直後から押せず、理由の文も出なかった。
+ *      手で範囲の外・空を選んだときも、ボタンが薄くなるだけで理由が見えなかった
  */
 
 import { act, createElement } from 'react';
@@ -83,7 +86,7 @@ vi.mock('framer-motion', () => {
   return { motion, AnimatePresence: (props: { children?: React.ReactNode }) => props.children ?? null };
 });
 
-const { default: AIChatBubble } = await import('@/components/AIChatBubble');
+const { default: AIChatBubble, DAY_MENU_DATE_UNSELECTABLE_MESSAGE } = await import('@/components/AIChatBubble');
 
 const SESSION_ID = 'session-1';
 const OTHER_SESSION_ID = 'session-2';
@@ -721,5 +724,107 @@ describe('#2245 K1 4 1 日分の献立は、日付が実在する暦日で欄の
     expect(text()).toContain(`🍳 ${monthDay}${DAY_MENU_STARTED_TEXT}`);
     const [request] = v4.generate.mock.calls[0] as [{ targetSlots: Array<{ date: string }> }];
     expect(request.targetSlots.map((slot) => slot.date)).toEqual([value, value, value]);
+  });
+});
+
+/** 日付の欄の下に出る、作成できない理由の一文 (無ければ null) */
+function unselectableReason(): string | null {
+  return container.querySelector('[data-testid="day-menu-date-unselectable"]')?.textContent ?? null;
+}
+
+/** 「作成する」を押し、依頼が 1 回出るまで待って、依頼した日付 (朝・昼・夕) を返す */
+async function createAndRequestedDates(): Promise<string[]> {
+  await act(async () => {
+    createDayMenuButton().click();
+  });
+  await waitFor(() => v4.generate.mock.calls.length === 1);
+  const [request] = v4.generate.mock.calls[0] as [{ targetSlots: Array<{ date: string }> }];
+  return request.targetSlots.map((slot) => slot.date);
+}
+
+describe('#2245 L1 1 日分の献立の既定の日: 週の画面の表示の日が欄の範囲の外なら明日 (開いた直後から作れる)', () => {
+  // JST の今日は 2026-11-05。欄の範囲は 2026-11-05〜2026-11-19、明日は 2026-11-06
+  it.each([
+    ['過去の週の日', '2026-11-01', '2026-11-06'],
+    ['0 時をまたいだ前日 (昨日)', '2026-11-04', '2026-11-06'],
+    ['15 日後 (上限の次の日)', '2026-11-20', '2026-11-06'],
+    ['ずっと先の日', '2026-12-25', '2026-11-06'],
+    ['今日 (今日を黙って作り直さない)', '2026-11-05', '2026-11-06'],
+    ['実在しない暦日', '2026-02-30', '2026-11-06'],
+    ['範囲の中 (表示の日のまま)', '2026-11-10', '2026-11-10'],
+    ['上限 (14 日後。表示の日のまま)', '2026-11-19', '2026-11-19'],
+    ['明日 (表示の日のまま)', '2026-11-06', '2026-11-06'],
+  ])('表示の日が%s (%s) なら既定の日は %s で、理由の文を出さずにそのまま作れる', async (_label, weeklyDate, expected) => {
+    window.__weeklyCurrentDate = weeklyDate;
+    const input = await openDayMenuAt(JST_NOV_5_MORNING);
+
+    expect(input.value).toBe(expected);
+    expect(unselectableReason()).toBeNull();
+    expect(createDayMenuButton().disabled).toBe(false);
+    expect(await createAndRequestedDates()).toEqual([expected, expected, expected]);
+  });
+
+  it('表示の日が無いときは明日 (対照)', async () => {
+    const input = await openDayMenuAt(JST_NOV_5_MORNING);
+    expect(input.value).toBe('2026-11-06');
+    expect(createDayMenuButton().disabled).toBe(false);
+  });
+
+  it('開くたびに表示の日を読み直す: 範囲の中の日のあとに範囲の外の日を表示して開き直すと明日', async () => {
+    window.__weeklyCurrentDate = '2026-11-10';
+    const input = await openDayMenuAt(JST_NOV_5_MORNING);
+    expect(input.value).toBe('2026-11-10');
+    const cancel = buttonWithText('キャンセル');
+    expect(cancel).toBeDefined();
+    await act(async () => {
+      cancel!.click();
+    });
+    expect(container.querySelector('input[type="date"]')).toBeNull();
+
+    window.__weeklyCurrentDate = '2026-10-29';
+    await act(async () => {
+      dayMenuButton().click();
+    });
+    const reopened = container.querySelector<HTMLInputElement>('input[type="date"]');
+    expect(reopened).not.toBeNull();
+    expect(reopened!.value).toBe('2026-11-06');
+    expect(createDayMenuButton().disabled).toBe(false);
+  });
+});
+
+describe('#2245 L1 1 日分の献立の日付の欄を範囲の外・空にしたら、「作成する」を止めたうえで欄の下に理由の一文を出す', () => {
+  it.each([
+    ['空', ''],
+    ['下限 (今日) の前の日', '2026-11-04'],
+    ['上限 (14 日後) の次の日', '2026-11-20'],
+  ])('%s (%s): 理由の文が出て、作成できない', async (_label, value) => {
+    const input = await openDayMenuAt(JST_NOV_5_MORNING);
+    expect(unselectableReason()).toBeNull();
+
+    await setDateField(input, value);
+    expect(input.value).toBe(value);
+    expect(unselectableReason()).toBe(DAY_MENU_DATE_UNSELECTABLE_MESSAGE);
+    expect(createDayMenuButton().disabled).toBe(true);
+    await act(async () => {
+      createDayMenuButton().click();
+    });
+    await settle();
+    expect(v4.generate).not.toHaveBeenCalled();
+    expect(text()).not.toContain(DAY_MENU_STARTED_TEXT);
+  });
+
+  it('選び直して範囲の中にすると、理由の文が消えて作れる', async () => {
+    const input = await openDayMenuAt(JST_NOV_5_MORNING);
+    await setDateField(input, '2026-11-20');
+    expect(unselectableReason()).toBe(DAY_MENU_DATE_UNSELECTABLE_MESSAGE);
+
+    await setDateField(input, '2026-11-12');
+    expect(unselectableReason()).toBeNull();
+    expect(createDayMenuButton().disabled).toBe(false);
+    expect(await createAndRequestedDates()).toEqual(['2026-11-12', '2026-11-12', '2026-11-12']);
+  });
+
+  it('理由の文は、欄の下の案内 (今日から2週間先まで選択できます) と別の一文', () => {
+    expect(DAY_MENU_DATE_UNSELECTABLE_MESSAGE).not.toContain('選択できます');
   });
 });
