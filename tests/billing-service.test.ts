@@ -5,12 +5,25 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockLoggerError, mockGetEffectivePlan } = vi.hoisted(() => ({
+const { mockLoggerError, mockUserLoggerError, mockGetEffectivePlan } = vi.hoisted(() => ({
   mockLoggerError: vi.fn(),
+  /** withUser(userId).error の呼び出し (1 つ目の引数が利用者)。mockLoggerError にも流す (app_logs の user_id 列に入る形か。#2254 M3) */
+  mockUserLoggerError: vi.fn(),
   mockGetEffectivePlan: vi.fn(async (_userId: string) => 'free'),
 }));
 vi.mock('@/lib/db-logger', () => ({
-  createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: mockLoggerError }),
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: mockLoggerError,
+    withUser: (userId: string) => ({
+      error: (message: string, error?: unknown, metadata?: Record<string, unknown>) => {
+        mockUserLoggerError(userId, message, error, metadata);
+        mockLoggerError(message, error, metadata);
+      },
+    }),
+  }),
   generateRequestId: () => 'req-test',
 }));
 vi.mock('@/lib/site-config', () => ({ getSiteUrl: () => 'https://example.test' }));
@@ -184,6 +197,7 @@ function event(type: string, object: Record<string, unknown>, id = 'evt_1'): Str
 
 beforeEach(() => {
   mockLoggerError.mockClear();
+  mockUserLoggerError.mockClear();
   mockGetEffectivePlan.mockClear();
   mockGetEffectivePlan.mockResolvedValue('free');
 });
@@ -546,6 +560,10 @@ describe('scheduleCancellation / revokeCancellation', () => {
     });
     await expect(scheduleCancellation(deps(auditFails, auditFailsRepo), USER)).resolves.toMatchObject({ status: 'active' });
     expect(mockLoggerError).toHaveBeenCalledWith('課金の監査ログの記録に失敗しました', expect.any(Error), { action_type: 'user.billing.cancel_scheduled' });
+    // 監査の行の利用者 (target_id) を withUser で app_logs の user_id 列に入れる (運営が利用者で絞ったときに出てくる。#2254 M3)
+    expect(mockUserLoggerError.mock.calls).toEqual([
+      [USER, '課金の監査ログの記録に失敗しました', expect.any(Error), { action_type: 'user.billing.cancel_scheduled' }],
+    ]);
   });
 });
 
@@ -766,6 +784,11 @@ describe('recordStripeEventFailure', () => {
     const { repository: auditFails } = makeRepository({ recordAudit: vi.fn(async () => Promise.reject(new Error('audit down'))) });
     await expect(recordStripeEventFailure(deps(gateway, auditFails), failedEvent, 'SYS_INTERNAL_ERROR')).resolves.toBeUndefined();
     expect(auditFails.finishStripeEvent).toHaveBeenCalledWith('evt_fail', { ok: false, errorCode: 'SYS_INTERNAL_ERROR' });
+    // Stripe のイベントの監査の行には利用者が無い (target_id null) ので、無印のロガーで 1 行 (#2254 M3)
+    expect(mockUserLoggerError).not.toHaveBeenCalled();
+    expect(mockLoggerError.mock.calls).toEqual([
+      ['課金の監査ログの記録に失敗しました', expect.any(Error), { action_type: 'system.stripe.event_failed' }],
+    ]);
 
     // finish の失敗は投げる (route が 500。行は processing のまま)。監査は書かない
     const { repository: finishFails, audits: finishFailsAudits } = makeRepository({
