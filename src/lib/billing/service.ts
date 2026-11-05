@@ -56,18 +56,12 @@ export interface CheckoutPreview {
   can_purchase: boolean;
 }
 
-/**
- * 監査は fail-open (閲覧ログと同じ)。失敗はログに残し、本体の操作は止めない。
- * 監査の行が利用者の行 (target_type 'user') なら、その利用者 (target_id) を withUser で app_logs の user_id 列に入れる
- * (metadata の action_type だけだと、運営が user_id 列で利用者を絞ったときにそのログが出てこない。#2254 M3)。
- * Stripe のイベント・購読の行 (target_id null) は利用者が分からないので無印のロガーで書く
- */
+/** 監査は fail-open (閲覧ログと同じ)。失敗はログに残し、本体の操作は止めない */
 async function audit(repository: BillingRepository, entry: BillingAuditEntry): Promise<void> {
   try {
     await repository.recordAudit(entry);
   } catch (error) {
-    const log = entry.target_type === 'user' ? logger.withUser(entry.target_id) : logger;
-    log.error('課金の監査ログの記録に失敗しました', error, { action_type: entry.action_type });
+    logger.error('課金の監査ログの記録に失敗しました', error, { action_type: entry.action_type });
   }
 }
 
