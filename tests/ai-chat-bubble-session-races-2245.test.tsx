@@ -33,6 +33,13 @@
  *      途切れた) と、読み込み直すまで『相談を終了』・新しい相談・相談の切り替え・開き直しの読み直しがずっと止まった。いまは依頼の状態を
  *      読み直して (チャットを開いたとき・タブが前に戻ったとき・DAY_MENU_STATUS_RECHECK_INTERVAL_MS ごと) 終わりを見つける。
  *      また、作成・実行が開き直しの一覧を待つ間に終わると、一覧のあとに会話を読み直して作成中・完了・結果の一文を消した
+ *  10. (#2254 M1 の同じ型: 送信) 7 と 8 (c) の直しが送信に届いていなかった
+ *      (a) 送信は画面の操作でなく、開き直しの一覧を待つ間に送ると、一覧のあとの会話の読み直しが送った文と返答の仮のメッセージを写しで
+ *          置き換え、流れてきた返答と最後の置き換えが当たる行を失って、返答が次の読み込みまで画面に出なかった
+ *      (b) 会話の読み込み (相談の切り替え・開き直し・新しい相談の作成) の最中も送信欄・送信ボタンが止まらず (入口も見なかった)、
+ *          送った文と返答があとから返った読み込みの置き換えで消えた (新しい相談の作成の最中なら前の相談へ送られた)
+ *      (c) 同じ相談の会話の読み込みが 2 つ重なると、あとの読み込みが先に終わって送れるようになったあとに、遅れて返った前の読み込みの
+ *          写しが送った文と返答を消した
  */
 
 import { act, createElement } from 'react';
@@ -1817,5 +1824,265 @@ describe('#2254 M1 同じ型: 作成・実行が開き直しの一覧を待つ�
     await settle();
     expect(requestCount(messagesKey(SESSION_ID))).toBe(loadsBefore);
     expect(text()).toContain(EXECUTED_TEXT);
+  });
+});
+
+describe('#2254 M1 同じ型: 送信も画面の操作。会話の読み込みの最中は送らず、遅れて返った読み込みで送った文と返答を消さない', () => {
+  const SENT_TEXT = '鶏むね肉で何か作れますか';
+  const SENT_REPLY_TEXT = '照り焼きはいかがでしょう';
+  const sendKeyOf = (sessionId: string) => `POST /api/ai/consultation/sessions/${sessionId}/messages?stream=true`;
+
+  function sse(payload: unknown): string {
+    return `data: ${JSON.stringify(payload)}\n\n`;
+  }
+
+  /** 送った文への返答を流し、最後のデータ (finalData) まで返す応答 */
+  function replyResponse(): Response {
+    const body =
+      sse({ choices: [{ delta: { content: SENT_REPLY_TEXT } }] }) +
+      sse({
+        userMessage: { id: 'sent-user', content: SENT_TEXT, isImportant: false, createdAt: '2026-11-05T00:00:00.000Z' },
+        aiMessage: { id: 'sent-ai', content: SENT_REPLY_TEXT, proposedActions: null, createdAt: '2026-11-05T00:00:01.000Z' },
+        actionExecuted: false,
+        actionResult: null,
+      }) +
+      'data: [DONE]\n\n';
+    return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+  }
+
+  function inputElement(): HTMLInputElement {
+    const input = container.querySelector<HTMLInputElement>('input[type="text"]');
+    expect(input).not.toBeNull();
+    return input!;
+  }
+
+  function sendButton(): HTMLButtonElement {
+    const button = container.querySelector<HTMLButtonElement>('button[aria-label="メッセージを送信"]');
+    expect(button).not.toBeNull();
+    return button!;
+  }
+
+  /** 送信欄に文を入れる (止まっていない間に入れる) */
+  async function typeMessage() {
+    const input = inputElement();
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setValue.call(input, SENT_TEXT);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    expect(inputElement().value).toBe(SENT_TEXT);
+  }
+
+  async function pressSend() {
+    await act(async () => {
+      sendButton().click();
+    });
+  }
+
+  /** 送信欄で Enter を押す (送信欄が止まっていても keydown は届く。入口の側の止めを確かめる) */
+  async function pressEnter() {
+    await act(async () => {
+      inputElement().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+  }
+
+  /** どの相談へも送っていない */
+  function sentNothing(): boolean {
+    return !requests.some((r) => r.endsWith('/messages?stream=true'));
+  }
+
+  it('開き直しの一覧を待つ間に送ったら、一覧のあとに会話を読み直さず、送った文と返答が残る', async () => {
+    await openChat();
+    await closeChatWindow();
+    const sessionsLoad = hold(SESSIONS_KEY);
+    await pressFab();
+    await waitFor(() => requestCount(SESSIONS_KEY) === 2);
+    const loadsBefore = requestCount(messagesKey(SESSION_ID));
+
+    // 送信の応答を待つ間に一覧が返る
+    const send = hold(sendKeyOf(SESSION_ID));
+    await typeMessage();
+    await pressSend();
+    await waitFor(() => requestCount(sendKeyOf(SESSION_ID)) === 1);
+    await act(async () => {
+      sessionsLoad.resolve(
+        json(200, { sessions: [{ id: SESSION_ID, title: MAIN_SESSION_TITLE, messageCount: 2 }] }),
+      );
+    });
+    await settle();
+    expect(requestCount(messagesKey(SESSION_ID))).toBe(loadsBefore);
+    expect(text()).toContain(SENT_TEXT);
+
+    // 返答は送った文の下に出る (仮のメッセージが残っているので、流れてきた返答と最後の置き換えが当たる)
+    await act(async () => {
+      send.resolve(replyResponse());
+    });
+    await waitFor(() => text().includes(SENT_REPLY_TEXT));
+    expect(text()).toContain(SENT_TEXT);
+    expect(text()).toContain(MAIN_REPLY_TEXT);
+    expect(requestCount(messagesKey(SESSION_ID))).toBe(loadsBefore);
+  });
+
+  interface HeldLoad {
+    /** 読み込みのあとに出る相談 (送り先) */
+    sessionId: string;
+    /** 読み込みのあとに出る文 */
+    shownText: string;
+    release: () => void;
+  }
+
+  const LOAD_ROUTES: Array<{ route: string; start: () => Promise<HeldLoad> }> = [
+    {
+      route: '相談の切り替えの会話の読み込み',
+      start: async () => {
+        await openChat();
+        await typeMessage();
+        await openSessionList();
+        const load = hold(messagesKey(OTHER_SESSION_ID));
+        await pressSessionRow(OTHER_SESSION_TITLE);
+        await waitFor(() => requestCount(messagesKey(OTHER_SESSION_ID)) === 1);
+        return {
+          sessionId: OTHER_SESSION_ID,
+          shownText: OTHER_REPLY_TEXT,
+          release: () => load.resolve(json(200, { messages: OTHER_MESSAGES })),
+        };
+      },
+    },
+    {
+      route: 'チャットを開き直したときの会話の読み込み',
+      start: async () => {
+        await openChat();
+        await typeMessage();
+        await closeChatWindow();
+        const loadsBefore = requestCount(messagesKey(SESSION_ID));
+        const load = hold(messagesKey(SESSION_ID));
+        await pressFab();
+        await waitFor(() => requestCount(messagesKey(SESSION_ID)) === loadsBefore + 1);
+        return {
+          sessionId: SESSION_ID,
+          shownText: MAIN_REPLY_TEXT,
+          release: () => load.resolve(json(200, { messages: MAIN_MESSAGES })),
+        };
+      },
+    },
+    {
+      route: '新しい相談の作成',
+      start: async () => {
+        await openChat();
+        await typeMessage();
+        await openSessionList();
+        const create = hold(CREATE_SESSION_KEY);
+        await act(async () => {
+          buttonWithText('新しい相談を始める')!.click();
+        });
+        await waitFor(() => requestCount(CREATE_SESSION_KEY) === 1);
+        return {
+          sessionId: NEW_SESSION_ID,
+          shownText: WELCOME_TEXT,
+          release: () => create.resolve(json(200, { session: { id: NEW_SESSION_ID } })),
+        };
+      },
+    },
+  ];
+
+  it.each(LOAD_ROUTES)(
+    '$route の最中は送信欄・送信ボタンが止まり、押しても Enter でも送らない。読み込みのあとに送ると、送った文と返答が残る',
+    async ({ start }) => {
+      const load = await start();
+      expect(loadingSpinnerShown()).toBe(true);
+      expect(sendButton().disabled).toBe(true);
+      expect(inputElement().disabled).toBe(true);
+
+      await pressSend();
+      await pressEnter();
+      await settle();
+      expect(sentNothing()).toBe(true);
+      // 送らなかったので、入れた文は送信欄に残る
+      expect(inputElement().value).toBe(SENT_TEXT);
+
+      await act(async () => {
+        load.release();
+      });
+      await waitFor(() => text().includes(load.shownText) && !loadingSpinnerShown());
+      expect(sendButton().disabled).toBe(false);
+      const readsBefore = requestCount(messagesKey(load.sessionId));
+
+      handlers[sendKeyOf(load.sessionId)] = async () => replyResponse();
+      await pressSend();
+      await waitFor(() => text().includes(SENT_REPLY_TEXT));
+      await settle();
+      expect(requestCount(sendKeyOf(load.sessionId))).toBe(1);
+      expect(text()).toContain(SENT_TEXT);
+      expect(text()).toContain(load.shownText);
+      expect(requestCount(messagesKey(load.sessionId))).toBe(readsBefore);
+    },
+  );
+
+  it('入口の側: 相談の行を押したのと同じ描画のうちに (止める描画の前に) 送っても送らない (前の相談へも送らない)', async () => {
+    await openChat();
+    await typeMessage();
+    await openSessionList();
+    const load = hold(messagesKey(OTHER_SESSION_ID));
+    await act(async () => {
+      buttonWithText(OTHER_SESSION_TITLE)!.click();
+      // まだ止める描画の前 (送信ボタンは押せる) に押す
+      expect(sendButton().disabled).toBe(false);
+      sendButton().click();
+    });
+    await settle();
+    expect(sentNothing()).toBe(true);
+    expect(inputElement().value).toBe(SENT_TEXT);
+
+    await act(async () => {
+      load.resolve(json(200, { messages: OTHER_MESSAGES }));
+    });
+    await waitFor(() => text().includes(OTHER_REPLY_TEXT) && !loadingSpinnerShown());
+    expect(text()).not.toContain(MAIN_REPLY_TEXT);
+    expect(inputElement().value).toBe(SENT_TEXT);
+  });
+
+  it('同じ相談の会話の読み込みが重なり、あとの読み込みのあとに送っても、遅れて返った前の読み込みで送った文と返答を消さない', async () => {
+    await openChat();
+    await closeChatWindow();
+    const loadsBefore = requestCount(messagesKey(SESSION_ID));
+    const firstLoad = hold(messagesKey(SESSION_ID));
+    await pressFab();
+    await waitFor(() => requestCount(messagesKey(SESSION_ID)) === loadsBefore + 1);
+
+    // 開き直しの読み込みを待つ間に同じ相談を選び直す (あとの読み込みはすぐ返る)
+    handlers[messagesKey(SESSION_ID)] = async () => json(200, { messages: MAIN_MESSAGES });
+    await openSessionList();
+    await pressSessionRow(MAIN_SESSION_TITLE);
+    await waitFor(() => requestCount(messagesKey(SESSION_ID)) === loadsBefore + 2);
+    await waitFor(() => text().includes(MAIN_REPLY_TEXT) && !loadingSpinnerShown());
+
+    handlers[sendKeyOf(SESSION_ID)] = async () => replyResponse();
+    await typeMessage();
+    await pressSend();
+    await waitFor(() => text().includes(SENT_REPLY_TEXT));
+
+    // 前の読み込み (送る前の写し) が遅れて返る
+    await act(async () => {
+      firstLoad.resolve(json(200, { messages: MAIN_MESSAGES }));
+    });
+    await settle();
+    expect(text()).toContain(SENT_TEXT);
+    expect(text()).toContain(SENT_REPLY_TEXT);
+    expect(text()).toContain(MAIN_REPLY_TEXT);
+  });
+
+  it('対照: 読み込みの最中でなければ送れ、返答が出る (開き直しの一覧のあとに会話を読む)', async () => {
+    await openChat();
+    await closeChatWindow();
+    const loadsBefore = requestCount(messagesKey(SESSION_ID));
+    await pressFab();
+    await waitFor(() => requestCount(messagesKey(SESSION_ID)) === loadsBefore + 1);
+    await waitFor(() => !loadingSpinnerShown());
+
+    handlers[sendKeyOf(SESSION_ID)] = async () => replyResponse();
+    await typeMessage();
+    await pressSend();
+    await waitFor(() => text().includes(SENT_REPLY_TEXT));
+    expect(text()).toContain(SENT_TEXT);
   });
 });

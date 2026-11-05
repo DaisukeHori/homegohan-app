@@ -764,10 +764,11 @@ export default function AIChatBubble() {
     setCurrentSessionId(sessionId);
   };
   // 最新の画面の操作の番号 (#2254 M1。モバイルの AIAdvisorSheet の viewGenRef と同じ決まり)。チャットを開く (openChat)・新しい相談を
-  // 作る (createNewSession)・出す相談を変える (showSessionId)・1日献立の作成と提案の実行を始める・終える (作成中・完了・結果の一文を
-  // 今の画面に足す。settleDayMenuRequest・endActionRequest) たびに 1 つ進める。開く・作るは始めたときの番号を持ち、一覧・作成の応答が
-  // 返ったときに番号が進んでいれば、出す相談と会話を変えない (最後の操作が勝つ)。以前は開く側が閉包の古い currentSessionId を見て、
-  // 一覧を待つ間に始めた新しい相談・選んだ相談を、一覧を読んだ時点の相談で上書きした
+  // 作る (createNewSession)・出す相談を変える (showSessionId)・送る (sendMessage)・1日献立の作成と提案の実行を始める・終える (作成中・
+  // 完了・結果の一文を今の画面に足す。settleDayMenuRequest・endActionRequest) たびに 1 つ進める。開く・作るは始めたときの番号を
+  // 持ち、一覧・作成の応答が返ったときに番号が進んでいれば、出す相談と会話を変えない (最後の操作が勝つ)。以前は開く側が閉包の古い
+  // currentSessionId を見て、一覧を待つ間に始めた新しい相談・選んだ相談を、一覧を読んだ時点の相談で上書きした (一覧を待つ間に
+  // 送った文と返答も、一覧のあとの会話の読み直しで消した)
   const viewGenRef = useRef(0);
   /** 画面の操作を 1 つ始め、その番号を返す */
   function startViewOperation(): number {
@@ -780,16 +781,28 @@ export default function AIChatBubble() {
   // 最後に始めた読み込み中の印 (isLoading) の番号 (#2254 M1)。印を下ろすのは最後に始めた読み込み (会話の読み込み・新しい相談の作成)
   // が終わったときだけ (前の相談の遅れた読み込みが終わったときに、今の読み込みの最中の印を早く消さない)
   const loadingSeqRef = useRef(0);
+  // 読み込み中の印 (isLoading) と同じ値を ref でも持つ (#2254 M1)。読み込みの最中は送らない (sendMessage の入口。送信欄・送信ボタン・
+  // おすすめの質問も止めている)。ref で見るのは、止める描画を待たずに今の値を見て、読み込みを始めたのと同じ描画のうちの送信も止めるため
+  // (closingSessionRef と同じ形)
+  const loadingRef = useRef(false);
   /** 読み込み中の印を立て、その読み込みの番号を返す */
   const beginLoading = useCallback((): number => {
     loadingSeqRef.current += 1;
+    loadingRef.current = true;
     setIsLoading(true);
     return loadingSeqRef.current;
   }, []);
   /** 読み込み (seq) が終わった: それが最後に始めた読み込みなら印を下ろす */
   const endLoading = useCallback((seq: number) => {
-    if (loadingSeqRef.current === seq) setIsLoading(false);
+    if (loadingSeqRef.current !== seq) return;
+    loadingRef.current = false;
+    setIsLoading(false);
   }, []);
+  // 最後に始めた会話の読み込み (fetchMessages) の番号 (#2254 M1)。会話を画面に置くのは、これが最後に始めた会話の読み込みのときだけ
+  // (同じ相談の会話の読み込みが 2 つ重なった (開き直しの読み込みを待つ間に同じ相談の行を押した) とき、あとの読み込みが先に終わると
+  // 読み込み中の印が下り、送信・1日献立の作成を始められる。そのあとに遅れて返った前の読み込みの写しで、送った文・作成中の一文を消さない)。
+  // 新しい相談の作成 (createNewSession) は数えない (作成を待つ間に返った切り替えた相談の会話は、作成が失敗したときの画面になる)
+  const messagesRequestSeqRef = useRef(0);
   // 届いたかを確かめられなかった送信 (取り直せなかった・送った文が見つからなかった) と、送信に当てた送った文の保存行の id (#2227 H1)。
   // 後の取り直しで前の送信の保存行が見つかったら、入力欄に戻した文を消し (届いていたのにそのまま送ると二重に届く)、今回の送信の
   // 保存行を探すときはそれを除く (同じ文を続けて送ったときに、前の送信の保存行を今回の送信と取り違えない)。決まりは共有の
@@ -951,10 +964,14 @@ export default function AIChatBubble() {
 
   // メッセージ取得。会話を画面に置くのは、返ったときにまだその相談を出しているときだけ (#2245 K1。相談を A→B と切り替えた・閉じたあとの
   // 新しい相談に変わったあとに遅れて返った A の会話を、今の相談の画面に置かない。置くと、画面の会話と違う相談へ送られる)。
+  // 同じ相談でも、あとに始めた会話の読み込みがあれば置かない (#2254 M1。messagesRequestSeqRef)。
   // 確かめられなかった送信の settle は、今の相談でなくても行う (その相談の写しで届いたかが分かる。入力欄に触るのは今の相談のときだけ)。
-  // 決まりはモバイルの AIAdvisorSheet の loadMessages と同じ
+  // 決まりはモバイルの AIAdvisorSheet の loadMessages と同じ (あとに始めた読み込みの番号を見るのは Web だけ。モバイルは送信の結果を
+  // id で足し直すので、遅れた写しで送った文と返答を失わない)
   const fetchMessages = useCallback(async (sessionId: string) => {
     const loading = beginLoading();
+    messagesRequestSeqRef.current += 1;
+    const messagesRequest = messagesRequestSeqRef.current;
     // この読み込みで忘れてよいのは、読み込みを始める前に積んであった送信だけ (#2235 I1。読み込みの最中に終わった取り直しが積んだ
     // 送信は、GET の写しより後に保存されうるので、写しに無くても忘れない。モバイルの AIAdvisorSheet の loadMessages と同じ)
     const forgettable = [...unconfirmedSendsRef.current];
@@ -962,7 +979,7 @@ export default function AIChatBubble() {
       const res = await fetch(`/api/ai/consultation/sessions/${sessionId}/messages`);
       if (res.ok) {
         const data = await res.json();
-        if (currentSessionIdRef.current === sessionId) {
+        if (currentSessionIdRef.current === sessionId && messagesRequestSeqRef.current === messagesRequest) {
           setMessages((data.messages || []).map((m: any) => ({
             ...m,
             isImportant: m.isImportant || false,
@@ -1015,8 +1032,9 @@ export default function AIChatBubble() {
         return; // 認証されていない場合は何もしない
       }
       // 一覧を待つ間に閉じるを押した: 読み込みは閉じる側に任せる (#2245 K1。上と同じ)。
-      // 一覧を待つ間にほかの画面の操作 (新しい相談・相談の切り替え・開き直し) があった: 出す相談を変えず、会話も読み込まない
-      // (#2254 M1。最後の操作が勝つ。以前は閉包の古い currentSessionId を見て、始めた新しい相談を一覧の相談で上書きした)
+      // 一覧を待つ間にほかの画面の操作 (新しい相談・相談の切り替え・開き直し・送信) があった: 出す相談を変えず、会話も読み込まない
+      // (#2254 M1。最後の操作が勝つ。以前は閉包の古い currentSessionId を見て、始めた新しい相談を一覧の相談で上書きした。
+      // 開き直しの一覧を待つ間に送ると、一覧のあとの会話の読み直しが送った文と返答の仮のメッセージを写しで置き換え、返答が画面に出なかった)
       if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
       // 1日献立の作成の最中・提案の実行の応答待ちの最中 (チャットを閉じて開き直した): 出す相談を変えず、会話も読み直さない (#2254 M1。
       // 読み直すと会話がサーバーの写しで置き換わり、作成中の一文が消える。画面はもうその相談の会話を出している)。
@@ -1339,12 +1357,19 @@ export default function AIChatBubble() {
    * どちらから送っても、送った文を入力欄に戻す。
    * 送信中・相談を閉じる応答待ちの最中は送らない (#2235 I8。送信ボタン・入力欄・おすすめの質問も止めている。ref で見るのは、
    * 同じ描画のうちの 2 度目の押下も止めるため。閉じる応答待ちの最中に送ると、閉じる側の相談へ送られ、閉じたあとの新しい相談で
-   * 送った文と返答が画面から消える)。sendingRef は送らなかったとき (「同意しない」) と送り終わったとき (finally) に下ろす
+   * 送った文と返答が画面から消える)。sendingRef は送らなかったとき (「同意しない」) と送り終わったとき (finally) に下ろす。
+   * 会話の読み込み (相談の切り替え・開き直し・新しい相談の作成) の最中も送らない (#2254 M1。読み込み中の輪の間。送信ボタン・入力欄・
+   * おすすめの質問も止めている。送ると、あとから返った読み込みが会話を置き換え、送った文と返答の仮のメッセージが消えて、流れてきた
+   * 返答と最後の置き換えが当たる行を失い、返答が次の読み込みまで画面に出なかった。新しい相談の作成の最中なら、前の相談へ送られ、
+   * 作成のあとの新しい相談の画面で消えた)。
+   * 送るのも画面の操作 (#2254 M1。モバイルの AIAdvisorSheet の sendMessage と同じ決まり。開き直しの一覧を待っている開く (openChat) に、
+   * この画面の会話を読み直させない)
    */
   const sendMessage = async (text: string) => {
     const userMessage = text.trim();
-    if (!userMessage || !currentSessionId || isSending || sendingRef.current || closingSessionRef.current) return;
+    if (!userMessage || !currentSessionId || isSending || sendingRef.current || closingSessionRef.current || loadingRef.current) return;
     sendingRef.current = true;
+    startViewOperation();
 
     // 応答を受け取れなかったときの取り直しで、送った文を見分けるため、送る前に出ていたメッセージの id を持つ (#2201 U3)
     const knownMessageIds = knownUserMessageIdsOf(messages);
@@ -1589,8 +1614,8 @@ export default function AIChatBubble() {
       // ここから応答 (結果の一文) までは『相談を終了』・新しい相談・相談の切り替えを止める (#2254 M1。finally で件数から出す)
       beginActionRequest();
       actionRequestBegun = true;
-      // 実行を始めるのも画面の操作 (#2254 M1。結果の一文を今の画面に足す。モバイルの AIAdvisorSheet が送信を画面の操作にするのと
-      // 同じ決まり)。一覧を待っている開く (openChat) に、この画面の会話を読み直させない
+      // 実行を始めるのも画面の操作 (#2254 M1。結果の一文を今の画面に足す。送信 (sendMessage) と、モバイルの AIAdvisorSheet が送信を
+      // 画面の操作にするのと同じ決まり)。一覧を待っている開く (openChat) に、この画面の会話を読み直させない
       startViewOperation();
 
       // まずアクションログを取得
@@ -1915,8 +1940,9 @@ export default function AIChatBubble() {
     return null;
   }
 
-  // 送信・入力・おすすめの質問を止めるか: 送信中・相談を閉じる応答待ちの最中 (#2235 I8)
-  const inputLocked = isSending || isClosingSession;
+  // 送信・入力・おすすめの質問を止めるか: 送信中・相談を閉じる応答待ちの最中 (#2235 I8)・会話の読み込みの最中 (読み込み中の輪。
+  // #2254 M1。送った文と返答が、あとから返った読み込みの会話の置き換えで消える。sendMessage の入口でも止めている)
+  const inputLocked = isSending || isClosingSession || isLoading;
   // 1日献立の作成の最中か・提案の実行の応答待ちが 1 件でもあるか (#2254 M1。描画の側)
   const resultRequestPending = isDayMenuInFlight || actionRequestsInFlight > 0;
   // 『相談を終了』を止めるか: 閉じる応答待ち・送信中 (#2235 I8)・1日献立の作成の最中・提案の実行の応答待ちの最中 (#2254 M1)・相談が無い
