@@ -7,6 +7,7 @@
 | v1.2 | 2026-11-05 | #2227 H3 (#2229)・#2234・#2235 I2 (#2238) の追随と記録の追随 (#2235 J。製品の挙動は変えない): R-1 に、/health/graphs のページの読み取り (開いたとき・期間の切り替え・再読み込み) で記録か健診を読めなければ「記録を読み込めませんでした」と再読み込みのボタンを出すこと (`loadFailedPeriod`) を足した。§7.5 に、`shouldRefetchHomeOnAuthChange` の絞り・自分で setSession している間の SIGNED_IN は数えない・前回読んだ利用者は主のデータを place で置けたときに覚える、を足した。§9 #14 には SIGNED_IN の絞り (`shouldRefetchHomeOnAuthChange`・`lastReadAuthUserIdRef`) だけを足した。/health/graphs のページの読み取りの記述を H3 の実装に合わせた (§9 #11 は #2229。§10.1 の『失敗の応答』『一部だけ読めた』の行と §11 の『ページの読み取り ('mount') で失敗』の行は #2234。§11 の keepOnFailure の行は #2235 J) |
 | v1.3 | 2026-11-05 | #2245 K2 (#2252)・#2254 M2 (#2256) の追随と記録の追随 (#2254 N docs-1105e。製品の挙動は変えない): §7.5 の正典コードを今の `src/hooks/useHomeData.ts` の形に合わせた (`StartHomeAnalyses` の 3 つ目の引数 `today`・読み取りごとに 1 回読む `todayLocal()`・`fetchPerformanceAnalysis` の `today`・`KEY_TODAY_PLAN` の apply の中の `setHomeToday(today)`・購読から呼ぶ `fetchHomeDataRef`・戻り値の `homeToday`・`weeklyStatsToday`・`expiringItemsToday`)。§6 の /home・§7.5・§9 #14・§10 の表・Q-17 の SIGNED_IN の絞りの言い方を `shouldRefetchHomeOnAuthChange` の条件 (setSession の間は数えない・前回読んだ利用者がまだ無い・セッションに利用者が無い・前回読んだ利用者と違う) にそろえ、§9 #14 に見出しの今日 (`homeToday`) を足した。§15 の廃止 (段 F)・§17 G-5・§18 の docs-1103c の行を、済んだことの記述にした |
 | v1.4 | 2026-11-05 | 記録の追随 (#2265 R docs-1105h。製品の挙動は変えない): §7.5 の正典コードの `readHomeData` の `Promise.all` を今の `src/hooks/useHomeData.ts` の形に合わせた (#2245 K2 (#2252) で、`fetchCookingStreak`・`fetchWeeklyStats`・`fetchMonthlyStats`・`fetchExpiringItems`・`fetchBestMealThisWeek`・`fetchHealthSummary` の 6 つに第 3 引数 `today` が入った。`fetchShoppingRemaining`・`fetchBadgeInfo` は 2 引数のまま。`fetchWeeklyStats` / `fetchExpiringItems` の注に `weeklyStatsToday` / `expiringItemsToday` を足した)。§15 の「関数 (献立表)」の行から `monthKeysBetween` を外し、#2259 P2 (#2264) で移した置き場 (`src/app/(main)/menus/weekly/_state/calendarMonthKeys.ts` の `monthKeysBetween`・`monthKeyOf`) を書いた。§16 の見出しの直後に、段 A〜F は実装済みで表は記録であることを書いた |
+| v1.5 | 2026-11-06 | 記録の追随 (#2280 U2 docs-1106a。製品の挙動は変えない): §7.4 の `subscribeToShoppingListRequest` の説明用のコード例の completed の分岐の注で、『今と同じ』として挙げる印の片付けを `localStorage.removeItem('shoppingListRegenerating')` から `removeLocalStorageItem('shoppingListRegenerating')` にした (#2275 T3 (#2276) のあと、`src/app/(main)/menus/weekly/page.tsx` は `./_state/safeLocalStorage` の `removeLocalStorageItem` を呼ぶ) |
 
 要件の正本は Issue #2206 の本文 (「候補の仕分け」の構造の案と、docs-1103c の「受け手の契約を設計書に書く」の節) と、2026-11-03 のコメント (G1 の行)。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/26 (cross/ の既存は 01〜09・12・13a・13b・14〜25。10・11 は欠番)。Issue #2206 の本文の「設計書の欠落」の候補は置き場を `cross/26-ai-consultation-refetch.md` と書いているが、本書の名前は `26-ai-consultation-refetch-receivers.md` で確定する (受け手の契約が主題)。
@@ -1380,7 +1381,7 @@ const subscribeToShoppingListRequest = useCallback((requestId: string) => {
       await receiver.read({}, (read) => readRegeneratedShoppingList(read, () => shoppingListWatch.active));
       if (!shoppingListWatch.active) return;
       // …今と同じ: setSuccessMessage・setIsRegeneratingShoppingList(false)・setShoppingListProgress(null)・setShoppingListRequestId(null)・
-      //   localStorage.removeItem('shoppingListRegenerating')・cleanupShoppingListSubscription()…
+      //   removeLocalStorageItem('shoppingListRegenerating')・cleanupShoppingListSubscription()…
     } else if (data.status === 'failed') {
       // …今と同じ…
     }
