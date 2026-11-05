@@ -78,12 +78,18 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
       // Store generation state in localStorage for persistence
       // ultimateMode: 究極モードで始めた生成か (#1597)。週間献立の画面が再読み込みで進捗を戻すとき、進捗の段 (究極 / 通常) をこれで決める
       // (行の progress.totalSteps は、行を作った時点では枠の数で、究極モードかを表さない)
-      localStorage.setItem("v4MenuGenerating", JSON.stringify({
-        requestId: data.requestId,
-        timestamp: Date.now(),
-        totalSlots: data.totalSlots,
-        ultimateMode: params.ultimateMode === true,
-      }));
+      // 保存の失敗 (容量の超過・保存の禁止) は、依頼の成功として進める (#2265 Q2。依頼はもう受け付けられ、作成はサーバーで進む。
+      // 印は再読み込みのときに進捗を戻すためだけのもの。以前は下の catch に入り、失敗の一文を出して進捗も購読しなかった)
+      try {
+        localStorage.setItem("v4MenuGenerating", JSON.stringify({
+          requestId: data.requestId,
+          timestamp: Date.now(),
+          totalSlots: data.totalSlots,
+          ultimateMode: params.ultimateMode === true,
+        }));
+      } catch (storageError: unknown) {
+        console.warn("[useV4MenuGeneration] 生成中の印を保存できませんでした:", storageError);
+      }
 
       options.onGenerationStart?.(data.requestId);
 
