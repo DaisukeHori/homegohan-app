@@ -533,8 +533,9 @@ type SessionsLoad =
   | { kind: 'failed'; timedOut: boolean };
 
 /**
- * 新しい相談の作成の応答が返らなかったあとに読み直した一覧 (sessions) から、作成を始める前の一覧に無かった、終了していない・
- * メッセージの無い相談を探す (#2265 Q2。作成はサーバーで済んでいることがある)。一覧は更新の新しい順なので、先頭の 1 つを選ぶ
+ * 新しい相談の作成の応答が返らなかったあとに読み直した一覧 (sessions) から、作成を始める前に見えていた相談 (knownIds。一覧に出た相談と、
+ * この画面で作れて出した相談。#2272 S2) に無い、終了していない・メッセージの無い相談を探す (#2265 Q2。作成はサーバーで済んでいることが
+ * ある)。一覧は更新の新しい順なので、先頭の 1 つを選ぶ
  */
 function sessionCreatedSince(sessions: readonly Session[], knownIds: ReadonlySet<string>): Session | undefined {
   return sessions.find((s) => !knownIds.has(s.id) && s.status !== 'closed' && s.messageCount === 0);
@@ -964,8 +965,9 @@ export default function AIChatBubble() {
   // 応答だけを置いたので、あとの読み込みが失敗すると、先の成功の一覧も捨てた)
   const sessionsRequestSeqRef = useRef(0);
   const placedSessionsRequestRef = useRef(0);
-  // 読み込めた一覧に出たことのある相談の id (#2265 Q2)。新しい相談の作成の応答が返らなかったときに、作成を始める前の写しと比べて、
-  // 読み直した一覧から作れていた相談を見つける (sessionCreatedSince)
+  // 読み込めた一覧に出たことのある相談と、この画面で作れて出した相談 (createNewSession の showCreatedSession。#2272 S2) の id
+  // (#2265 Q2)。新しい相談の作成の応答が返らなかったときに、作成を始める前の写しと比べて、読み直した一覧から作れていた相談を見つける
+  // (sessionCreatedSince)
   const listedSessionIdsRef = useRef(new Set<string>());
   // 最後に始めた会話の読み込み (fetchMessages) の番号と、相談ごとに最後に画面に置いた会話の読み込みの番号 (#2254 M1・#2259 P1)。
   // 会話を画面に置くのは、その相談を出していて、その相談の会話を置いた読み込みより後に始めた読み込みのときだけ (同じ相談の会話の
@@ -1379,7 +1381,8 @@ export default function AIChatBubble() {
     const startedAt = startViewOperation();
     // 作成の結果を画面に置きうるのは、作成を待つ間にほかの画面の操作が無かったときだけ (#2259 P1。読み込み中の印の数え方)
     const loading = beginLoading(() => viewGenRef.current === startedAt);
-    // 作成を始める前に一覧で見えていた相談 (#2265 Q2。作成の応答が返らなかったときに、読み直した一覧から作れていた相談を見つける)
+    // 作成を始める前に一覧で見えていた・この画面で作れて出した相談 (#2265 Q2・#2272 S2。作成の応答が返らなかったときに、読み直した
+    // 一覧から作れていた相談を見つける)
     const knownSessionIds: ReadonlySet<string> = new Set(listedSessionIdsRef.current);
     // 作成の応答が返らなかったあとの一覧の読み直しが読めたか (#2272 S2)
     let sessionsReloaded = false;
