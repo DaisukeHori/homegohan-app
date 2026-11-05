@@ -337,7 +337,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   // 応答待ちの間は、送信 (入力欄・送信ボタン・クイック質問)・新しい相談・相談の切り替えも止める (#2235 I7。止めないと、送った文は
   // 閉じる側の相談へ送られてアーカイブのあとの新しい相談で画面から消え、手で始めた新しい相談はアーカイブの作成と合わせて 2 つ
   // 作られ、選んだ相談はアーカイブのあとの新しい相談で上書きされた)。開き直しの読み込み (initSession) も止める (応答待ちの間は
-  // 読み始めず、読み始めたあとに応答待ちになったら読んだ一覧・会話を置かない。アーカイブのあとの新しい相談の画面を上書きしない)。
+  // 読み始めず、読み始めたあとに応答待ちになったら読んだ会話は置かない (一覧は置く。アーカイブのあとの一覧の読み直しが置き換える)。
+  // アーカイブのあとの新しい相談の画面を上書きしない)。
   // 逆に送信中はアーカイブを止める (sendingRef。送信の返答が閉じた相談にだけ保存され、新しい相談の画面には出ない)
   const closingSessionRef = useRef(false);
   // 届いたかを確かめられなかった送信と、送信に当てた送った文の保存行の id (#2227 H1。Web の AIChatBubble と同じ入れ物と決まり。
@@ -843,9 +844,21 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
     closingSessionRef.current = true;
     setIsClosingSession(true);
-    // アーカイブを受け付けた (ok の応答が返った) か。受け付けたあとの本文の読み取りの時間切れでは、時間切れの一文を出さない
-    // (Web の『相談を終了』と同じ扱い。#2259 P1。アーカイブはサーバーで済んでいる)
+    // アーカイブを受け付けた (ok の応答が返った) か。受け付けたあとの例外 (本文の読み取りの時間切れ・本文が JSON でない など) では、
+    // 時間切れ・失敗の一文を出さず、成功のときと同じ後続で画面をサーバーの状態に合わせる (#2265 Q5。Web の『相談を終了』の
+    // closeSession (#2265 Q2) と同じ扱い。アーカイブはサーバーで済んでいる)
     let closeAccepted = false;
+    // アーカイブのあとの新しい相談の作成 (showFreshSessionAfterArchive) を始めたか (#2265 Q5。受け付けたあとの例外でも 1 回だけ
+    // 行う。始めたあとの例外 (要約の応答の形の崩れなど) で、新しい相談を 2 つ作らない。Web の freshSessionStarted と同じ)
+    let freshSessionStarted = false;
+    /**
+     * アーカイブのあと、新しい相談を作って出す (作成のあとに一覧も読み直す。createNewSession)。成功の応答のときと、受け付けたあとの
+     * 例外のときに呼ぶ (#2265 Q5)。閉じた相談を今の相談のまま残さず、一覧の status もサーバーの状態に合わせる
+     */
+    const showFreshSessionAfterArchive = async () => {
+      freshSessionStarted = true;
+      await createNewSession();
+    };
     try {
       // 応答は AI_CHAT_REQUEST_TIME_LIMIT_MS を上限に待つ (#2265 Q1。Web の #2259 P1 と同じ値・同じ判定。以前は上限が無く、応答が
       // 返らない間はアーカイブの応答待ちのまま、送信・新しい相談・相談の切り替え・取り直しが止まり、アプリを開き直すまで戻らなかった)。
@@ -877,7 +890,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         const data = closed.data;
         // 先に新しいセッションを作る。createNewSession は成功すると messages を [WELCOME_MESSAGE] に置き換えるので、
         // 要約 (または要約を省いた旨の一文) をその前に足すと、作成を待つ間しか出ずに消えてしまう (Web の AIChatBubble と同じ順)
-        await createNewSession();
+        await showFreshSessionAfterArchive();
         if (data.summary) {
           setMessages((prev) => [
             ...prev,
@@ -933,14 +946,20 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         );
       }
     } catch (e) {
-      // 上限までに応答が返らなかった (#2265 Q1) ときは、サーバーでアーカイブが済んでいることがあるので、『失敗しました』と
-      // 言い切らず、相談の一覧で確かめてもらう (Web の CLOSE_SESSION_TIMEOUT_MESSAGE と同じ扱い)。受け付けたあとの本文の読み取りの
-      // 時間切れは何も出さない (Web と同じ)。止めは finally で下ろす
-      if (isConsultationRequestTimeout(e)) {
-        if (!closeAccepted) Alert.alert(ARCHIVE_SESSION_TIMEOUT_TITLE, ARCHIVE_SESSION_TIMEOUT_MESSAGE);
+      if (closeAccepted) {
+        // 受け付けたあとの例外 (本文の読み取りの時間切れ・本文が JSON でない など): アーカイブはサーバーで済んでいるので、成功の
+        // ときと同じく新しい相談を出して一覧を読み直し、画面をサーバーの状態に合わせる (#2265 Q5。Web の closeSession (#2265 Q2) と
+        // 同じ。以前は何もせず (時間切れ)・『失敗しました』と言い切り (それ以外)、アーカイブ済みの相談が今の相談のまま残った)。
+        // 時間切れ・失敗の一文は出さない。要約は本文が読めないので出さない。新しい相談の作成を始めたあとの例外では作り直さない
+        if (!freshSessionStarted) await showFreshSessionAfterArchive();
+      } else if (isConsultationRequestTimeout(e)) {
+        // 上限までに応答が返らなかった (#2265 Q1) ときは、サーバーでアーカイブが済んでいることがあるので、『失敗しました』と
+        // 言い切らず、相談の一覧で確かめてもらう (Web の CLOSE_SESSION_TIMEOUT_MESSAGE と同じ扱い)
+        Alert.alert(ARCHIVE_SESSION_TIMEOUT_TITLE, ARCHIVE_SESSION_TIMEOUT_MESSAGE);
       } else {
         Alert.alert("エラー", "セッションのアーカイブに失敗しました。");
       }
+      // 止めは finally で下ろす
     } finally {
       closingSessionRef.current = false;
       setIsClosingSession(false);
