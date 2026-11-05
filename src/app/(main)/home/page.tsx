@@ -67,6 +67,16 @@ const HOME_DATE_LABEL_FORMAT: Intl.DateTimeFormatOptions = { year: 'numeric', mo
 /** JST の暦日 (YYYY-MM-DD) を見出しの日付にする (#2245 K2。読み取りの今日を見出しに出す) */
 const formatHomeDateLabel = (day: string): string => new Date(jstDayStartTimestamp(day)).toLocaleDateString('ja-JP', HOME_DATE_LABEL_FORMAT);
 
+/**
+ * 2 つの JST の暦日 (YYYY-MM-DD) の遅い方 (#2259 P2)。片方が無い (null・空) ならもう一方、両方無ければ null。
+ * 4 桁の年の YYYY-MM-DD どうしは、文字列の大小が日付の前後と同じ
+ */
+const laterCalendarDay = (a: string | null, b: string | null): string | null => {
+  if (!a) return b || null;
+  if (!b) return a;
+  return a > b ? a : b;
+};
+
 export default function HomePage() {
   // Hydration 対応: new Date() 系は CSR のみで評価する
   const [clientDate, setClientDate] = useState<string>('');
@@ -119,11 +129,16 @@ export default function HomePage() {
 
   // 見出しの今日 (#2245 K2)。読み取りが今日の献立を置いたら、その読み取りの今日 (today) に合わせる (0 時をまたいで開いたままの画面が
   // 読み直したときに、見出しが読んだ献立と同じ日になる)。置く前は開いたときに読んだ今日。
-  // 週の棒の今日の印と期限までの日数は、それぞれの値を置いた読み取りの今日 (weeklyStatsToday・expiringItemsToday) に合わせる (#2254 M2。
-  // 今日の献立の読み取りだけが失敗した取り直しでは、見出しは前の日のまま、週の集計と食材は新しい日で置かれる)
+  // 週の棒の今日の印と期限までの日数は、それぞれの値を置いた読み取りの今日 (weeklyStatsToday・expiringItemsToday) と見出しの今日を
+  // 比べて決める (#2254 M2・#2259 P2。0 時をまたいだ取り直しで一部の読み取りだけが失敗すると、置けた値は新しい日・置けなかった値は前の日の
+  // ままになる。今日の献立の読み取りだけが失敗すれば見出しが前の日、食材か週の集計の読み取りだけが失敗すればそれが前の日)
   const shownToday = today ?? todayISODate;
-  // 週の棒の今日の印を付ける日 (週の集計を置く前は見出しの今日。置く前の棒は 0 本)
-  const weeklyBarsToday = weeklyStatsToday ?? shownToday;
+  // 期限までの日数を数える今日 (#2259 P2)。食材を読んだ今日と見出しの今日の遅い方 (どちらが前の日のままでも、新しい日から数える)
+  const expiringDaysToday = laterCalendarDay(expiringItemsToday, shownToday);
+  // 週の棒の今日の印を付ける日 (週の集計を置く前は見出しの今日。置く前の棒は 0 本)。週の集計を読んだ今日が見出しの今日より前なら
+  // 棒は前の日で終わる 7 日なので、今日の棒が無い。印を付けない (#2259 P2。直す前は最後の棒 = 前の日に今日の印が付いた)
+  const weeklyBarsToday =
+    weeklyStatsToday && shownToday && weeklyStatsToday < shownToday ? null : (weeklyStatsToday ?? shownToday);
   const shownDateLabel = today ? formatHomeDateLabel(today) : clientDate;
 
   const [showWeeklyDetail, setShowWeeklyDetail] = useState(false);
@@ -1059,10 +1074,11 @@ export default function HomePage() {
                 </div>
                 <div className="space-y-2">
                   {expiringItems.slice(0, 3).map(item => {
-                    // 期限までの日数は、食材を読んだ読み取りの今日から数える (#2254 M2。食材はその日から期限の近いもので絞って読んだ。
-                    // 見出しの今日 (shownToday) から数えると、0 時をまたいだ取り直しで今日の献立の読み取りだけが失敗したとき 1 日多くなる)。
+                    // 期限までの日数は、食材を読んだ読み取りの今日と見出しの今日の遅い方 (expiringDaysToday) から数える (#2254 M2・#2259 P2。
+                    // 食材を読んだ今日から数えると、0 時をまたいだ取り直しで食材の読み取りだけが失敗したとき 1 日多くなり、
+                    // 見出しの今日から数えると、今日の献立の読み取りだけが失敗したとき 1 日多くなる)。
                     // 期限の無い食材は読まない (期限で絞って読む) ので daysUntilFrom は null にならない (null なら行を出さない)
-                    const daysLeft = daysUntilFrom(item.expirationDate, expiringItemsToday ?? (shownToday || todayLocal()));
+                    const daysLeft = daysUntilFrom(item.expirationDate, expiringDaysToday ?? todayLocal());
                     if (daysLeft === null) return null;
                     return (
                       <div key={item.id} className="flex justify-between items-center">
