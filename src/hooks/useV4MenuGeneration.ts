@@ -7,6 +7,7 @@ import type { Tables } from "@homegohan/shared";
 import { AiConsentRequiredError, aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { weeklyMenuRequestErrorMessageForDisplay } from "@/lib/weekly-menu-request-error";
 import { requestProgressForDisplay } from "@/lib/request-progress-display";
+import { withinConsultationRequestTimeLimit } from "@/lib/ai/consultation-request-time-limit";
 
 interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
@@ -26,6 +27,11 @@ interface GenerateParams {
   note: string;
   ultimateMode?: boolean;
   resolveExistingMeals?: boolean;
+  /**
+   * 依頼の POST (応答の本文を読むまで) を待つ上限 (ミリ秒。#2259 P1)。渡したときだけ付ける。上限を過ぎたら打ち切り、
+   * 時間切れの例外 (ConsultationRequestTimeoutError) で失敗にする (onError も呼ぶ)。渡さなければ上限なし (以前のまま)
+   */
+  timeLimitMs?: number;
 }
 
 export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
@@ -38,29 +44,35 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
     setError(null);
 
     try {
-      const response = await aiFetch("/api/ai/menu/v4/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          targetSlots: params.targetSlots,
-          resolveExistingMeals: params.resolveExistingMeals ?? false,
-          constraints: params.constraints,
-          note: params.note,
-          ultimateMode: params.ultimateMode ?? false,
-        }),
-      });
+      const requestGeneration = async (signal?: AbortSignal) => {
+        const response = await aiFetch("/api/ai/menu/v4/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            targetSlots: params.targetSlots,
+            resolveExistingMeals: params.resolveExistingMeals ?? false,
+            constraints: params.constraints,
+            note: params.note,
+            ultimateMode: params.ultimateMode ?? false,
+          }),
+          signal,
+        });
 
-      // 同意が必要で止められた (T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内するので、onError (失敗の表示) は呼ばない
-      if (await isAiConsentRequiredResponse(response)) {
-        throw new AiConsentRequiredError();
-      }
+        // 同意が必要で止められた (T15 / #1154): 同意画面 (AiConsentRequiredHost) が案内するので、onError (失敗の表示) は呼ばない
+        if (await isAiConsentRequiredResponse(response)) {
+          throw new AiConsentRequiredError();
+        }
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "生成リクエストに失敗しました");
-      }
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || "生成リクエストに失敗しました");
+        }
 
-      const data = await response.json();
+        return response.json();
+      };
+      const data = params.timeLimitMs === undefined
+        ? await requestGeneration()
+        : await withinConsultationRequestTimeLimit(params.timeLimitMs, requestGeneration);
       setRequestId(data.requestId);
       
       // Store generation state in localStorage for persistence
@@ -76,18 +88,21 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
       options.onGenerationStart?.(data.requestId);
 
       return data;
-    } catch (err: any) {
+    } catch (err: unknown) {
+      // 依頼が受け付けられなかった (同意で止められた・HTTP の失敗・通信の失敗・時間切れ): 作成は始まっていないので、作成中の印を下ろす
+      // (#2259 P1。以前は同意で止められたときだけ下ろし、ほかの失敗では真のまま残った。下ろすのは進捗の完了・失敗と
+      // cancelGeneration だけで、受け付けられなかった依頼の進捗は届かないので、AI 相談の『1日献立変更』と『作成する』が
+      // ページを読み込み直すまで押せなかった)
+      setIsGenerating(false);
       if (err instanceof AiConsentRequiredError) {
-        setIsGenerating(false);
         throw err;
       }
-      const errorMessage = err.message || "生成に失敗しました";
+      const errorMessage = (err instanceof Error && err.message) || "生成に失敗しました";
       setError(errorMessage);
       options.onError?.(errorMessage);
       throw err;
-    } finally {
-      // Note: isGenerating stays true until progress tracking shows completion
     }
+    // 受け付けた依頼の作成中の印 (isGenerating) は、進捗の完了・失敗 (subscribeToProgress) か cancelGeneration まで真のまま
   }, [options]);
 
   const subscribeToProgress = useCallback((reqId: string, onProgress: (progress: any) => void) => {
