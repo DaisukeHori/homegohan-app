@@ -286,8 +286,12 @@ describe('#2265 Q1 アーカイブの応答が返らないと、上限で止め�
     });
     await waitFor(() => expect(screen.getByTestId('ai-timeout-notice')).toBeTruthy());
 
+    // 会話の画面のまま (相談の一覧を開かずに) アーカイブを押す。応答待ちの間は取り直しのボタンを止める
     fetchMock.mockImplementationOnce(() => new Promise<never>(() => {}));
-    await pressArchiveAndExpectLocked();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-archive-btn'));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(CLOSE_URL, expect.objectContaining({ method: 'POST' })));
     expect(screen.getByTestId('ai-timeout-reload')).toBeDisabled();
 
     await waitForUnlock();
