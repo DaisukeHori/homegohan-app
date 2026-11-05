@@ -835,6 +835,11 @@ export default function AIChatBubble() {
   // 保存され、新しい相談の画面には出ない)
   const sendingRef = useRef(false);
   const closingSessionRef = useRef(false);
+  // 送信のうち、送った文への返答 (応答の流れ) を待っている間か (#2254 M1。送信を始めてから、応答の流れが終わるか、応答を受け取れずに
+  // 会話の取り直し (resolveIncompleteReply) を始めるまで)。この間は、チャットを開き直しても (openChat) 会話を読み直さない (読み直すと
+  // 送った文と返答の仮のメッセージが写しで置き換わり、流れてきた返答と最後の置き換えが当たる行を失って、返答が次の読み込みまで画面に
+  // 出なかった)。取り直しの最中の開き直しは今までどおり読み直す (#2235 I1。開き直しの写しで、確かめられなかった送信が届いたかを見る)
+  const awaitingReplyRef = useRef(false);
 
   /** 送った文の保存行 (id) をその送信に当てた印を付ける (確かめられなかった前の送信がこの行を自分のものとして当てないように) */
   const claimSavedUserMessageId = useCallback((id: unknown) => {
@@ -1075,12 +1080,12 @@ export default function AIChatBubble() {
       ) {
         return;
       }
-      // 1日献立の作成の最中・提案の実行の応答待ちの最中・送信の最中 (チャットを閉じて開き直した): 出す相談を変えず、会話も読み直さない
-      // (#2254 M1。読み直すと会話がサーバーの写しで置き換わり、作成中の一文が消える。送信の最中なら送った文と返答の仮のメッセージが
-      // 消え、流れてきた返答と最後の置き換えが当たる行を失って、返答が次の読み込みまで画面に出なかった。画面はもうその相談の会話を
-      // 出している)。一覧を待つ間に作成・実行を始めた・終わった (完了・失敗・結果の一文を足した) ときは、始める・終わるのが画面の操作
-      // なので上の番号で止まる
-      if (resultRequestInFlight() || sendingRef.current) return;
+      // 1日献立の作成の最中・提案の実行の応答待ちの最中・送った文への返答を待つ間 (チャットを閉じて開き直した): 出す相談を変えず、
+      // 会話も読み直さない (#2254 M1。読み直すと会話がサーバーの写しで置き換わり、作成中の一文が消える。返答を待つ間なら送った文と
+      // 返答の仮のメッセージが消え、流れてきた返答と最後の置き換えが当たる行を失って、返答が次の読み込みまで画面に出なかった。画面は
+      // もうその相談の会話を出している。応答を受け取れずに取り直している最中は読み直す。#2235 I1)。一覧を待つ間に作成・実行を始めた・
+      // 終わった (完了・失敗・結果の一文を足した) ときは、始める・終わるのが画面の操作なので上の番号で止まる
+      if (resultRequestInFlight() || awaitingReplyRef.current) return;
 
       // 既存のアクティブセッションがあればそれを使う、なければ新規作成
       // ※ fetchSessions() の返り値を直接参照（stale state 回避）。今出している相談も閉包の state でなく ref で見る (#2254 M1)
@@ -1410,6 +1415,7 @@ export default function AIChatBubble() {
     const userMessage = text.trim();
     if (!userMessage || !currentSessionId || isSending || sendingRef.current || closingSessionRef.current || loadingRef.current) return;
     sendingRef.current = true;
+    awaitingReplyRef.current = true;
     startViewOperation();
 
     // 応答を受け取れなかったときの取り直しで、送った文を見分けるため、送る前に出ていたメッセージの id を持つ (#2201 U3)
@@ -1449,6 +1455,7 @@ export default function AIChatBubble() {
     if ((await ensureAiConsent()) === 'declined') {
       undoOptimisticMessages();
       sendingRef.current = false;
+      awaitingReplyRef.current = false;
       setIsSending(false);
       return;
     }
@@ -1464,9 +1471,11 @@ export default function AIChatBubble() {
     // 流れてきた返答の本文 (流れている間の表示に使う。finalData を受け取れなかったときは取り直した返答で置き換える)
     let accumulatedContent = '';
     // 応答 (finalData) を受け取れなかったあとの取り直し (finalData の欠け・時間切れ・受け付けたあとの例外・通信の切断で 1 つを使う)。
-    // 送った文を入力欄に戻すときは、入力欄に別の文があれば残す
-    const resolveIncomplete = (timedOut: boolean) =>
-      resolveIncompleteReply({
+    // 送った文を入力欄に戻すときは、入力欄に別の文があれば残す。取り直しを始めたら、返答 (応答の流れ) を待つ間は終わり
+    // (#2254 M1。取り直しの最中の開き直しは会話を読み直す。#2235 I1)
+    const resolveIncomplete = (timedOut: boolean) => {
+      awaitingReplyRef.current = false;
+      return resolveIncompleteReply({
         sessionId: currentSessionId,
         sentText: userMessage,
         knownMessageIds,
@@ -1478,6 +1487,7 @@ export default function AIChatBubble() {
         userSaveMayBeLate: !responseAccepted,
         restoreInput: () => setInputText(current => restoreInputAfterUndelivered(current, userMessage)),
       });
+    };
 
     try {
       // ストリーミングモードでAPI呼び出し
@@ -1635,6 +1645,7 @@ export default function AIChatBubble() {
     } finally {
       clearTimeout(clientTimeoutId);
       sendingRef.current = false;
+      awaitingReplyRef.current = false;
       setIsSending(false);
     }
   };
