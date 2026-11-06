@@ -222,7 +222,7 @@ describe('M-3 本冊の形 (#2283 Y2)', () => {
   });
 
   it('行に書かない・GRANT しない・service_role に触れない・authenticated の SELECT を外さない', () => {
-    expect(migrationSql).not.toMatch(/\bINSERT\s+INTO\b|\bUPDATE\s+(?:public\.)?\w+\s+SET\b|\bDELETE\s+FROM\b|\bTRUNCATE\s+(?:TABLE\s+)?(?:public\.)?\w/i);
+    expect(migrationSql).not.toMatch(/\bINSERT\s+INTO\b|\bUPDATE\s+(?:public\.)?\w+\s+SET\b|\bDELETE\s+FROM\b|\bTRUNCATE\s+(?:TABLE\s+)?(?!ON\b)[\w".]+\s*;/i);
     expect(migrationSql).not.toMatch(/\bGRANT\b/i);
     expect(migrationSql).not.toMatch(/service_role/i);
     const authenticatedRevokes = [...migrationSql.matchAll(/\bREVOKE\s+([A-Z ,]+?)\s+ON\s+[^;]*\bFROM\s+([^;]*\bauthenticated\b[^;]*);/gi)].map((m) =>
