@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { todayLocal } from "@homegohan/shared";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -13,6 +13,21 @@ import { Text, TextInput } from "../ui/Text";
 
 import { colors, radius, shadows, spacing } from "../../theme";
 import { useV4MenuGeneration } from "../../hooks/useV4MenuGeneration";
+import {
+  DAY_MENU_DATE_RANGE_HINT,
+  DAY_MENU_DATE_UNSELECTABLE_MESSAGE,
+  dayMenuDateRangeOf,
+  defaultDayMenuDateOf,
+  isDayMenuDateSelectable,
+} from "../../lib/ai-day-menu-date";
+
+/**
+ * 日付の欄の既定の日 (#2283。Web の #2245 L1 と同じ決め)。JST の今日 (#1433) を 1 回だけ読み、明日にする。
+ * このモーダルはタブの上の丸いボタンから開く相談のシートの上に開き、献立表の表示の日を受け取らないので、表示の日は無い (undefined)
+ */
+function computeDefaultDayMenuDate(): string {
+  return defaultDayMenuDateOf(todayLocal(), undefined);
+}
 
 // ============================================================
 // Props
@@ -39,10 +54,18 @@ interface Props {
 // ============================================================
 
 export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose, onAiConsentRequired, isStartBlocked }) => {
-  // 今日の日付をデフォルト (JST の暦日。#1433。toISOString の UTC の暦日だと JST の 0:00〜8:59 に前日になる)
-  const today = todayLocal();
-  const [selectedDate, setSelectedDate] = useState(today);
-  const [dateError, setDateError] = useState<string | null>(null);
+  // 既定は明日 (#2283。Web と同じ。以前は今日で、今日の献立を黙って作り直せた)。JST の暦日 (#1433)
+  const [selectedDate, setSelectedDate] = useState<string>(computeDefaultDayMenuDate);
+
+  // 開くたびに既定の日を求め直す (Web の openDayMenuModal と同じ。このモーダルは閉じても外されないので、前に開いたときの日・
+  // 日をまたいだ前の日の明日が残らないように)
+  useEffect(() => {
+    if (visible) setSelectedDate(computeDefaultDayMenuDate());
+  }, [visible]);
+
+  // 日付の欄が空・形の崩れ・範囲 (JST の今日〜14 日後) の外か (#2283。Web の #2245 K1・L1 と同じ。欄の下に理由の一文を出し、
+  // 「作成する」を止める)
+  const dateUnselectable = !isDayMenuDateSelectable(selectedDate, dayMenuDateRangeOf(todayLocal()));
 
   const { generate, isGenerating } = useV4MenuGeneration({
     onGenerationStart: () => {
@@ -62,26 +85,11 @@ export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose, onAiConsentR
     },
   });
 
-  function validateDate(value: string): boolean {
-    // YYYY-MM-DD 形式チェック
-    const regex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!regex.test(value)) {
-      setDateError("日付は YYYY-MM-DD 形式で入力してください");
-      return false;
-    }
-    const d = new Date(value);
-    if (isNaN(d.getTime())) {
-      setDateError("有効な日付を入力してください");
-      return false;
-    }
-    setDateError(null);
-    return true;
-  }
-
   async function handleGenerate() {
     // 開いた側が止めている間は作らない (#2245 K1。アーカイブの応答待ちの間などに、モーダルの「作成する」から始めさせない)
     if (isStartBlocked?.()) return;
-    if (!validateDate(selectedDate)) return;
+    // 日付の欄が空・範囲の外なら作らない (#2283。ボタンも止めている。押した時点の JST の今日で見る)
+    if (!isDayMenuDateSelectable(selectedDate, dayMenuDateRangeOf(todayLocal()))) return;
 
     const mealTypes = ["breakfast", "lunch", "dinner"] as const;
     const targetSlots = mealTypes.map((mealType) => ({
@@ -127,19 +135,19 @@ export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose, onAiConsentR
           <View style={styles.body}>
             <Text style={styles.label}>対象日</Text>
             <TextInput
-              style={[styles.dateInput, dateError != null && styles.dateInputError]}
+              style={[styles.dateInput, dateUnselectable && styles.dateInputError]}
               value={selectedDate}
-              onChangeText={(v) => {
-                setSelectedDate(v);
-                if (dateError) validateDate(v);
-              }}
+              onChangeText={setSelectedDate}
               placeholder="YYYY-MM-DD"
               placeholderTextColor={colors.textMuted}
               keyboardType="numeric"
               maxLength={10}
             />
-            {dateError != null && (
-              <Text style={styles.errorText}>{dateError}</Text>
+            <Text style={styles.hint}>{DAY_MENU_DATE_RANGE_HINT}</Text>
+            {dateUnselectable && (
+              <Text style={styles.errorText} accessibilityRole="alert" testID="ai-day-menu-date-unselectable">
+                {DAY_MENU_DATE_UNSELECTABLE_MESSAGE}
+              </Text>
             )}
             <Text style={styles.hint}>朝・昼・夕の3食分を自動生成します</Text>
           </View>
@@ -151,8 +159,10 @@ export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose, onAiConsentR
             </Pressable>
             <Pressable
               onPress={handleGenerate}
-              disabled={isGenerating}
-              style={[styles.generateBtn, isGenerating && styles.generateBtnDisabled]}
+              disabled={isGenerating || dateUnselectable}
+              accessibilityState={{ disabled: isGenerating || dateUnselectable }}
+              testID="ai-day-menu-generate"
+              style={[styles.generateBtn, (isGenerating || dateUnselectable) && styles.generateBtnDisabled]}
             >
               {isGenerating ? (
                 <ActivityIndicator size="small" color="#FFF" />
