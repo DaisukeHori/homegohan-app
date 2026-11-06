@@ -7,6 +7,9 @@
  *   - 列の既定値 (USER_PROFILE_COLUMN_DEFAULTS。行を作ると DB が入れる) と同じ値は入っていないと数える。
  *     DB は利用者が選んだ値と既定値を区別して持たないため、利用者が既定値と同じ値を選んだ欄も数えない
  *   - 名前は、アプリが行を作るときに入れる仮置き (PROFILE_NAME_PLACEHOLDER) と空白だけを入っていないと数える (normalizeProfileName)
+ *   - アプリが既定値のある列から作って書く欄 (オンボーディングの完了の体づくりの目標・目標の文・週の運動の時間) は、書く側が
+ *     元の質問に答えたときだけ書く (src/lib/onboarding-derived-columns.ts)。作った値 (例: 既定値の日数 3 × 60 = 180) は列の既定値と
+ *     違うため、ここでは見分けられない
  * 欄と重みは以前の PUT /api/profile の計算と同じ (変えたのは「入っている」の判定だけ)。
  *
  * 問題 (#2201 U4 の直す前): profile_completeness を書くのは PUT /api/profile だけで、AI 相談の update_profile_preferences (身長・体重・年齢・

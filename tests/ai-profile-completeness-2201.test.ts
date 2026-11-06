@@ -490,7 +490,13 @@ describe('PUT /api/profile も、本文ではなく書いた後の行から完�
   });
 
   it('POST /api/onboarding/complete: 自動で入れる欄 (目標の文・週の運動の分など) を書いたあと、完成度を書く', async () => {
-    const { queries, currentRow } = useProfileTable({ ...ROW_BEFORE, nutrition_goal: 'lose_weight' });
+    // 栄養の目標に答えたオンボーディング (答えは onboarding_progress.answers。答えていない欄は書かない。#2283)
+    const answeredRow = {
+      ...ROW_BEFORE,
+      nutrition_goal: 'lose_weight',
+      onboarding_progress: { answers: { nutrition_goal: 'lose_weight' } },
+    };
+    const { queries, currentRow } = useProfileTable(answeredRow);
 
     const res = await postOnboardingComplete();
 
