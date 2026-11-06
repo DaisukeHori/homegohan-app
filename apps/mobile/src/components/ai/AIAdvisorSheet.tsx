@@ -85,6 +85,13 @@ import {
   type ChatLoadFailureKind,
 } from "../../lib/ai-chat-load-failure";
 import { sessionCreatedSince } from "../../lib/ai-session-created-since";
+import {
+  CONSULTATION_SESSION_CLOSED_MESSAGE,
+  ConsultationSessionClosedError,
+  isConsultationSessionClosedError,
+  isConsultationSessionClosedFailure,
+  isConsultationSessionStatusClosed,
+} from "../../lib/ai-consultation-session-closed";
 
 // ============================================================
 // Types
@@ -417,6 +424,29 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   // (sessionCreatedSince)。作れた相談は、画面に出したかに関わらず応答を受けた時点で足す (作成を待つ間に画面の操作があって出さなかった
   // 相談を、一覧でまだ見ないうちに次の作成が時間切れになっても、『作れていた相談』として選ばない)
   const listedSessionIdsRef = useRef(new Set<string>());
+  // 終了したと分かった相談の id (#2283。Web の AIChatBubble の closedSessionIdsRef と同じ役目)。読めた一覧の status が終了の相談と、
+  // アーカイブを受け付けた・すでに終了していた相談と、送信が 409 (終了した相談) で返った相談。終了した相談は開き直らないので、足すだけで
+  // 外さない (あとから返った古い一覧の写しで、終了した相談を終了でない相談に戻さない)。ref は await をまたいだあと・止める描画を待たずに
+  // 今の値を見るため、state は描画のため
+  const closedSessionIdsRef = useRef(new Set<string>());
+  const [closedSessionIds, setClosedSessionIds] = useState<ReadonlySet<string>>(() => new Set());
+  /** 相談 (sessionIds) が終了したと分かった (#2283)。新しく分かった相談があるときだけ描画の state を置き換える */
+  function markSessionsClosed(sessionIds: readonly string[]) {
+    const added = sessionIds.filter((id) => !closedSessionIdsRef.current.has(id));
+    if (added.length === 0) return;
+    for (const id of added) closedSessionIdsRef.current.add(id);
+    setClosedSessionIds(new Set(closedSessionIdsRef.current));
+  }
+  /** 相談 (sessionId) が終了したと分かっているか (今の値。#2283)。相談を出していない (null) ときは偽 */
+  function isSessionClosedNow(sessionId: string | null): boolean {
+    return sessionId !== null && closedSessionIdsRef.current.has(sessionId);
+  }
+  // 1日献立のモーダルを開いたまま出している相談が終了したと分かった: モーダルを閉じる (#2283。Web と同じ。「作成する」は終了した
+  // 相談では始めない (isDayMenuStartBlocked)。理由と次の手は入力欄の上の一文が出す)
+  const shownSessionClosed = currentSessionId !== null && closedSessionIds.has(currentSessionId);
+  useEffect(() => {
+    if (shownSessionClosed) setDayMenuModalVisible(false);
+  }, [shownSessionClosed]);
   /**
    * 相談の一覧を読む (#2272 S1。開いたとき (initSession)・新しい相談の作成のあと (createNewSession)・アーカイブのあとから呼ぶ)。
    * 一覧を置くのは、これが最後に始めた読み込みのときだけ (#2254 M1)。置いたときは、前の読み込みの失敗の一文 (一覧) を外す
@@ -433,6 +463,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       const res = await api.get<{ sessions: Session[] }>("/api/ai/consultation/sessions?status=all");
       const loaded = res.sessions ?? [];
       for (const session of loaded) listedSessionIdsRef.current.add(session.id);
+      // 一覧で終了の相談は、終了したと分かった相談に足す (#2283。置かなかった古い一覧でも、終了は終了のまま)
+      markSessionsClosed(loaded.filter((session) => isConsultationSessionStatusClosed(session.status)).map((session) => session.id));
       if (sessionsRequestSeqRef.current === requestSeq) {
         setSessions(loaded);
         setMessages((prev) => prev.filter((m) => m.id !== CHAT_LOAD_FAILURE_NOTE_IDS.sessions));
@@ -892,7 +924,13 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
    * (ボタンを止めているのと同じ。ref で見るのは、止める描画を待たずに、同じ描画のうちの押下も止めるため)
    */
   function isDayMenuStartBlocked(): boolean {
-    return sendingRef.current || reloadingRef.current || closingSessionRef.current;
+    return (
+      sendingRef.current ||
+      reloadingRef.current ||
+      closingSessionRef.current ||
+      // 出している相談が終了した (#2283。ボタンも止めている)
+      isSessionClosedNow(currentSessionIdRef.current)
+    );
   }
 
   /** 「1日献立変更」の押下 (#2245 K1。止めている間は開かない) */
@@ -1022,6 +1060,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
     closingSessionRef.current = true;
     setIsClosingSession(true);
+    // アーカイブする相談 (#2283。受け付けた・すでに終了していたら、終了した相談として覚える)
+    const archivedSessionId = currentSessionId;
     // アーカイブを受け付けた (ok の応答が返った) か。受け付けたあとの例外 (本文の読み取りの時間切れ・本文が JSON でない など) では、
     // 時間切れ・失敗の一文を出さず、成功のときと同じ後続で画面をサーバーの状態に合わせる (#2265 Q5。Web の『相談を終了』の
     // closeSession (#2265 Q2) と同じ扱い。アーカイブはサーバーで済んでいる)
@@ -1072,6 +1112,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       });
       if (closed.ok) {
         const data = closed.data;
+        // アーカイブした相談は終了した相談 (#2283。このあとの新しい相談の作成が失敗して閉じた相談が残っても、一覧の読み直しの成否に
+        // 関わらず入力欄・送信を止めて『新しい相談を始める』を出す)
+        markSessionsClosed([archivedSessionId]);
         // 先に新しいセッションを作る。createNewSession は成功すると messages を [WELCOME_MESSAGE] に置き換えるので、
         // 要約 (または要約を省いた旨の一文) をその前に足すと、作成を待つ間しか出ずに消えてしまう (Web の AIChatBubble と同じ順)
         await showFreshSessionAfterArchive();
@@ -1101,7 +1144,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
           }
         }
       } else if (closed.status === 400) {
-        // Already closed: UI を最新に合わせる
+        // Already closed: UI を最新に合わせる (すでに終了していた相談も終了した相談。#2283)
+        markSessionsClosed([archivedSessionId]);
         Alert.alert("情報", "このセッションは既にアーカイブ済みです。");
         const listed = await fetchSessions();
         // 読み直しも失敗したら、古い一覧のままなので開き直してもらう (#2272 S1。Web の closeSession の already-closed と同じ)
@@ -1137,6 +1181,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         // ときと同じく新しい相談を出して一覧を読み直し、画面をサーバーの状態に合わせる (#2265 Q5。Web の closeSession (#2265 Q2) と
         // 同じ。以前は何もせず (時間切れ)・『失敗しました』と言い切り (それ以外)、アーカイブ済みの相談が今の相談のまま残った)。
         // 時間切れ・失敗の一文は出さない。要約は本文が読めないので出さない。新しい相談の作成を始めたあとの例外では作り直さない
+        // アーカイブを受け付けたので、アーカイブした相談は終了した相談 (#2283。成功のときと同じ)
+        markSessionsClosed([archivedSessionId]);
         if (!freshSessionStarted) await showFreshSessionAfterArchive();
       } else if (isConsultationRequestTimeout(e)) {
         // 上限までに応答が返らなかった (#2265 Q1) ときは、サーバーでアーカイブが済んでいることがあるので、『失敗しました』と
@@ -1158,6 +1204,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     // 入力欄・クイック質問も止めている。ref で見るのは、同じ描画のうちの 2 度目の押下も止めるため。アーカイブの最中に送ると、
     // 閉じる側の相談へ送られ、アーカイブのあとの新しい相談で送った文と返答が画面から消える)
     if (!trimmed || sendingRef.current || reloadingRef.current || closingSessionRef.current) return;
+    // 終了した相談には送らない (#2283。入力欄・送信ボタン・クイック質問も止めている。サーバーも 409 で拒む)
+    if (isSessionClosedNow(currentSessionIdRef.current)) return;
     sendingRef.current = true;
     // 送信も画面の操作 (#2227 H1)。取り直しの最中は送れないので、ふだんはこれで古くなる取り直しは無い (重ねて守る)
     startViewOperation();
@@ -1248,6 +1296,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
       if (!res.ok) {
         const errText = await res.text().catch(() => "");
+        // 終了した相談への送信を拒まれた (409 と code。#2283): 下の catch で、送った文を入力欄に戻して終了した相談として止める
+        if (isConsultationSessionClosedFailure(res.status, errText)) throw new ConsultationSessionClosedError();
         // 429 AI_DAILY_LIMIT (#1149)・503 の緊急停止・メンテナンス中 (#1457) は、固定の文の例外にする (生の本文を画面に出さない)
         throw errorOfFailedResponse(res.status, errText);
       }
@@ -1386,6 +1436,18 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         await reloadIncompleteSend(sessionId);
         return;
       }
+      // 終了した相談への送信を拒まれた (409。#2283。アーカイブのあとに新しい相談の作成が失敗して閉じた相談が残った・ほかの端末で
+      // 閉じた): 送っていないので、送った文の仮のメッセージを消して入力欄に戻し (同意で止められたときと同じ)、終了した相談として入力欄・
+      // 送信を止めて『新しい相談を始める』の一文を出す (描画の側)。一覧を読み直して status をサーバーに合わせる。読み直しも失敗したら、
+      // 古い一覧のままなので開き直してもらう一文を、まだこの相談を出していれば足す (アーカイブが『既に終了』で返ったときと同じ)
+      if (isConsultationSessionClosedError(e) && sessionId) {
+        setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
+        setInputText(trimmed);
+        markSessionsClosed([sessionId]);
+        const listed = await fetchSessions();
+        if (listed.kind === "failed" && currentSessionIdRef.current === sessionId) showSessionsLoadFailure(listed);
+        return;
+      }
       // 同意が必要で止められた (T15 / #1154): 送らなかったので、メッセージを消して入力を戻す。
       // このシート (モーダル) を閉じてから同意画面への案内を出す (closeSheetAndPromptAiConsent)
       if (isAiConsentRequiredError(e)) {
@@ -1453,7 +1515,10 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const showTypingIndicator = sending && streamingContent === null;
   // 送信・入力・クイック質問を止めるか (#2227 H1。「最新の会話を読み込む」の取り直しの最中も送信中と同じく止める。取り直しと
   // 送信を重ねない。アーカイブの応答待ちの最中も止める (#2235 I7))
-  const inputLocked = sending || reloadingAfterTimeout || isClosingSession;
+  // 出している相談が終了したと分かっているとき (shownSessionClosed。#2283。一覧の status・アーカイブの応答・送信の 409) は、入力欄・
+  // 送信・クイック質問・1日献立の作成を止め、入力欄の上に『この相談は終了しています…』と『新しい相談を始める』を出す。
+  // 終了した相談でも止める (#2283。sendMessage の入口でも止めている)
+  const inputLocked = sending || reloadingAfterTimeout || isClosingSession || shownSessionClosed;
   // 新しい相談・相談の切り替えを止めるか: 取り直しの最中・アーカイブの応答待ちの最中 (#2227 H1・#2235 I7。送信中は止めない)
   const sessionSwitchLocked = reloadingAfterTimeout || isClosingSession;
   // 「最新の会話を読み込む」を押せないとき: 取り直しの最中・アーカイブの応答待ちの最中 (#2227 H1 の整合ゲートの指摘)
@@ -1659,6 +1724,23 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                     </View>
                   )}
                 </ScrollView>
+              )}
+
+              {/* 終了した相談 (#2283): 入力欄・送信を止め、理由と次の手 (新しい相談を始める) を出す。一文は描画の state から 1 つだけ
+                  出す (会話には足さない)。『新しい相談を始める』は相談の一覧の行と同じ押下 (pressNewSession) で、同じ条件で止める */}
+              {!showSessionList && shownSessionClosed && (
+                <View testID="ai-session-closed-notice" style={styles.sessionClosedNotice}>
+                  <Text style={styles.timeoutNoticeText}>{CONSULTATION_SESSION_CLOSED_MESSAGE}</Text>
+                  <Pressable
+                    testID="ai-session-closed-new-session"
+                    accessibilityRole="button"
+                    onPress={pressNewSession}
+                    disabled={sessionSwitchLocked}
+                    style={[styles.timeoutReloadBtn, sessionSwitchLocked && styles.sendButtonDisabled]}
+                  >
+                    <Text style={styles.timeoutReloadLabel}>新しい相談を始める</Text>
+                  </Pressable>
+                </View>
               )}
 
               {/* クイックアクションバー */}
@@ -1918,6 +2000,15 @@ const styles = StyleSheet.create({
   timeoutNotice: {
     gap: spacing.sm,
     padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.warningLight,
+  },
+  // 終了した相談の一文の枠 (#2283)。見た目は応答を受け取れなかった送信の案内 (timeoutNotice) と同じで、入力欄の上に余白を取って置く
+  sessionClosedNotice: {
+    gap: spacing.sm,
+    padding: spacing.md,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.sm,
     borderRadius: radius.md,
     backgroundColor: colors.warningLight,
   },

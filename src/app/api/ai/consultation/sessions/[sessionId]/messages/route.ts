@@ -34,6 +34,11 @@ import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
 import { isUuid } from '@/lib/http-params';
 import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
+import {
+  CONSULTATION_SESSION_CLOSED_STATUS,
+  consultationSessionClosedBody,
+  isConsultationSessionStatusClosed,
+} from '@/lib/ai/consultation-session-closed';
 
 /**
  * AI に渡す日付 (過去の相談の日・重要なメッセージの日・今日) を書くタイムゾーン (#1433)。
@@ -1212,7 +1217,6 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     // (保存したあとで気づくと、メッセージだけが残って AI の返答が付かない) (#1182)
     const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
 
-    const openai = getFastLLMClient();
     // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
     if (!isUuid(params.sessionId)) {
       return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
@@ -1231,6 +1235,17 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     if (!session || session.user_id !== user.id) {
       return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
     }
+
+    // 終了した相談には送らせない (#2283)。本文を読む前に 409 で断り、メッセージの行・AI の呼び出し・提案の記録 (ai_action_logs) を
+    // 作らない (AI の利用回数も数えない)。以前は status を見ず、アーカイブのあとに新しい相談の作成が失敗して閉じた相談が画面に
+    // 残ると、閉じた相談に会話が足されていった。画面は code で見分けて『新しい相談を始める』を出す (src/lib/ai/consultation-session-closed.ts)
+    if (isConsultationSessionStatusClosed(session.status)) {
+      return NextResponse.json(consultationSessionClosedBody(), { status: CONSULTATION_SESSION_CLOSED_STATUS });
+    }
+
+    // AI の呼び出しの部品も、メッセージを保存する前に用意する (#1182。欠けていれば MissingEnvError で汎用の 500)。終了した相談の
+    // 拒否より後に置く (#2283。拒否は AI を呼ばないので、AI の設定が欠けた環境でも 409 で断る)
+    const openai = getFastLLMClient();
 
     // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
     const body = await request.json().catch(() => null);
