@@ -99,14 +99,18 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     }
 
     // 閉じたことを、要約・利用回数より前に、状態の条件つきの書き換えで確定する (#2283 W1)。
-    // 同じ相談の「相談を終了」が別の端末から同時に 2 本来ても、閉じていない行を書き換えられるのは 1 本目だけ。
-    // 2 本目は書き換える行が無い (data: null) ので、上と同じ「すでに終了」の 400 で返し、要約の AI と利用回数に進まない。
-    // status は NULL も許す列なので、NULL も閉じていない相談として扱う (上の比較と同じ)
-    const { data: closedRow, error: closeError } = await supabase
+    // 条件は「上で読んだ状態のまま」(読んだ値と同じ。status は NULL も許す列なので、NULL なら NULL のまま)。
+    // 同じ相談の「相談を終了」が別の端末から同時に 2 本来ても、書き換えられるのは先に届いた 1 本だけ。2 本目は状態が closed に
+    // 変わっているので書き換える行が無く (data: null)、上と同じ「すでに終了」の 400 で返し、要約の AI と利用回数に進まない。
+    // 「閉じていない」を PostgREST の or (status.is.null,status.neq.closed) で書くと、書き換え (PATCH) では 42703 で失敗する
+    // (ローカルの Supabase で確かめた) ので使わない。実 DB の振る舞いは tests/integration/rls/ai-consultation-close-claim-2283.test.ts
+    const closeQuery = supabase
       .from('ai_consultation_sessions')
       .update({ status: 'closed', updated_at: new Date().toISOString() })
-      .eq('id', params.sessionId)
-      .or('status.is.null,status.neq.closed')
+      .eq('id', params.sessionId);
+    const { data: closedRow, error: closeError } = await (session.status == null
+      ? closeQuery.is('status', null)
+      : closeQuery.eq('status', session.status))
       .select('id')
       .maybeSingle();
 

@@ -19,10 +19,10 @@
  *
  * (2) 同じ相談の「相談を終了」が同時に 2 本走ると、要約の AI 呼び出しと利用回数の消費 (consumeAiUsage) が 2 回走る
  *   以前は status を読んだあと、要約と利用回数のあとに id だけの条件で書き換えていた。いまは閉じたことを先に、状態の
- *   条件つきの書き換え (閉じていない行だけ) で確定し、書き換えられた 1 本目だけが要約と利用回数に進む。2 本目は 400 (すでに終了)。
+ *   条件つきの書き換え (読んだ状態のままの行だけ) で確定し、書き換えられた 1 本目だけが要約と利用回数に進む。2 本目は 400 (すでに終了)。
  *
  * 差し替えるのは Supabase のクライアント・AI の呼び出しなど外との境目だけ。Supabase の作り物は 1 つの表の集まりを持ち、
- * select の列 (`別名:列->キー` の JSON の path を含む)・eq / neq / is / not / or の絞り込み・limit・insert・update を実際に当てる
+ * select の列 (`別名:列->キー` の JSON の path を含む)・eq / neq / is / not の絞り込み・limit・insert・update を実際に当てる
  * (列や条件を当てない作り物では、丸ごと読んでいるか・2 本目が書き換えられるかを確かめられないため)。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -114,18 +114,6 @@ function project(row: Row, columns: string): Row {
     out[name] = value === undefined ? null : structuredClone(value);
   }
   return out;
-}
-
-/** or('列.演算子.値,…') の 1 つの条件 (eq・neq・is だけ) */
-function orCondition(text: string): Filter | null {
-  const m = /^(\w+)\.(eq|neq|is)\.(.+)$/.exec(text);
-  if (!m) return null;
-  const [, column, op, raw] = m;
-  const value = raw === 'null' ? null : raw;
-  if (op === 'is') return (row) => (row[column] ?? null) === value;
-  if (op === 'eq') return (row) => row[column] === value;
-  // neq は NULL を外す (SQL の <> と同じ)
-  return (row) => row[column] !== null && row[column] !== undefined && row[column] !== value;
 }
 
 function makeQuery(table: string): unknown {
@@ -236,15 +224,6 @@ function makeQuery(table: string): unknown {
         if (prop === 'not') {
           return (column: string, operator: string, value: unknown) => {
             if (operator === 'is') filters.push((row) => (row[column] ?? null) !== value);
-            return builder;
-          };
-        }
-        if (prop === 'or') {
-          return (text: string) => {
-            const conditions = text.split(',').map(orCondition);
-            if (conditions.every((c): c is Filter => c !== null)) {
-              filters.push((row) => conditions.some((c) => c(row)));
-            }
             return builder;
           };
         }

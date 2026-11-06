@@ -2,10 +2,10 @@
  * #2283 W1: AI 相談の「相談を終了」の確定と、閉じた相談の要約の読み取りの、実 DB (PostgREST) での振る舞い。
  *
  * 確かめること (I-n はこのファイルの it の番号):
- *   - I-1: 閉じる route と同じ、状態の条件つきの書き換え (閉じていない行だけ。.or('status.is.null,status.neq.closed')
- *          → .select('id').maybeSingle()) は、1 回目は行を返し、2 回目 (すでに closed) は行を返さない (data: null・error: null)。
- *          同時の 2 本の「相談を終了」のうち、要約と利用回数に進めるのが 1 本目だけになる根拠
- *   - I-2: status が NULL の行も、同じ書き換えで閉じられる (NULL も閉じていない相談として扱う)
+ *   - I-1: 閉じる route と同じ、状態の条件つきの書き換え (読んだ状態のまま = .eq('status', 読んだ値) →
+ *          .select('id').maybeSingle()) は、1 回目は行を返し、同じ読んだ値での 2 回目 (すでに closed) は行を返さない
+ *          (data: null・error: null)。同時の 2 本の「相談を終了」のうち、要約と利用回数に進めるのが 1 本目だけになる根拠
+ *   - I-2: status が NULL の行も、同じ書き換え (.is('status', null)) で閉じられ、2 回目は行を返さない
  *   - I-3: 閉じた相談の要約の読み取り (PAST_SESSION_SUMMARY_COLUMNS) は、context_snapshot の key_facts・user_insights だけを
  *          JSON の path で返し、snapshot の丸ごと (入れ子の pastSessionSummaries を含む) を返さない。キーが無い行は null
  *
@@ -43,8 +43,6 @@ const asUser = (jwt: string) => client(anonKey, jwt);
 
 /** 閉じる route が書く状態 */
 const CLOSED_STATUS = 'closed';
-/** 閉じる route の「閉じていない行だけ」の条件 (route と同じ文字列) */
-const NOT_CLOSED_FILTER = 'status.is.null,status.neq.closed';
 
 const KEY_FACTS = [{ date: '2026-11-01', category: '体重', content: '62kg' }];
 const USER_INSIGHTS = ['朝食を抜きがち'];
@@ -81,27 +79,27 @@ afterAll(async () => {
   }
 }, LONG);
 
-/** 閉じる route と同じ、閉じていない行だけを閉じる書き換え */
-function closeIfOpen(id: string) {
-  return asUser(jwt)
+/** 閉じる route と同じ、読んだ状態のままの行だけを閉じる書き換え (読んだ状態が NULL なら NULL のまま) */
+function closeIfUnchanged(id: string, readStatus: string | null) {
+  const query = asUser(jwt)
     .from('ai_consultation_sessions')
     .update({ status: CLOSED_STATUS, updated_at: new Date().toISOString() })
-    .eq('id', id)
-    .or(NOT_CLOSED_FILTER)
-    .select('id')
-    .maybeSingle();
+    .eq('id', id);
+  return (readStatus == null ? query.is('status', null) : query.eq('status', readStatus)).select('id').maybeSingle();
 }
 
 describe('#2283 W1 相談を終了の確定と、閉じた相談の要約の読み取り', () => {
-  it('I-1: 閉じていない行だけを閉じる書き換えは、1 回目だけ行を返し、2 回目は行を返さない', async () => {
-    const { data: created, error } = await asUser(jwt).from('ai_consultation_sessions').insert({ user_id: userId, title: TITLE }).select('id').single();
+  it('I-1: 読んだ状態のままの行だけを閉じる書き換えは、1 回目だけ行を返し、同じ読んだ値での 2 回目は行を返さない', async () => {
+    const { data: created, error } = await asUser(jwt).from('ai_consultation_sessions').insert({ user_id: userId, title: TITLE }).select('id, status').single();
     if (error || !created) throw new Error(`session: ${error?.message}`);
+    expect(created.status).toBe('active');
 
-    const first = await closeIfOpen(created.id as string);
+    // 同時の 2 本は、どちらも閉じる前の状態 (active) を読んでいる
+    const first = await closeIfUnchanged(created.id as string, created.status as string);
     expect(first.error).toBeNull();
     expect(first.data?.id).toBe(created.id);
 
-    const second = await closeIfOpen(created.id as string);
+    const second = await closeIfUnchanged(created.id as string, created.status as string);
     expect(second.error).toBeNull();
     expect(second.data).toBeNull();
 
@@ -114,10 +112,15 @@ describe('#2283 W1 相談を終了の確定と、閉じた相談の要約の読�
     if (error || !created) throw new Error(`session: ${error?.message}`);
     expect(created.status).toBeNull();
 
-    const closed = await closeIfOpen(created.id as string);
+    const closed = await closeIfUnchanged(created.id as string, null);
     expect(closed.error).toBeNull();
     expect(closed.data?.id).toBe(created.id);
+
+    const again = await closeIfUnchanged(created.id as string, null);
+    expect(again.error).toBeNull();
+    expect(again.data).toBeNull();
   }, LONG);
+
 
   it('I-3: 閉じた相談の要約の読み取りは key_facts・user_insights だけを返し、snapshot の丸ごとを返さない', async () => {
     const nestedSnapshot = {
