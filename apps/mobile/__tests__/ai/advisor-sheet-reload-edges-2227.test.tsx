@@ -75,7 +75,10 @@ import {
 } from '../../src/lib/ai-consultation-data-changed';
 
 const SESSION = { id: 'session-1', title: 'AI相談', messageCount: 2, status: 'active' };
-const OTHER_SESSION = { id: 'session-2', title: '別の相談', messageCount: 1, status: 'closed' };
+// 切り替え先の相談は開いた相談にする (#2283 で、終了した相談を出している間は入力欄・送信を止めるようになった。このファイルは
+// 送信・取り直しの最中の切り替えを確かめ、送信が終わったことを入力欄が動くことで見る (waitUntilSendEnds) ので、終了した相談だと
+// 送信が終わっても入力欄が動かない。終了した相談の止めは advisor-sheet-session-closed-2283.test.tsx が確かめる)
+const OTHER_SESSION = { id: 'session-2', title: '別の相談', messageCount: 1, status: 'active' };
 const MESSAGES_PATH = `/api/ai/consultation/sessions/${SESSION.id}/messages`;
 const OTHER_MESSAGES_PATH = `/api/ai/consultation/sessions/${OTHER_SESSION.id}/messages`;
 const OLD_MESSAGES = [
