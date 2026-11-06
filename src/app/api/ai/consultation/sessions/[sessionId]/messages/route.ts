@@ -1244,7 +1244,7 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     }
 
     // AI の呼び出しの部品も、メッセージを保存する前に用意する (#1182。欠けていれば MissingEnvError で汎用の 500)。終了した相談の
-    // 拒否より後に置く (#2283。拒否は AI を呼ばないので、AI の設定が欠けた環境 (結合テストの next dev など) でも 409 で断る)
+    // 拒否より後に置く (#2283。拒否は AI を呼ばないので、AI の設定が欠けた環境でも 409 で断る)
     const openai = getFastLLMClient();
 
     // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)

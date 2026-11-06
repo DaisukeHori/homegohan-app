@@ -8,7 +8,6 @@
  * AI の呼び出し・提案の記録 (ai_action_logs) を作らず、AI の利用回数 (consume_ai_usage) も数えない。
  * 開いた相談は今まで通り送れる。所有者の確認 (404) が先 (他人の閉じた相談は 409 でなく 404 にして、有無を漏らさない)。
  * 拒否は AI を呼ばないので、AI の部品の用意 (getFastLLMClient) より前に断る (AI の設定が欠けた環境でも 409)。
- * 実 DB と next dev での同じ確認は tests/integration/security/ai-consultation-closed-session-2283.test.ts。
  *
  * 差し替えるのは Supabase のクライアント・AI の呼び出しなど外との境目だけ (tests/ai-consultation-latest-messages-2144.test.ts と
  * 同じ形)。Supabase の作り物は、表ごとの insert / update / upsert / delete と rpc の呼び出しを記録する。
