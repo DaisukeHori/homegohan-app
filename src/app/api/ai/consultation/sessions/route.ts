@@ -6,6 +6,7 @@ import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
+import { PAST_SESSION_SUMMARY_COLUMNS, toPastSessionSummary } from '@/lib/ai/consultation-past-sessions';
 
 /** 新しいセッションの文脈に入れる、最近の食事の日数 (JST の今日から何日前までか) */
 const RECENT_MEAL_DAYS = 7;
@@ -123,10 +124,11 @@ export async function POST(request: Request) {
     // 過去のセッション要約を取得（最新10件）
     // 同じ日時は id の順 (#2139 T1)。並びは not の前に重ねる (not のあとの問い合わせの型を orderListBy に渡すと、
     // 型の深さの上限 TS2589 に当たる)
+    // snapshot は丸ごと読まず、key_facts・user_insights だけを読む (丸ごと入れると相談のたびに入れ子で倍々に大きくなる。#2283 W1)
     const { data: pastSessions } = await orderListBy(
       supabase
         .from('ai_consultation_sessions')
-        .select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
+        .select(PAST_SESSION_SUMMARY_COLUMNS)
         .eq('user_id', user.id)
         .eq('status', 'closed'),
       LIST_ORDERS.aiConsultationPastSummaries,
@@ -165,7 +167,7 @@ export async function POST(request: Request) {
       } : null,
       recentMeals: recentMeals || [],
       healthRecords: healthRecords || [],
-      pastSessionSummaries: pastSessions || [],
+      pastSessionSummaries: (pastSessions ?? []).map((row) => toPastSessionSummary(row)),
       importantMessages: importantMessages || [],
       capturedAt: new Date().toISOString(),
     };
