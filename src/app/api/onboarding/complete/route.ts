@@ -7,6 +7,7 @@ import { getHandsonTourStatusInternal } from '@/lib/handson-tour/getStatus'
 import { internalError } from '@/lib/api/errors'
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 import { refreshProfileCompleteness } from '@/lib/profile-completeness'
+import { answeredOnboardingNutritionGoal, onboardingWeeklyExerciseDecision } from '@/lib/onboarding-derived-columns'
 
 /**
  * オンボーディング完了API (OB-API-02)
@@ -64,6 +65,10 @@ export async function POST() {
     }
 
     // ===== 自動変換処理 =====
+    // 答えから作る 3 つの欄 (体づくりの目標・目標の文・週の運動の分) は、元の質問に答えたときだけ書く。答えずに完了した
+    // (あとで設定する・途中のスキップ) ときは列に触れない。元の列 (栄養の目標・運動の日数・1 回の時間) には DB の既定値
+    // ('maintain'・3・60) があり、答えなくても欄が埋まって完成度に数えていた (#2283 判断待ち 7 の選択 B。判定は src/lib/onboarding-derived-columns.ts)
+    const nutritionGoalAnswered = answeredOnboardingNutritionGoal(profile)
     // nutrition_goal → fitness_goals への変換
     const goalToFitnessMapping: Record<string, string[]> = {
       'lose_weight': ['lose_weight'],
@@ -86,9 +91,8 @@ export async function POST() {
       ? goalToTextMapping[profile.nutrition_goal] || ''
       : ''
 
-    // exercise_frequency × exercise_duration_per_session → weekly_exercise_minutes
-    const weeklyExerciseMinutes =
-      (profile.exercise_frequency || 0) * (profile.exercise_duration_per_session || 30)
+    // exercise_frequency × exercise_duration_per_session → weekly_exercise_minutes (運動していないと答えたら 0)
+    const weeklyExercise = onboardingWeeklyExerciseDecision(profile)
 
     // Performance OS v3: performance_profile を完成させる
     let finalPerformanceProfile = profile.performance_profile || {}
@@ -124,10 +128,9 @@ export async function POST() {
       .update({
         onboarding_completed_at: now,
         updated_at: now,
-        // 自動変換データ
-        fitness_goals: fitnessGoals,
-        goal_text: goalText,
-        weekly_exercise_minutes: weeklyExerciseMinutes,
+        // 自動変換データ (答えた質問の分だけ)
+        ...(nutritionGoalAnswered ? { fitness_goals: fitnessGoals, goal_text: goalText } : {}),
+        ...(weeklyExercise.write ? { weekly_exercise_minutes: weeklyExercise.minutes } : {}),
         // Performance OS v3
         performance_profile: finalPerformanceProfile,
       })
@@ -138,7 +141,7 @@ export async function POST() {
     }
 
     // オンボーディングの答え (web は /api/onboarding/progress、モバイルは画面から直接 user_profiles に書く) と上の自動変換の欄
-    // (体づくりの目標・目標の文・週の運動の分) はプロフィールの完成度に数える欄なので、書いた後の行から計算し直す
+    // (体づくりの目標・目標の文・週の運動の分。元の質問に答えたときだけ書く) はプロフィールの完成度に数える欄なので、書いた後の行から計算し直す
     // (失敗してもオンボーディングの完了は成功のまま。完成度は次の書き込みで直る。#2201 U4)
     const completenessRefresh = await refreshProfileCompleteness(supabase, user.id)
     if (completenessRefresh.status === 'error') {

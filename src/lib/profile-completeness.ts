@@ -1,91 +1,179 @@
 /**
  * プロフィールの完成度 (user_profiles.profile_completeness。0〜100 の整数) の計算と、書いた後の行からの計算し直し (#2201 U4)。
  *
- * 計算は PUT /api/profile (src/app/api/profile/route.ts) が本文 (画面の編集の値。toUserProfile の形の camelCase) から行っていた
- * calculateProfileCompleteness をそのまま移したもの (欄・重み・判定は変えない)。今は PUT も本文ではなく書いた後の行から数える
- * (目標の体重だけを送る栄養の目標の画面の PUT で、ほかの欄が埋まっていても完成度が 5 になっていたため)。
+ * 数え方 (#2283 判断待ち 7 の選択 B): 利用者が入れた値だけを数える。既定値で埋まった欄は数えない。
+ *   - 行の列をそのまま読む (toUserProfile の形にしない)。toUserProfile は未入力の欄を既定値 (食事のスタイル 'normal'・
+ *     料理の経験 'beginner'・平日の調理の時間 30・週の運動の時間 0) で埋めるため、それを通すと未入力も「入力済み」になった
+ *   - 列の既定値 (USER_PROFILE_COLUMN_DEFAULTS。行を作ると DB が入れる) と同じ値は入っていないと数える。
+ *     DB は利用者が選んだ値と既定値を区別して持たないため、利用者が既定値と同じ値を選んだ欄も数えない
+ *   - 名前は、アプリが行を作るときに入れる仮置き (PROFILE_NAME_PLACEHOLDER) と空白だけを入っていないと数える (normalizeProfileName)
+ *   - アプリが既定値のある列から作って書く欄 (オンボーディングの完了の体づくりの目標・目標の文・週の運動の時間) は、書く側が
+ *     元の質問に答えたときだけ書く (src/lib/onboarding-derived-columns.ts)。作った値 (例: 既定値の日数 3 × 60 = 180) は列の既定値と
+ *     違うため、ここでは見分けられない
+ * 欄と重みは以前の PUT /api/profile の計算と同じ (変えたのは「入っている」の判定だけ)。
  *
- * 問題 (直す前): profile_completeness を書くのは PUT /api/profile だけで、AI 相談の update_profile_preferences (身長・体重・年齢・
+ * 問題 (#2201 U4 の直す前): profile_completeness を書くのは PUT /api/profile だけで、AI 相談の update_profile_preferences (身長・体重・年齢・
  * 体づくりの目標・健康の状態などを書く) と add_health_record (今日の体重を user_profiles.weight にも写す) は計算し直さなかった。
  * AI で身長・体重を入れると、帯 (ProfileReminderBanner) の未入力の一覧は消えるが「プロフィール完成度 X%」と帯は古いまま残った
  * (読み込み直しても同じ)。書いた後の行から計算し直す refreshProfileCompleteness を、書いたあとに呼ぶ。
+ * PUT も本文ではなく書いた後の行から数える (目標の体重だけを送る栄養の目標の画面の PUT で、ほかの欄が埋まっていても完成度が 5 になっていたため)。
  *
  * 完成度は、読んだときの完成度のままの行にだけ書く (syncProfileCompletenessOfRow。#2206 G4)。条件なしで書くと、読んでから
  * 書くまでに別の書き手が計算し直した新しい値を、古い行から数えた値で上書きしえた。
  * モバイルのオンボーディングの途中保存 (画面から直接 user_profiles に書く) は、保存のあとに POST /api/profile/completeness を呼ぶ。
+ * 完成度は書くときにだけ計算し直す (読む側は保存した値を出す)。古い数え方で保存した値は、その利用者の次の書き込みで書き直る
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { toUserProfile } from '@/lib/converter';
+import { normalizeProfileName } from '@homegohan/shared';
 import type { DbUserProfile } from '@/types/database';
 
 /** 完成度の満点 (百分率) */
 const PROFILE_COMPLETENESS_FULL_PERCENT = 100;
 
-/** 欄の値の数え方: 値がある (null・undefined・空文字・'unspecified' でない) / 1 つ以上の配列 / キーが 1 つ以上のオブジェクト */
-type CompletenessFieldKind = 'value' | 'array' | 'object';
+/**
+ * user_profiles の列の既定値のうち、完成度に数える列にあって「何か入っている」に見えるもの
+ * (supabase/migrations/20251126124224_create_meal_planner_tables.sql の CREATE TABLE user_profiles の DEFAULT。行を作ると DB が入れる)。
+ * 完成度はこれと同じ値を入っていないと数える (#2283)。ほかの数える列の既定値は無い (NULL) か空の配列 (入っていないと数える)。
+ * migration の DEFAULT との一致は tests/profile-completeness-column-defaults-2283.test.ts が検査する
+ */
+export const USER_PROFILE_COLUMN_DEFAULTS = {
+  weekly_exercise_minutes: 0,
+  diet_style: 'normal',
+  cooking_experience: 'beginner',
+  weekday_cooking_minutes: 30,
+  cuisine_preferences: { chinese: 3, western: 3, japanese: 4 },
+} as const;
+
+/** 列の既定値 (USER_PROFILE_COLUMN_DEFAULTS の値) */
+type ColumnDefaultValue = (typeof USER_PROFILE_COLUMN_DEFAULTS)[keyof typeof USER_PROFILE_COLUMN_DEFAULTS];
 
 /**
- * 完成度に数える欄 (toUserProfile の形の camelCase) と重み。重みの合計に対する、埋まっている欄の重みの割合を百分率にする。
- * 重みは PUT /api/profile の以前の計算と同じ (分類ごとの重みはコメントの割合の目安)
+ * 欄の値の数え方: 値がある (null・undefined・空文字・'unspecified' でない) / 1 つ以上の配列 / キーが 1 つ以上のオブジェクト /
+ * 名前 (normalizeProfileName が null でない。空白だけ・仮置きの名前は入っていない)
  */
-const PROFILE_COMPLETENESS_FIELDS: ReadonlyArray<{ key: string; weight: number; kind: CompletenessFieldKind }> = [
+type CompletenessFieldKind = 'value' | 'array' | 'object' | 'name';
+
+/** 完成度に数える欄。column は user_profiles の列、key は画面の形 (toUserProfile の camelCase) の名前 */
+type CompletenessField = {
+  column: keyof DbUserProfile;
+  key: string;
+  weight: number;
+  kind: CompletenessFieldKind;
+  /** 列の既定値。これと同じ値は入っていないと数える (#2283) */
+  columnDefault?: ColumnDefaultValue;
+};
+
+/**
+ * 完成度に数える欄と重み。重みの合計に対する、埋まっている欄の重みの割合を百分率にする。
+ * 欄と重みは PUT /api/profile の以前の計算と同じ (分類ごとの重みはコメントの割合の目安)
+ */
+const PROFILE_COMPLETENESS_FIELDS: ReadonlyArray<CompletenessField> = [
   // 基本情報
-  { key: 'nickname', weight: 4, kind: 'value' },
-  { key: 'age', weight: 4, kind: 'value' },
-  { key: 'gender', weight: 4, kind: 'value' },
-  { key: 'height', weight: 4, kind: 'value' },
-  { key: 'weight', weight: 4, kind: 'value' },
+  { column: 'nickname', key: 'nickname', weight: 4, kind: 'name' },
+  { column: 'age', key: 'age', weight: 4, kind: 'value' },
+  { column: 'gender', key: 'gender', weight: 4, kind: 'value' },
+  { column: 'height', key: 'height', weight: 4, kind: 'value' },
+  { column: 'weight', key: 'weight', weight: 4, kind: 'value' },
   // 目標
-  { key: 'goalText', weight: 5, kind: 'value' },
-  { key: 'fitnessGoals', weight: 5, kind: 'array' },
-  { key: 'targetWeight', weight: 5, kind: 'value' },
+  { column: 'goal_text', key: 'goalText', weight: 5, kind: 'value' },
+  { column: 'fitness_goals', key: 'fitnessGoals', weight: 5, kind: 'array' },
+  { column: 'target_weight', key: 'targetWeight', weight: 5, kind: 'value' },
   // 仕事・生活
-  { key: 'occupation', weight: 5, kind: 'value' },
-  { key: 'workStyle', weight: 5, kind: 'value' },
-  { key: 'weeklyExerciseMinutes', weight: 5, kind: 'value' },
+  { column: 'occupation', key: 'occupation', weight: 5, kind: 'value' },
+  { column: 'work_style', key: 'workStyle', weight: 5, kind: 'value' },
+  {
+    column: 'weekly_exercise_minutes',
+    key: 'weeklyExerciseMinutes',
+    weight: 5,
+    kind: 'value',
+    columnDefault: USER_PROFILE_COLUMN_DEFAULTS.weekly_exercise_minutes,
+  },
   // 健康
-  { key: 'healthConditions', weight: 5, kind: 'array' },
-  { key: 'sleepQuality', weight: 5, kind: 'value' },
-  { key: 'stressLevel', weight: 5, kind: 'value' },
+  { column: 'health_conditions', key: 'healthConditions', weight: 5, kind: 'array' },
+  { column: 'sleep_quality', key: 'sleepQuality', weight: 5, kind: 'value' },
+  { column: 'stress_level', key: 'stressLevel', weight: 5, kind: 'value' },
   // 食事制限
-  { key: 'dietFlags', weight: 5, kind: 'object' },
-  { key: 'dietStyle', weight: 5, kind: 'value' },
-  { key: 'dislikedCookingMethods', weight: 5, kind: 'array' },
+  { column: 'diet_flags', key: 'dietFlags', weight: 5, kind: 'object' },
+  { column: 'diet_style', key: 'dietStyle', weight: 5, kind: 'value', columnDefault: USER_PROFILE_COLUMN_DEFAULTS.diet_style },
+  { column: 'disliked_cooking_methods', key: 'dislikedCookingMethods', weight: 5, kind: 'array' },
   // 調理環境
-  { key: 'cookingExperience', weight: 5, kind: 'value' },
-  { key: 'weekdayCookingMinutes', weight: 5, kind: 'value' },
+  {
+    column: 'cooking_experience',
+    key: 'cookingExperience',
+    weight: 5,
+    kind: 'value',
+    columnDefault: USER_PROFILE_COLUMN_DEFAULTS.cooking_experience,
+  },
+  {
+    column: 'weekday_cooking_minutes',
+    key: 'weekdayCookingMinutes',
+    weight: 5,
+    kind: 'value',
+    columnDefault: USER_PROFILE_COLUMN_DEFAULTS.weekday_cooking_minutes,
+  },
   // 嗜好
-  { key: 'cuisinePreferences', weight: 5, kind: 'object' },
-  { key: 'favoriteIngredients', weight: 5, kind: 'array' },
+  {
+    column: 'cuisine_preferences',
+    key: 'cuisinePreferences',
+    weight: 5,
+    kind: 'object',
+    columnDefault: USER_PROFILE_COLUMN_DEFAULTS.cuisine_preferences,
+  },
+  { column: 'favorite_ingredients', key: 'favoriteIngredients', weight: 5, kind: 'array' },
 ];
+
+/** 完成度に数える列 (user_profiles の列名) */
+export const PROFILE_COMPLETENESS_COLUMNS: ReadonlyArray<keyof DbUserProfile> = PROFILE_COMPLETENESS_FIELDS.map((field) => field.column);
 
 /** 値が「入っていない」とみなす文字列 (性別・年代の未選択) */
 const UNSPECIFIED_VALUE = 'unspecified';
 
-function isFilled(value: unknown, kind: CompletenessFieldKind): boolean {
-  if (kind === 'array') return Array.isArray(value) && value.length > 0;
-  if (kind === 'object') return value !== null && typeof value === 'object' && Object.keys(value).length > 0;
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** 値が列の既定値と同じか。オブジェクト (jsonb) はキーの順に関わらず、キーの集まりと各値が同じなら同じ */
+function equalsColumnDefault(value: unknown, columnDefault: ColumnDefaultValue): boolean {
+  if (!isPlainObject(columnDefault)) return value === columnDefault;
+  if (!isPlainObject(value)) return false;
+  const defaultEntries = Object.entries(columnDefault);
+  return Object.keys(value).length === defaultEntries.length && defaultEntries.every(([key, expected]) => value[key] === expected);
+}
+
+function isFilled(value: unknown, field: CompletenessField): boolean {
+  if (field.columnDefault !== undefined && equalsColumnDefault(value, field.columnDefault)) return false;
+  if (field.kind === 'name') return normalizeProfileName(value) !== null;
+  if (field.kind === 'array') return Array.isArray(value) && value.length > 0;
+  if (field.kind === 'object') return value !== null && typeof value === 'object' && Object.keys(value).length > 0;
   return value !== null && value !== undefined && value !== '' && value !== UNSPECIFIED_VALUE;
 }
 
-/** プロフィール (toUserProfile の形の camelCase) の完成度 (0〜100 の整数) */
-export function calculateProfileCompleteness(profile: Readonly<Record<string, unknown>>): number {
+/** 欄ごとの値 (valueOf) から完成度 (0〜100 の整数) を計算する */
+function completenessOf(valueOf: (field: CompletenessField) => unknown): number {
   let totalWeight = 0;
   let earnedWeight = 0;
   for (const field of PROFILE_COMPLETENESS_FIELDS) {
     totalWeight += field.weight;
-    if (isFilled(profile[field.key], field.kind)) earnedWeight += field.weight;
+    if (isFilled(valueOf(field), field)) earnedWeight += field.weight;
   }
   return Math.round((earnedWeight / totalWeight) * PROFILE_COMPLETENESS_FULL_PERCENT);
 }
 
 /**
- * user_profiles の行 (select('*')) から完成度を計算する。画面の編集の値と同じ形 (toUserProfile) にしてから数える
- * (プロフィールの画面は toUserProfile の値を編集して全部の欄を PUT に送るので、本文から数えていた以前の PUT と同じ値になる)。
- * 列が欠けた行 (古い行・一部の列) は、欠けた列を toUserProfile の既定値で数える
+ * 画面の形 (toUserProfile の camelCase) のプロフィールの完成度 (0〜100 の整数)。判定は profileCompletenessOfRow と同じ
+ * (toUserProfile が未入力の欄に入れる既定値は列の既定値と同じなので、入っていないと数える)
+ */
+export function calculateProfileCompleteness(profile: Readonly<Record<string, unknown>>): number {
+  return completenessOf((field) => profile[field.key]);
+}
+
+/**
+ * user_profiles の行 (select('*')) から完成度を計算する。列をそのまま読む (列が無い・null は入っていない)。
+ * 書く経路 (PUT・POST /api/profile・health・オンボーディング・AI 相談・POST /api/profile/completeness) はどれもこれで数えるので、
+ * Web とモバイル (途中保存のあとに POST /api/profile/completeness を呼ぶ) で同じ値になる
  */
 export function profileCompletenessOfRow(row: Partial<DbUserProfile>): number {
-  return calculateProfileCompleteness({ ...toUserProfile(row as DbUserProfile) });
+  return completenessOf((field) => row[field.column]);
 }
 
 /** refreshProfileCompleteness の結果 */
