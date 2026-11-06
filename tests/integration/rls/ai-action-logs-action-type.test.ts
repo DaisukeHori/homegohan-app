@@ -3,11 +3,12 @@
  * 提案の行の実行中の印 (pending → approved の条件つきの 1 文) の実 DB での振る舞い。
  *
  * 確かめること (I-n はこのファイルの it の番号):
- *   - I-1: 本人のクライアントで、実行の側 (src/lib/ai/consultation-action-executor.ts の case) の全部の種類の行を作れる
+ *   - I-1: サーバーの書き手 (service_role。#2283 Y1 からアプリは getAiActionLogWriter で書き、Y2 で利用者の書き込みの権限を外した)で、
+ *          実行の側 (src/lib/ai/consultation-action-executor.ts の case) の全部の種類の行を作れる
  *          (修正前は generate_single_meal が 23514 で作れず、自動実行も「実行する」も実行されなかった)
  *   - I-2: どの一覧にも無い種類の行は 23514 で作れない (制約が外れていない)
- *   - I-3: 実行の API の取り方 (update status=approved where id and status=pending) を同時に 2 本流すと、行を返すのは 1 本だけ
- *          (2 つの画面から同時に押しても、二重に実行しない)
+ *   - I-3: 実行の API の取り方 (update status=approved where id and status=pending。サーバーの書き手で書く) を同時に 2 本流すと、
+ *          行を返すのは 1 本だけ (2 つの画面から同時に押しても、二重に実行しない)
  *   - I-4: 戻し口を 1 つのトランザクションで流して巻き戻す (DB には残らない): 戻したあとの制約には generate_single_meal が無い。
  *          巻き戻ったあとは、いまの制約に generate_single_meal がある
  *
@@ -168,10 +169,10 @@ function logRow(actionType: string, status: string = AI_ACTION_LOG_STATUS.pendin
 }
 
 describe('#2189 W1 ai_action_logs の種類の制約と実行中の印', () => {
-  it('I-1: 実行の側の全部の種類の行を、本人のクライアントで作れる (generate_single_meal を含む)', async () => {
+  it('I-1: 実行の側の全部の種類の行を、サーバーの書き手 (service_role) で作れる (generate_single_meal を含む)', async () => {
     const types = executorActionTypes();
     expect(types).toContain(ADDED_TYPE);
-    const db = asUser(jwt);
+    const db = srAdmin;
     const failures: Array<{ type: string; code?: string }> = [];
     for (const type of types) {
       const { error } = await db.from('ai_action_logs').insert(logRow(type, AI_ACTION_LOG_STATUS.running)).select('id').single();
@@ -180,17 +181,17 @@ describe('#2189 W1 ai_action_logs の種類の制約と実行中の印', () => {
     expect(failures).toEqual([]);
   }, LONG);
 
-  it('I-2: どの一覧にも無い種類の行は 23514 で作れない', async () => {
-    const { error } = await asUser(jwt).from('ai_action_logs').insert(logRow(UNKNOWN_TYPE)).select('id').single();
+  it('I-2: どの一覧にも無い種類の行は 23514 で作れない (RLS を通らないサーバーの書き手でも)', async () => {
+    const { error } = await srAdmin.from('ai_action_logs').insert(logRow(UNKNOWN_TYPE)).select('id').single();
     expect(error?.code).toBe(CHECK_VIOLATION_SQLSTATE);
   }, LONG);
 
   it('I-3: pending → approved の条件つきの書き換えを同時に 2 本流すと、行を返すのは 1 本だけ', async () => {
-    const created = await asUser(jwt).from('ai_action_logs').insert(logRow('add_pantry_item')).select('id').single();
+    const created = await srAdmin.from('ai_action_logs').insert(logRow('add_pantry_item')).select('id').single();
     expect(created.error).toBeNull();
     const id = created.data!.id as string;
     const results = await Promise.all(
-      [asUser(jwt), asUser(jwt)].map((db) =>
+      [client(serviceKey), client(serviceKey)].map((db) =>
         db
           .from('ai_action_logs')
           .update({ status: AI_ACTION_LOG_STATUS.running })

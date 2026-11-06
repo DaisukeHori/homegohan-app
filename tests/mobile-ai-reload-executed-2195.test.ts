@@ -8,7 +8,10 @@
  *   2. 会話の GET は、実行できた提案と断った提案を同じ「出さない」(hidden) にする (GET だけでは実行できたかを見分けられない。
  *      モバイルが記録を読む理由)
  *   3. ai_action_logs は RLS が有効で、利用者 (authenticated) は自分の相談の行を読める (モバイルの読み取りが通る)。
- *      後の migration でこの読み取りを外していない
+ *      後の migration でこの読み取りを外していない。#2283 Y2 (*_ai_action_logs_select_only.sql) は FOR ALL のポリシーを
+ *      SELECT だけの "Users can view actions in own sessions" に作り直し、書き込みの権限だけを外した (読み取りは残る)。
+ *      ポリシーを消す・権限を外す migration は、同じ migration で自分の相談の行の SELECT のポリシーを TO authenticated で作り、
+ *      authenticated の SELECT を外さないものだけを許す
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -23,6 +26,12 @@ const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase', 'migrations');
 const BASELINE_MIGRATION = '20251126124224_create_meal_planner_tables.sql';
 const AI_ACTION_LOGS_OWNER_POLICY = 'Users can manage actions in own sessions';
+/** #2283 Y2 で作り直した、自分の相談の行を読むだけのポリシー */
+const AI_ACTION_LOGS_OWNER_SELECT_POLICY = 'Users can view actions in own sessions';
+/** 自分の相談の行 (ベースラインの USING の式。二重引用符を外し、空白をそろえた形) */
+const OWN_SESSION_ROWS_EXPRESSION =
+  '((EXISTS ( SELECT 1 FROM public.ai_consultation_sessions WHERE ((ai_consultation_sessions.id = ai_action_logs.session_id) AND (ai_consultation_sessions.user_id = auth.uid())))))';
+const normalizeSql = (sql: string): string => sql.replace(/"/g, '').replace(/\s+/g, ' ');
 
 describe('#2195 V3: モバイルが見る提案の記録の「実行できた」はサーバーの値と同じ', () => {
   it('AI_ACTION_LOG_STATUS_EXECUTED === AI_ACTION_LOG_STATUS.executed', () => {
@@ -60,14 +69,34 @@ describe('#2195 V3: 利用者は自分の相談の提案の記録を読める (R
       .filter((name) => name.endsWith('.sql') && !name.endsWith('.down.sql') && name > BASELINE_MIGRATION)
       .sort();
     expect(later.length).toBeGreaterThan(0);
-    const offending = later.filter((name) => {
+    const keepsOwnerSelect = (sql: string): boolean => {
+      const normalized = normalizeSql(sql);
+      // 自分の相談の行の SELECT のポリシーを TO authenticated で作り直している
+      const recreatesSelect = normalized.includes(
+        `CREATE POLICY ${AI_ACTION_LOGS_OWNER_SELECT_POLICY} ON public.ai_action_logs FOR SELECT TO authenticated USING ${OWN_SESSION_ROWS_EXPRESSION};`,
+      );
+      // authenticated から SELECT (または ALL) を外す REVOKE が無い
+      const revokesSelect = [...sql.matchAll(/REVOKE\s+([A-Z ,]+?)\s+ON\s+(?:TABLE\s+)?(?:"?public"?\.)?"?ai_action_logs"?\s+FROM\s+([^;]+);/gi)].some(
+        (m) => /\bauthenticated\b/i.test(m[2]) && /\b(SELECT|ALL)\b/i.test(m[1]),
+      );
+      return recreatesSelect && !revokesSelect;
+    };
+    const touching = later.filter((name) => {
       const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, name), 'utf8').replace(/--[^\n]*/g, '');
       return (
         /DROP\s+POLICY[^;]*ai_action_logs/i.test(sql) ||
-        /REVOKE[^;]*ON\s+(?:TABLE\s+)?(?:"?public"?\.)?"?ai_action_logs"?[^;]*FROM[^;]*authenticated/i.test(sql) ||
+        /REVOKE[^;]*ON\s+(?:TABLE\s+)?(?:"?public"?\.)?"?ai_action_logs"?[^;]*FROM[^;]*authenticated/i.test(sql)
+      );
+    });
+    const offending = later.filter((name) => {
+      const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, name), 'utf8').replace(/--[^\n]*/g, '');
+      return (
+        (touching.includes(name) && !keepsOwnerSelect(sql)) ||
         /ALTER\s+TABLE[^;]*ai_action_logs[^;]*DISABLE\s+ROW\s+LEVEL\s+SECURITY/i.test(sql)
       );
     });
     expect(offending).toEqual([]);
+    // 番兵: #2283 Y2 はポリシーと権限に触れ、読み取りを残す形として通っている (この検査が Y2 を見ていることの確かめ)
+    expect(touching.filter((name) => name.endsWith('_ai_action_logs_select_only.sql'))).toHaveLength(1);
   });
 });
