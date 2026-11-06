@@ -2,10 +2,10 @@
 /**
  * #2283 判断待ち 8 の前段 Y1: AI 相談の提案の記録 (ai_action_logs) への書き込みは、service role (getAiActionLogWriter) からだけ
  *
- * ai_action_logs は、利用者 (authenticated) には読むだけにする (後段の Y2 の migration で RLS と GRANT を絞る)。
- * 利用者のセッションのクライアント (createClient) で書いていると、絞った時点で書き込みが権限で拒まれ、
+ * ai_action_logs は、利用者 (authenticated) には読むだけにした (後段の Y2 = supabase/migrations/20261107120000_ai_action_logs_select_only.sql
+ * (#2291) で RLS と GRANT を絞った)。利用者のセッションのクライアント (createClient) で書くと、書き込みが権限で拒まれ (42501)、
  * 提案の行が実行中の印のまま残る (書き戻しの関数はエラーを返すだけなので、黙って起きる)。
- * このテストは、ソースから次を確かめる (Y2 のあとも守る)。
+ * このテストは、ソースから次を確かめる (Y2 で絞ったあとも、書き手を service role だけに保つ)。
  *
  *   1. 書き込みの経路の一覧 (WRITE_PATHS) が、ソースの書き込みと一致する (足したら一覧にも足す)
  *   2. 書き込み (.from('ai_action_logs').insert / update / upsert / delete) の受け手は actionLogDb だけ
@@ -13,7 +13,8 @@
  *   3. actionLogDb は getAiActionLogWriter() だけから作る。関数の引数で受け取るのは決まった箇所 (PARAM_RECEIVERS) だけ
  *   4. 書き戻しの関数 writeBackAiActionLog の呼び出しは、1 つ目の引数に actionLogDb を渡す
  *   5. getAiActionLogWriter は service role のクライアント (getSupabaseAdmin) を返す
- *   6. 画面 ('use client')・モバイル (apps/mobile) は書かない。Edge Function (supabase/functions) も書かない
+ *   6. 画面 ('use client')・モバイル (apps/mobile) は書かない。Edge Function (supabase/functions) も書かない。
+ *      走査の対象 (APP_DIRS) には運用のスクリプト (scripts/) も入れる (利用者の鍵で書く経路を足したら捕まえる。#2292)
  *   7. .from('ai_action_logs') の直後は select か書き込み (問い合わせを変数に入れてから書く形は見分けられないので禁止)。
  *      表の名前を文字列で持つのは決まった箇所 (TABLE_NAME_LITERALS。読むだけ) と、失敗のログの文脈 (internalError の引数) だけ
  *   8. migration の SQL の関数・トリガーが ai_action_logs に書かない (書く RPC を作ったら、この一覧と Y2 を見直す)
@@ -49,8 +50,11 @@ function walk(dir: string): string[] {
   return out;
 }
 
-/** Next.js・共有のライブラリ・画面の部品・モバイルのソース (Edge Function は別に見る) */
-const APP_DIRS = ['src', 'lib', 'components', 'shared', 'packages', 'apps/mobile/app', 'apps/mobile/src', 'apps/mobile/lib'];
+/**
+ * Next.js・共有のライブラリ・画面の部品・モバイルのソースと、運用のスクリプト (scripts/。#2292。Edge Function は別に見る)。
+ * スクリプトが利用者の鍵 (anon と利用者のセッション) で書く経路を足すと、本番では権限で拒まれる (42501) ので、ここで捕まえる
+ */
+const APP_DIRS = ['src', 'lib', 'components', 'shared', 'packages', 'apps/mobile/app', 'apps/mobile/src', 'apps/mobile/lib', 'scripts'];
 const appFiles = APP_DIRS.flatMap((dir) => walk(path.join(ROOT, dir))).map(rel).sort();
 const edgeFiles = walk(path.join(ROOT, 'supabase/functions')).map(rel).sort();
 
@@ -97,7 +101,7 @@ const writesOf = (file: string) => findTableAccesses(codeOf(file)).filter((a) =>
 const WRITE_PATHS: Record<string, { ops: string[]; what: string }> = {
   'src/app/api/ai/consultation/actions/[actionId]/execute/route.ts': {
     ops: ['update', 'update'],
-    what: 'POST: pending → 実行中の印 (approved) を取る条件つきの更新 / DELETE: 却下 (rejected)。どちらも行の相談の持ち主を isAiActionLogOwnedBy で確かめてから',
+    what: 'POST: pending → 実行中の印 (approved) を取る条件つきの更新 / DELETE: pending → 却下 (rejected) の条件つきの更新 (#2292)。どちらも行の相談の持ち主を isAiActionLogOwnedBy で確かめてから',
   },
   'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts': {
     ops: ['insert'],
@@ -149,6 +153,9 @@ describe('ai_action_logs への書き込みは service role (getAiActionLogWrite
     expect(appFiles).toContain('apps/mobile/src/components/ai/AIAdvisorSheet.tsx');
     expect(mentionsTable('apps/mobile/src/components/ai/AIAdvisorSheet.tsx')).toBe(true);
     expect(appFiles).toContain('src/lib/ai/consultation-reply-reload.ts');
+    // 運用のスクリプト (#2292): .mjs と .ts のどちらも走査に入っている
+    expect(appFiles).toContain('scripts/backup-db.mjs');
+    expect(appFiles).toContain('scripts/benchmark-v4-fast-llm.ts');
     expect(appFiles.some((file) => file.includes('node_modules'))).toBe(false);
     // 読み取りも拾えている (検出の正規表現が壊れていない)
     const reads = appFiles.filter(mentionsTable).flatMap((file) => findTableAccesses(codeOf(file))).filter((a) => a.op === 'select');
