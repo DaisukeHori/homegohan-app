@@ -4,9 +4,10 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 /**
  * AI 相談の提案の記録 (ai_action_logs) へ書くためのクライアント (service role。#2283 判断待ち 8 の前段 Y1)。
  *
- * この表は、利用者 (authenticated) には読むだけにする (後段の Y2 の migration で RLS と GRANT を絞る)。
- * その前に、サーバーの書き込み (自動実行の行の作成と確定・実行の API の状態の更新・却下) をすべてこのクライアントへ移した。
- * 利用者のセッションのクライアント (createClient) で書くと、Y2 のあとは権限で拒まれ、行が実行中の印のまま残る。
+ * この表は、利用者 (authenticated) には読むだけにした (後段の Y2 = supabase/migrations/20261107120000_ai_action_logs_select_only.sql
+ * (#2291) で RLS と GRANT を絞った)。その前に、サーバーの書き込み (自動実行の行の作成と確定・実行の API の状態の更新・却下) を
+ * すべてこのクライアントへ移した。利用者のセッションのクライアント (createClient) で書くと、権限で拒まれ (42501)、
+ * 行が実行中の印のまま残る。
  * 読む経路 (GET の一覧・実行の API の行の探索・画面の読み込み直し) は利用者のセッションのままでよい。
  *
  * route は、本人の確認 (supabase.auth.getUser) を通したあとで、これを使って書く。RLS が効かないので、

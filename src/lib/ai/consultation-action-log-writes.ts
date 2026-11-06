@@ -11,6 +11,8 @@
  *
  * 書くのは service role のクライアント (getAiActionLogWriter。src/lib/ai/ai-action-log-writer.ts。#2283 Y1) で、
  * 呼び出し側は、行の相談の持ち主が本人であること (isAiActionLogOwnedBy / isConsultationSessionOwnedBy) を確かめてから渡す。
+ * 利用者のセッションのクライアントでは書けない (supabase/migrations/20261107120000_ai_action_logs_select_only.sql (#2291) で
+ * 利用者には読むだけに絞った)。
  *
  * サーバーだけで読む (ブラウザでは読まない)。
  */

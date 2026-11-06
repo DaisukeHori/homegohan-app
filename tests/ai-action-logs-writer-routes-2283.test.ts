@@ -3,16 +3,18 @@
  * #2283 判断待ち 8 の前段 Y1: AI 相談の提案の記録 (ai_action_logs) を書く route が、service role のクライアントで書き、
  * 持ち主でない利用者の行・相談には書かないことを、本物の route を通して確かめる。
  *
- * ai_action_logs は、利用者 (authenticated) には読むだけにする (後段の Y2 の migration で RLS と GRANT を絞る)。
- * 直す前は、実行の API (POST / DELETE /api/ai/consultation/actions/[actionId]/execute) と会話の続きの POST の自動実行
- * (POST /api/ai/consultation/sessions/[sessionId]/messages) が、利用者のセッションのクライアント (createClient) で
- * この表に書いていた (Y2 のあとは権限で拒まれ、行が実行中の印のまま残る)。
+ * ai_action_logs は、利用者 (authenticated) には読むだけにした (後段の Y2 = supabase/migrations/20261107120000_ai_action_logs_select_only.sql
+ * (#2291) で RLS と GRANT を絞った)。直す前は、実行の API (POST / DELETE /api/ai/consultation/actions/[actionId]/execute) と
+ * 会話の続きの POST の自動実行 (POST /api/ai/consultation/sessions/[sessionId]/messages) が、利用者のセッションのクライアント
+ * (createClient) でこの表に書いていた (Y2 で絞ったあとは権限で拒まれ、行が実行中の印のまま残る)。
  *
  * 直したあと:
  *   - 書き込み (実行中の印の取得・書き戻し・却下・行の作成) は service role のクライアント (getAiActionLogWriter)
  *   - 読む経路 (行の探索) と、実行の本体 (runConsultationAction) に渡すクライアントは、利用者のセッションのまま
  *   - 持ち主の確認 (今まで RLS が担っていた) はコードで行う: 行の相談の user_id が本人でなければ、
  *     POST は 403・DELETE は 404・会話の続きの POST は 404 で、書かない (今の応答のまま)
+ *   - 却下 (DELETE) は pending → rejected の条件つきの更新 (#2292)。読んでから書くまでに実行・自動実行が先に進んだ行は
+ *     上書きせず、読んだ時点で pending でなかったときと同じ 404
  *
  * 差し替えるのは外との境目 (Supabase のクライアント・AI の呼び出し・ログ) と、実行の本体 runConsultationAction だけ。
  * 2 つのクライアントは見分けられるようにし (user / service)、書き込みと読み取りをどちらで行ったかを記録する。
@@ -26,6 +28,8 @@ const SESSION_ID = '22222222-2222-4222-8222-222222222222';
 const ACTION_LOG_ID = '33333333-3333-4333-8333-333333333333';
 const AI_MESSAGE_ID = '44444444-4444-4444-8444-444444444444';
 const ACTION_LOGS = 'ai_action_logs';
+/** DB の生のエラー文 (本文に出てはいけない) */
+const RAW_DB_MESSAGE = 'connection reset by peer';
 
 type Row = Record<string, unknown>;
 type ClientKind = 'user' | 'service';
@@ -37,6 +41,8 @@ const h = vi.hoisted(() => ({
   rows: {} as Record<string, Array<Record<string, unknown>>>,
   /** 表ごとの書き込み ... select().single() / maybeSingle() の結果 (null なら行が返らない。キーが無ければ { id: '<表>-new' }) */
   written: {} as Record<string, Record<string, unknown> | null>,
+  /** 表ごとの書き込みの DB の失敗 (キーがあれば、その表への書き込みはこの error で失敗する) */
+  writeError: {} as Record<string, Record<string, unknown>>,
   writes: [] as Array<{ client: string; table: string; op: string; payload: unknown; filters: Array<[string, unknown]> }>,
   reads: [] as Array<{ client: string; table: string; filters: Array<[string, unknown]> }>,
   adminCreated: 0,
@@ -51,9 +57,13 @@ function makeQuery(client: ClientKind, table: string): unknown {
   h.reads.push(read);
   const singleResult = () => {
     if (op === 'select') return { data: h.single[table] ?? null, error: null };
+    if (table in h.writeError) return { data: null, error: h.writeError[table] };
     return { data: table in h.written ? h.written[table] : { id: `${table}-new` }, error: null };
   };
-  const awaitedResult = () => ({ data: op === 'select' ? h.rows[table] ?? [] : null, error: null });
+  const awaitedResult = () =>
+    op !== 'select' && table in h.writeError
+      ? { data: null, error: h.writeError[table] }
+      : { data: op === 'select' ? h.rows[table] ?? [] : null, error: null };
   const builder: unknown = new Proxy(
     {},
     {
@@ -148,6 +158,7 @@ beforeEach(() => {
   h.single = {};
   h.rows = {};
   h.written = {};
+  h.writeError = {};
   h.writes = [];
   h.reads = [];
   h.adminCreated = 0;
@@ -254,22 +265,58 @@ describe('POST /api/ai/consultation/actions/[actionId]/execute (#2283 Y1)', () =
   });
 });
 
-describe('DELETE /api/ai/consultation/actions/[actionId]/execute (却下。#2283 Y1)', () => {
-  it('却下を service role のクライアントで書く (行の id に絞る)', async () => {
+describe('DELETE /api/ai/consultation/actions/[actionId]/execute (却下。#2283 Y1・#2292)', () => {
+  /** 却下の書き込み: pending の行だけを rejected にする条件つきの更新 (#2292。条件を外すと赤になる) */
+  const REJECT_WRITE = ['service', 'update', { status: 'rejected' }, [['id', ACTION_LOG_ID], ['status', 'pending']]];
+
+  it('却下を service role のクライアントで書く (行の id と pending の 2 つの条件)', async () => {
     h.single[ACTION_LOGS] = pendingLog(USER);
 
     const res = await executeRoute.DELETE(...actionRequest('DELETE'));
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ success: true });
-    expect(actionLogWrites().map((w) => [w.client, w.op, w.payload, w.filters])).toEqual([
-      ['service', 'update', { status: 'rejected' }, [['id', ACTION_LOG_ID]]],
-    ]);
+    expect(actionLogWrites().map((w) => [w.client, w.op, w.payload, w.filters])).toEqual([REJECT_WRITE]);
     expect(actionLogReads().every((r) => r.client === 'user')).toBe(true);
+  });
+
+  it('読んだときは pending でも、書く時点で実行・自動実行が先に進んでいた (条件つきの更新が 0 行): 404 で、success を返さない', async () => {
+    h.single[ACTION_LOGS] = pendingLog(USER);
+    // 条件 (status = pending) に合う行が無く、更新が 1 行も返らない
+    h.written[ACTION_LOGS] = null;
+
+    const res = await executeRoute.DELETE(...actionRequest('DELETE'));
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE });
+    // 実行中・実行済みの行を rejected で上書きしない: 更新は pending の条件つきで 1 回だけ
+    expect(actionLogWrites().map((w) => [w.client, w.op, w.payload, w.filters])).toEqual([REJECT_WRITE]);
+  });
+
+  it('却下の書き込みの DB の失敗は 500 (404 にしない)。DB の生の文面は本文に出さない', async () => {
+    h.single[ACTION_LOGS] = pendingLog(USER);
+    h.writeError[ACTION_LOGS] = { code: '08006', message: RAW_DB_MESSAGE };
+
+    const res = await executeRoute.DELETE(...actionRequest('DELETE'));
+
+    expect(res.status).toBe(500);
+    expect(await res.text()).not.toContain(RAW_DB_MESSAGE);
+    expect(actionLogWrites().map((w) => [w.client, w.op, w.payload, w.filters])).toEqual([REJECT_WRITE]);
   });
 
   it('持ち主でない利用者の行: 404 で、書かない (service role のクライアントも作らない)', async () => {
     h.single[ACTION_LOGS] = pendingLog(OTHER_USER);
+
+    const res = await executeRoute.DELETE(...actionRequest('DELETE'));
+
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe(AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE);
+    expect(actionLogWrites()).toEqual([]);
+    expect(h.adminCreated).toBe(0);
+  });
+
+  it('見えない行・pending でない行 (行の id でもメッセージの id でも pending の行が読めない): 404 で、書かない', async () => {
+    h.single[ACTION_LOGS] = null;
 
     const res = await executeRoute.DELETE(...actionRequest('DELETE'));
 

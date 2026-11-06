@@ -346,14 +346,23 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
       return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
-    // 却下の書き込みは service role のクライアントで行う (#2283 Y1。持ち主は上で確かめた)
+    // 却下の書き込みは service role のクライアントで行う (#2283 Y1。持ち主は上で確かめた)。
+    // pending から rejected への条件つきの 1 文にする (#2292。POST の実行中の印の取得と同じ形)。読んでから書くまでの間に
+    // 同じ提案の実行 (POST の取得) や自動実行が先に進んだ行 (実行中・実行済み) を、rejected で上書きしない
     const actionLogDb = getAiActionLogWriter();
-    const { error } = await actionLogDb
+    const { data: rejected, error } = await actionLogDb
       .from('ai_action_logs')
       .update({ status: AI_ACTION_LOG_STATUS.rejected })
-      .eq('id', action.id);
+      .eq('id', action.id)
+      .eq('status', AI_ACTION_LOG_STATUS.pending)
+      .select('id')
+      .maybeSingle();
 
     if (error) throw error;
+    if (!rejected) {
+      // 読んだあとに別の画面・自動実行が先に取った (実行中か実行済み)。読んだ時点で pending でなかったときと同じ 404
+      return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
 
     return NextResponse.json({ success: true });
 
