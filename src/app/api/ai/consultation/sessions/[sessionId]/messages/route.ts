@@ -34,6 +34,11 @@ import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
 import { isUuid } from '@/lib/http-params';
 import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
+import {
+  CONSULTATION_SESSION_CLOSED_STATUS,
+  consultationSessionClosedBody,
+  isConsultationSessionStatusClosed,
+} from '@/lib/ai/consultation-session-closed';
 
 /**
  * AI に渡す日付 (過去の相談の日・重要なメッセージの日・今日) を書くタイムゾーン (#1433)。
@@ -1230,6 +1235,13 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     }
     if (!session || session.user_id !== user.id) {
       return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
+    // 終了した相談には送らせない (#2283)。本文を読む前に 409 で断り、メッセージの行・AI の呼び出し・提案の記録 (ai_action_logs) を
+    // 作らない (AI の利用回数も数えない)。以前は status を見ず、アーカイブのあとに新しい相談の作成が失敗して閉じた相談が画面に
+    // 残ると、閉じた相談に会話が足されていった。画面は code で見分けて『新しい相談を始める』を出す (src/lib/ai/consultation-session-closed.ts)
+    if (isConsultationSessionStatusClosed(session.status)) {
+      return NextResponse.json(consultationSessionClosedBody(), { status: CONSULTATION_SESSION_CLOSED_STATUS });
     }
 
     // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
