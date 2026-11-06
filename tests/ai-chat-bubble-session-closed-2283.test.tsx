@@ -13,6 +13,9 @@
  *   2. 送信が 409 (終了した相談の code) で返ったときも同じ一文と操作を出し、送った文を入力欄に戻し、一覧を読み直す
  *   3. 『新しい相談を始める』で新しい相談を出すと、止めが外れて一文が消え、戻した文をそのまま送れる
  *   4. 409 でも code が違う応答は、ふだんの失敗の扱いのまま (終了とは扱わない)
+ *   5. 開いたとき (相談を出していない) は、終了していない相談を先に選ぶ (その中ではメッセージのある相談が先)。終了した相談しか
+ *      無いときだけ終了した相談を出す。以前は status を見ずにメッセージのある相談を先に選んだので、アーカイブ (新しい空の相談を
+ *      作れた) のあとに開き直すと、終了した相談の止めた画面に着き、『新しい相談を始める』でもう 1 つ空の相談ができた
  */
 
 import { act, createElement } from 'react';
@@ -209,7 +212,8 @@ async function render() {
   });
 }
 
-async function openChat(shownText = MAIN_REPLY_TEXT) {
+/** チャットを開き、opened が真になるまで待つ */
+async function openChatUntil(opened: () => boolean) {
   await render();
   const fab = container.querySelector<HTMLElement>('[data-testid="ai-chat-floating-button"]');
   expect(fab).not.toBeNull();
@@ -217,7 +221,11 @@ async function openChat(shownText = MAIN_REPLY_TEXT) {
     fab!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 0, clientY: 0 }));
     fab!.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: 0, clientY: 0 }));
   });
-  await waitFor(() => text().includes(shownText));
+  await waitFor(opened);
+}
+
+async function openChat(shownText = MAIN_REPLY_TEXT) {
+  await openChatUntil(() => text().includes(shownText));
 }
 
 function inputElement(): HTMLInputElement {
@@ -461,5 +469,84 @@ describe('#2283 (A) 送信が 409 (終了した相談) で返ったとき', () =
 
     expect(closedNotice()).toBeNull();
     expect(inputElement().disabled).toBe(false);
+  });
+});
+
+describe('#2283 (A) 開いたときに出す相談は、終了していない相談を先に選ぶ', () => {
+  it('アーカイブのあと (空の開いた相談とメッセージのある終了した相談) に開き直すと、空の開いた相談を出し、止めない', async () => {
+    // 一覧は更新の新しい順。アーカイブで新しい空の相談を作れたあとの一覧 (以前はメッセージのある相談を先に選び、終了した相談を出した)
+    handlers[SESSIONS_KEY] = async () =>
+      json(200, {
+        sessions: [
+          sessionRow(NEW_SESSION_ID, 'AI相談', 0, 'active'),
+          sessionRow(SESSION_ID, MAIN_SESSION_TITLE, MAIN_MESSAGES.length, 'closed'),
+        ],
+      });
+
+    await openChatUntil(() => requestCount(messagesKey(NEW_SESSION_ID)) === 1);
+    await settle();
+
+    expect(requestCount(messagesKey(SESSION_ID))).toBe(0);
+    expect(text()).not.toContain(MAIN_REPLY_TEXT);
+    expect(closedNotice()).toBeNull();
+    expect(occurrences(AI_CONSULTATION_SESSION_CLOSED_MESSAGE)).toBe(0);
+    expect(inputElement().disabled).toBe(false);
+    // 開いた相談がもうあるので、新しい相談は作らない
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(0);
+
+    // 送信も開いた相談へ届く
+    handlers[sendKey(NEW_SESSION_ID)] = async () => json(500, { error: '送れませんでした' });
+    await typeText(SENT_TEXT);
+    await act(async () => {
+      sendButton().click();
+    });
+    await waitFor(() => requestCount(sendKey(NEW_SESSION_ID)) === 1);
+    expect(requestCount(sendKey(SESSION_ID))).toBe(0);
+  });
+
+  it('メッセージのある終了した相談が一覧の先頭でも、メッセージのある開いた相談を出す', async () => {
+    handlers[SESSIONS_KEY] = async () =>
+      json(200, {
+        sessions: [
+          sessionRow(OTHER_SESSION_ID, OTHER_SESSION_TITLE, OTHER_MESSAGES.length, 'closed'),
+          sessionRow(SESSION_ID, MAIN_SESSION_TITLE, MAIN_MESSAGES.length, 'active'),
+        ],
+      });
+
+    await openChat(MAIN_REPLY_TEXT);
+    await settle();
+
+    expect(requestCount(messagesKey(OTHER_SESSION_ID))).toBe(0);
+    expect(text()).not.toContain(OTHER_REPLY_TEXT);
+    expect(closedNotice()).toBeNull();
+    expect(inputElement().disabled).toBe(false);
+  });
+
+  it('開いた相談の中では、今まで通りメッセージのある相談を先に出す (空の開いた相談が先頭でも)', async () => {
+    handlers[SESSIONS_KEY] = async () =>
+      json(200, {
+        sessions: [
+          sessionRow(NEW_SESSION_ID, 'AI相談', 0, 'active'),
+          sessionRow(SESSION_ID, MAIN_SESSION_TITLE, MAIN_MESSAGES.length, 'active'),
+        ],
+      });
+
+    await openChat(MAIN_REPLY_TEXT);
+    await settle();
+
+    expect(requestCount(messagesKey(NEW_SESSION_ID))).toBe(0);
+    expect(closedNotice()).toBeNull();
+  });
+
+  it('終了した相談しか無ければ、今まで通りその相談を出し、止めて一文と『新しい相談を始める』を出す', async () => {
+    handlers[SESSIONS_KEY] = async () =>
+      json(200, { sessions: [sessionRow(SESSION_ID, MAIN_SESSION_TITLE, MAIN_MESSAGES.length, 'closed')] });
+
+    await openChat(MAIN_REPLY_TEXT);
+    await waitFor(() => closedNotice() !== null);
+    await settle();
+
+    expectClosedScreen();
+    expect(requestCount(CREATE_SESSION_KEY)).toBe(0);
   });
 });

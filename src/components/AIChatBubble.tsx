@@ -552,7 +552,20 @@ type SessionsLoad =
  * 無い相談を探す (#2265 Q2。作成はサーバーで済んでいることがある)。一覧は更新の新しい順なので、先頭の 1 つを選ぶ
  */
 function sessionCreatedSince(sessions: readonly Session[], knownIds: ReadonlySet<string>): Session | undefined {
-  return sessions.find((s) => !knownIds.has(s.id) && s.status !== 'closed' && s.messageCount === 0);
+  return sessions.find((s) => !knownIds.has(s.id) && !isConsultationSessionStatusClosed(s.status) && s.messageCount === 0);
+}
+
+/**
+ * 開いたとき (openChat) に、相談を出していなければ出す相談を一覧 (sessions。1 件以上・更新の新しい順) から選ぶ (#2283)。
+ * 終了していない相談を先に選び、その中ではメッセージのある相談を先にする。終了していない相談が無いときだけ終了した相談を出す
+ * (そのときも同じ順)。以前は status を見ずにメッセージのある相談を先に選んだので、アーカイブ (新しい空の相談を作れた) のあとに
+ * 開き直すと、メッセージのある終了した相談が選ばれ、入力の止まった終了の画面に着いた。モバイルの initSession
+ * (apps/mobile/src/components/ai/AIAdvisorSheet.tsx) も終了していない相談を先に選ぶ
+ */
+function sessionToShowOnOpen(sessions: readonly Session[]): Session {
+  const openSessions = sessions.filter((s) => !isConsultationSessionStatusClosed(s.status));
+  const candidates = openSessions.length > 0 ? openSessions : sessions;
+  return candidates.find((s) => s.messageCount > 0) ?? candidates[0];
 }
 
 /**
@@ -1420,7 +1433,7 @@ export default function AIChatBubble() {
       // ※ fetchSessions() の返り値を直接参照（stale state 回避）。今出している相談も閉包の state でなく ref で見る (#2254 M1)
       const shownSessionId = currentSessionIdRef.current;
       if (fetchedSessions.length > 0 && !shownSessionId) {
-        const activeSession = fetchedSessions.find(s => s.messageCount > 0) || fetchedSessions[0];
+        const activeSession = sessionToShowOnOpen(fetchedSessions);
         showSessionId(activeSession.id);
         // 相談を出していなかった: 読めなければ一文だけにする (#2275 T1)
         await fetchMessages(activeSession.id, { keepShownOnFailure: false });

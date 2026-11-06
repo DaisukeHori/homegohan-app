@@ -11,7 +11,8 @@
  *     `{ error: AI_CONSULTATION_SESSION_CLOSED_MESSAGE, code: AI_CONSULTATION_SESSION_CLOSED_CODE }` を返す。メッセージの行・
  *     AI の呼び出し・提案の記録 (ai_action_logs) を作らず、AI の利用回数も数えない
  *   - 画面 (Web の src/components/AIChatBubble.tsx): 出している相談が閉じていれば (一覧の status か、閉じたことを応答で知った)、
- *     入力欄・送信・提案の実行・1日献立の作成を止め、同じ文と『新しい相談を始める』を出す。送信が 409 のこの code で返ったときも同じ
+ *     入力欄・送信・提案の実行・1日献立の作成を止め、同じ文と『新しい相談を始める』を出す。送信が 409 のこの code で返ったときも同じ。
+ *     開いたときに出す相談は、終了していない相談を先に選ぶ (終了した相談しか無いときだけ終了した相談を出す。モバイルと同じ)
  *   - モバイルは写しを持つ (apps/mobile/src/lib/ai-consultation-session-closed.ts)
  * サーバーとクライアントの両方から import できるよう、このファイルは Next.js のサーバー専用の部品に依存しない。
  */
