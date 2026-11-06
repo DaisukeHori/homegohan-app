@@ -378,7 +378,7 @@ describe('AI route rate limit contracts (#1022)', () => {
       select: vi.fn(() => sessionsChain),
       eq: vi.fn(() => sessionsChain),
       update: vi.fn(() => sessionsChain),
-      // セッションの読み込みは maybeSingle (#1917)。single と同じ行を返す
+      // セッションの読み込みは maybeSingle (#1917)。single と同じ行を返す (閉じたことの確定 (#2283 W1) の .select('id').maybeSingle() も、書き換えた行として同じ行を返す)
       maybeSingle: vi.fn(() => sessionsChain.single()),
       single: vi.fn(() =>
         Promise.resolve({

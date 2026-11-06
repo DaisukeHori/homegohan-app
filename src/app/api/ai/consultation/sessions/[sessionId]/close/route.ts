@@ -10,6 +10,7 @@ import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_SESSION_ALREADY_CLOSED_MESSAGE } from '@/lib/ai/ai-api-messages';
 import { isUuid } from '@/lib/http-params';
 import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
+import { compactContextSnapshot } from '@/lib/ai/consultation-past-sessions';
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -94,6 +95,27 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     }
 
     if (session.status === 'closed') {
+      return NextResponse.json({ error: AI_CONSULTATION_SESSION_ALREADY_CLOSED_MESSAGE }, { status: 400 });
+    }
+
+    // 閉じたことを、要約・利用回数より前に、状態の条件つきの書き換えで確定する (#2283 W1)。
+    // 条件は「上で読んだ状態のまま」(読んだ値と同じ。status は NULL も許す列なので、NULL なら NULL のまま)。
+    // 同じ相談の「相談を終了」が別の端末から同時に 2 本来ても、書き換えられるのは先に届いた 1 本だけ。2 本目は状態が closed に
+    // 変わっているので書き換える行が無く (data: null)、上と同じ「すでに終了」の 400 で返し、要約の AI と利用回数に進まない。
+    // 「閉じていない」を PostgREST の or (status.is.null,status.neq.closed) で書くと、書き換え (PATCH) では 42703 で失敗する
+    // (ローカルの Supabase で確かめた) ので使わない。実 DB の振る舞いは tests/integration/rls/ai-consultation-close-claim-2283.test.ts
+    const closeQuery = supabase
+      .from('ai_consultation_sessions')
+      .update({ status: 'closed', updated_at: new Date().toISOString() })
+      .eq('id', params.sessionId);
+    const { data: closedRow, error: closeError } = await (session.status == null
+      ? closeQuery.is('status', null)
+      : closeQuery.eq('status', session.status))
+      .select('id')
+      .maybeSingle();
+
+    if (closeError) throw closeError;
+    if (!closedRow) {
       return NextResponse.json({ error: AI_CONSULTATION_SESSION_ALREADY_CLOSED_MESSAGE }, { status: 400 });
     }
 
@@ -197,37 +219,36 @@ ${importantMessages.map((m: any) => `- ${m.content.substring(0, 200)}`).join('\n
       }
     }
 
-    // セッションを更新
-    const updateData: any = {
-      status: 'closed',
-      updated_at: new Date().toISOString(),
-    };
-
+    // 要約ができたら、閉じた相談に書き足す (閉じたことは上で確定済み)
     if (summaryData) {
-      updateData.title = summaryData.title || session.title;
-      updateData.summary = summaryData.summary;
-      updateData.key_topics = summaryData.key_topics || [];
-      updateData.action_history = [
-        ...(session.action_history || []),
-        ...(summaryData.actions_taken || []).map((action: string) => ({
-          action,
-          date: new Date().toISOString(),
-        })),
-      ];
-      updateData.summary_generated_at = new Date().toISOString();
-      updateData.context_snapshot = {
-        ...session.context_snapshot,
-        key_facts: summaryData.key_facts,
-        user_insights: summaryData.user_insights,
+      const summaryUpdate = {
+        title: summaryData.title || session.title,
+        summary: summaryData.summary,
+        key_topics: summaryData.key_topics || [],
+        action_history: [
+          ...(session.action_history || []),
+          ...(summaryData.actions_taken || []).map((action: string) => ({
+            action,
+            date: new Date().toISOString(),
+          })),
+        ],
+        summary_generated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        // 保存し直す snapshot の pastSessionSummaries は小さな形に詰め直す (修正前の、前の相談の snapshot を丸ごと持つ一覧を落とす。#2283 W1)
+        context_snapshot: {
+          ...compactContextSnapshot(session.context_snapshot),
+          key_facts: summaryData.key_facts,
+          user_insights: summaryData.user_insights,
+        },
       };
+
+      const { error: updateError } = await supabase
+        .from('ai_consultation_sessions')
+        .update(summaryUpdate)
+        .eq('id', params.sessionId);
+
+      if (updateError) throw updateError;
     }
-
-    const { error: updateError } = await supabase
-      .from('ai_consultation_sessions')
-      .update(updateData)
-      .eq('id', params.sessionId);
-
-    if (updateError) throw updateError;
 
     return NextResponse.json({
       success: true,

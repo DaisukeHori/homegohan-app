@@ -34,6 +34,8 @@ import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
 import { isUuid } from '@/lib/http-params';
 import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
+import { PAST_SESSION_SUMMARY_COLUMNS, toPastSessionSummary, type PastSessionSummary } from '@/lib/ai/consultation-past-sessions';
+import type { Json } from '@/types/database.types';
 import {
   CONSULTATION_SESSION_CLOSED_STATUS,
   consultationSessionClosedBody,
@@ -420,9 +422,9 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     )
       .limit(RECIPE_COLLECTIONS_LIMIT),
 
-    // 13. 過去のセッション要約 (同じ日時は id の順。#2139 T1)
+    // 13. 過去のセッション要約 (同じ日時は id の順。#2139 T1)。snapshot は丸ごと読まず、プロンプトに使う key_facts・user_insights だけ (#2283 W1)
     orderListBy(
-      supabase.from('ai_consultation_sessions').select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
+      supabase.from('ai_consultation_sessions').select(PAST_SESSION_SUMMARY_COLUMNS)
         .eq('user_id', userId)
         .eq('status', 'closed')
         .not('summary', 'is', null),
@@ -456,7 +458,7 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
   const activeShoppingList = shoppingListResult.data;
   const pantryItems = pantryResult.data || [];
   const recipeCollections = collectionsResult.data;
-  const pastSessions = pastSessionsResult.data;
+  const pastSessions: PastSessionSummary[] = (pastSessionsResult.data ?? []).map((row: Json) => toPastSessionSummary(row));
   const importantMessages = importantMessagesResult.data;
 
   // ===== 依存クエリ（並列実行後） =====
@@ -731,9 +733,9 @@ ${insights.map((i: any) => `- ${i.title}: ${i.summary}`).join('\n')}
   // 過去のセッション要約を整形
   const pastSessionsInfo = pastSessions && pastSessions.length > 0 ? `
 【📜 過去の相談履歴（最新5件）】
-${pastSessions.map((s: any) => {
-  const keyFacts = s.context_snapshot?.key_facts || [];
-  const userInsights = s.context_snapshot?.user_insights || [];
+${pastSessions.map((s) => {
+  const keyFacts = s.key_facts;
+  const userInsights = s.user_insights;
   return `
 ■ ${s.title}（${s.summary_generated_at ? new Date(s.summary_generated_at).toLocaleDateString('ja-JP', { timeZone: PROMPT_DATE_TIME_ZONE }) : '日付不明'}）
   概要: ${s.summary || '要約なし'}
