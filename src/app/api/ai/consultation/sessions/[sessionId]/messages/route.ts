@@ -24,6 +24,7 @@ import {
   type ProposedActionNotExecutableReason,
 } from '@/lib/ai/consultation-action-lifecycle';
 import { writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
+import { getAiActionLogWriter, isConsultationSessionOwnedBy } from '@/lib/ai/ai-action-log-writer';
 import { aiProfilePreferenceTypesForPrompt } from '@/lib/ai/profile-preference-updates';
 import { isMealType, MEAL_LABELS, MEAL_ORDER } from '@homegohan/shared';
 import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-goal-types';
@@ -175,14 +176,29 @@ function keepFunctionAliveUntilStreamSettles(): () => void {
   return settle;
 }
 
+/**
+ * 提案の行を作って自動実行し、行を確定させる。
+ * 行の作成と確定は service role のクライアント (getAiActionLogWriter) で書く (#2283 Y1。利用者には読むだけにする)。
+ * RLS が効かないので、相談の持ち主が本人であることをここでも確かめ、本人の相談でなければ行を作らず実行しない
+ * (呼び出し側の POST は、相談の持ち主を確かめてから呼ぶ)
+ */
 async function executeAndFinalizeAction(
   supabase: any,
   user: { id: string },
-  sessionId: string,
+  session: { id: string; user_id: unknown },
   savedAiMessageId: string,
   proposedActions: { type: string; params?: Record<string, any> },
 ): Promise<AutoActionOutcome> {
-  const { data: actionLog, error: insertError } = await supabase
+  const sessionId = session.id;
+  if (!isConsultationSessionOwnedBy(session, user.id)) {
+    // 本人の相談でない: 行を作らず実行しない (記録できなかったときと同じ結果。開き直したときの GET も行が無いカード)
+    return {
+      actionResult: { success: false, result: { error: AI_CONSULTATION_ACTION_LOG_INSERT_FAILED_MESSAGE }, actionType: proposedActions.type },
+      ...autoActionExecutability(false, false),
+    };
+  }
+  const actionLogDb = getAiActionLogWriter();
+  const { data: actionLog, error: insertError } = await actionLogDb
     .from('ai_action_logs')
     .insert({
       session_id: sessionId,
@@ -226,7 +242,7 @@ async function executeAndFinalizeAction(
       : executionResult.result;
     const status = aiActionLogStatusAfterRun(proposedActions.type, executionResult);
 
-    const { error: finalizeError } = await writeBackAiActionLog(supabase, MESSAGES_POST_ROUTE_NAME, writeBackCtx, {
+    const { error: finalizeError } = await writeBackAiActionLog(actionLogDb, MESSAGES_POST_ROUTE_NAME, writeBackCtx, {
       status,
       result,
       // 実行した日時は、実行が終わった (executed / failed) ときだけ。pending (やり直せる) は空のまま
@@ -241,7 +257,7 @@ async function executeAndFinalizeAction(
   } catch (execError) {
     console.error('Action direct-execution error:', execError);
     const status = aiActionLogStatusAfterFailure(proposedActions.type);
-    const { error: finalizeError } = await writeBackAiActionLog(supabase, MESSAGES_POST_ROUTE_NAME, writeBackCtx, {
+    const { error: finalizeError } = await writeBackAiActionLog(actionLogDb, MESSAGES_POST_ROUTE_NAME, writeBackCtx, {
       status,
       executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString(),
     });
@@ -1473,7 +1489,7 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
               autoAction = await executeAndFinalizeAction(
                 supabase,
                 user,
-                params.sessionId,
+                { id: params.sessionId, user_id: session.user_id },
                 savedAiMessage.id,
                 proposedActions,
               );
@@ -1719,7 +1735,7 @@ JSONで回答してください：
       autoAction = await executeAndFinalizeAction(
         supabase,
         user,
-        params.sessionId,
+        { id: params.sessionId, user_id: session.user_id },
         savedAiMessage.id,
         proposedActions,
       );
