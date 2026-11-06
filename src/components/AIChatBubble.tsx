@@ -552,7 +552,7 @@ type SessionsLoad =
  * 無い相談を探す (#2265 Q2。作成はサーバーで済んでいることがある)。一覧は更新の新しい順なので、先頭の 1 つを選ぶ
  */
 function sessionCreatedSince(sessions: readonly Session[], knownIds: ReadonlySet<string>): Session | undefined {
-  return sessions.find((s) => !knownIds.has(s.id) && !isConsultationSessionStatusClosed(s.status) && s.messageCount === 0);
+  return sessions.find((s) => !knownIds.has(s.id) && s.status !== 'closed' && s.messageCount === 0);
 }
 
 /**
