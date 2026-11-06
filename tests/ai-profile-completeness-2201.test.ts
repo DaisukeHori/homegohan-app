@@ -9,7 +9,7 @@
  *
  * 直したあと:
  *   - 書いた後の行 (select('*')) から PUT と同じ計算 (src/lib/profile-completeness.ts) で完成度を出し、変わっていれば書く
- *   - 計算は PUT /api/profile が使っていたものと同じ (欄・重み・判定を変えない)
+ *   - 計算は PUT /api/profile が使っていたものと同じ (欄・重みを変えない。「入っている」の判定は #2283 で既定値を数えない形にした)
  *   - PUT・POST /api/profile も本文ではなく書いた後の行から数える (目標の体重だけを送る栄養の目標の画面の PUT で、
  *     ほかの欄が埋まっていても完成度が 5 になっていた)。オンボーディングの progress / complete・チェックインの体重の写しも同じ
  */
@@ -153,10 +153,11 @@ describe('完成度の計算は PUT /api/profile と同じ (#2201 U4 で src/lib
         sleepQuality: 'good',
         stressLevel: 'low',
         dietFlags: { vegetarian: false },
-        dietStyle: 'normal',
+        // 食事のスタイル・料理の経験・平日の調理の時間は列の既定値 ('normal'・'beginner'・30) でない値 (既定値と同じ値は数えない。#2283)
+        dietStyle: 'vegetarian',
         dislikedCookingMethods: ['fry'],
-        cookingExperience: 'beginner',
-        weekdayCookingMinutes: 30,
+        cookingExperience: 'intermediate',
+        weekdayCookingMinutes: 45,
         cuisinePreferences: { japanese: 5 },
         favoriteIngredients: ['卵'],
       }),
