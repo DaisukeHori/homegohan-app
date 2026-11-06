@@ -20,6 +20,7 @@ import {
   type ProposedActionNotExecutableReason,
 } from '@/lib/ai/consultation-action-lifecycle';
 import { writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
+import { getAiActionLogWriter, isAiActionLogOwnedBy } from '@/lib/ai/ai-action-log-writer';
 
 // 指定日付の user_daily_meals を取得または作成するヘルパー関数
 // NOTE: 現状このファイル内では未使用（resolveExistingTargetSlots が同等の処理を担う）。
@@ -154,7 +155,9 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
       return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
-    if (action.ai_consultation_sessions.user_id !== user.id) {
+    // 行の相談の持ち主が本人か (行は相談と結んで読んでいる)。この確かめを通った行だけを、下で service role のクライアントで書く
+    // (#2283 Y1。書き込みは RLS が効かないので、持ち主の確認はここが担う)
+    if (!isAiActionLogOwnedBy(action, user.id)) {
       return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
     }
 
@@ -176,7 +179,9 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
     // 実行中の印を付ける (#2189 W1-a)。pending から approved への条件つきの 1 文で、書けた 1 本だけが実行する
     // (2 つの画面から同時に押す・自動実行の最中に押すと、同じ提案を二重に実行していた。失敗した提案を pending のまま残して
     // やり直せるようにしたので、二重の実行を DB の 1 文で防ぐ)
-    const { data: claimed, error: claimError } = await supabase
+    // 行への書き込みは service role のクライアントで行う (#2283 Y1。利用者には読むだけにする。持ち主は上で確かめた)
+    const actionLogDb = getAiActionLogWriter();
+    const { data: claimed, error: claimError } = await actionLogDb
       .from('ai_action_logs')
       .update({ status: AI_ACTION_LOG_STATUS.running })
       .eq('id', action.id)
@@ -206,7 +211,7 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
     } catch (runError) {
       // 実行中の印のまま残さない。やり直せる種類は pending に戻し、やり直させない種類は failed にする
       const status = aiActionLogStatusAfterFailure(action.action_type);
-      const { error: revertError } = await writeBackAiActionLog(supabase, EXECUTE_ROUTE_NAME, writeBackCtx, {
+      const { error: revertError } = await writeBackAiActionLog(actionLogDb, EXECUTE_ROUTE_NAME, writeBackCtx, {
         status,
         executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString(),
       });
@@ -235,7 +240,7 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
     // 戻せなかった (実行中の印のまま) ときは、明日押しても実行できないので、本文に retryable: false を添える (#2195 V2)。
     // 理由は開き直したときの GET と同じ unconfirmed (#2201 U3。『もう一度 AI に頼んでください』は全画面の『明日また』の文と並んでいた)
     if (executionResult.aiDailyLimit) {
-      const { error: revertError } = await writeBackAiActionLog(supabase, EXECUTE_ROUTE_NAME, writeBackCtx, { status });
+      const { error: revertError } = await writeBackAiActionLog(actionLogDb, EXECUTE_ROUTE_NAME, writeBackCtx, { status });
       const limitResponse = aiDailyLimitResponse(executionResult.aiDailyLimit);
       if (!revertError) return limitResponse;
       return NextResponse.json(
@@ -250,7 +255,7 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
 
     // アクションステータスを更新 (実行した日時は、実行が終わった executed / failed のときだけ。pending (やり直せる) は空のまま)。
     // 書き戻せなかったら 1 回だけ書き直す (#2195 V2。成功したのに実行中の印のまま残ると、開き直すたびにカードが出ていた)
-    const { error: finalizeError } = await writeBackAiActionLog(supabase, EXECUTE_ROUTE_NAME, writeBackCtx, {
+    const { error: finalizeError } = await writeBackAiActionLog(actionLogDb, EXECUTE_ROUTE_NAME, writeBackCtx, {
       status,
       result,
       executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString(),
@@ -337,11 +342,13 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
 
     // セキュリティ: 却下対象アクションが自分のセッションに属することを確認
     // （不一致/不存在いずれも404とし、他ユーザーのactionId存在有無を推測させない）
-    if (action.ai_consultation_sessions.user_id !== user.id) {
+    if (!isAiActionLogOwnedBy(action, user.id)) {
       return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
-    const { error } = await supabase
+    // 却下の書き込みは service role のクライアントで行う (#2283 Y1。持ち主は上で確かめた)
+    const actionLogDb = getAiActionLogWriter();
+    const { error } = await actionLogDb
       .from('ai_action_logs')
       .update({ status: AI_ACTION_LOG_STATUS.rejected })
       .eq('id', action.id);

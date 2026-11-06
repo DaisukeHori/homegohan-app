@@ -9,6 +9,9 @@
  * (呼び出し側は「実行する」を出さない。行が実行中の印のままのカードは、その場でも開き直しても「実行できたかを確かめられない」の
  * 案内になる。#2201 U3)。
  *
+ * 書くのは service role のクライアント (getAiActionLogWriter。src/lib/ai/ai-action-log-writer.ts。#2283 Y1) で、
+ * 呼び出し側は、行の相談の持ち主が本人であること (isAiActionLogOwnedBy / isConsultationSessionOwnedBy) を確かめてから渡す。
+ *
  * サーバーだけで読む (ブラウザでは読まない)。
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -21,7 +24,7 @@ import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
  */
 export const AI_ACTION_LOG_WRITE_BACK_ATTEMPTS = 2;
 
-/** 書き戻しに使う DB の口 (from だけ) */
+/** 書き戻しに使う DB の口 (from だけ。service role の getAiActionLogWriter() を渡す) */
 export type AiActionLogWriter = Pick<SupabaseClient, 'from'>;
 
 /**
@@ -30,14 +33,14 @@ export type AiActionLogWriter = Pick<SupabaseClient, 'from'>;
  * @param routeName ログの function_name (呼び出した route)
  */
 export async function writeBackAiActionLog(
-  supabase: AiActionLogWriter,
+  actionLogDb: AiActionLogWriter,
   routeName: string,
   ctx: { userId: string; actionLogId: string; actionType: string },
   payload: Record<string, unknown>,
 ): Promise<{ error: unknown }> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= AI_ACTION_LOG_WRITE_BACK_ATTEMPTS; attempt += 1) {
-    const { error } = await supabase.from('ai_action_logs').update(payload).eq('id', ctx.actionLogId);
+    const { error } = await actionLogDb.from('ai_action_logs').update(payload).eq('id', ctx.actionLogId);
     if (!error) return { error: null };
     lastError = error;
   }
