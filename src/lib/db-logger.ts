@@ -10,6 +10,8 @@ import { createClient } from '@supabase/supabase-js';
 import { waitUntil } from '@vercel/functions';
 import {
   FOREIGN_KEY_RETRY_CONSOLE_MESSAGE,
+  PII_HMAC_HEX_RPC,
+  createUnlinkedUserIdHasher,
   entryForForeignKeyRetry,
   sanitizeLogEntry,
   sanitizeMetadata,
@@ -102,8 +104,13 @@ async function saveLog(entry: LogEntry): Promise<void> {
     if (!error) return;
 
     // #2259 P3: user_id が auth.users に無い (外部キー違反) なら、user_id を外して 1 回だけ入れ直す
-    // (元の user_id は metadata に残す)。それ以外の失敗は従来どおり console にだけ残す
-    const retryEntry = entryForForeignKeyRetry(error, entry);
+    // (元の user_id の HMAC を metadata に残す)。それ以外の失敗は従来どおり console にだけ残す
+    // 元の user_id は生のまま残さず、退会の記録と同じ方式の HMAC (DB の pii_hmac_hex。鍵は Vault) にして残す (#2283)
+    const retryEntry = await entryForForeignKeyRetry(
+      error,
+      entry,
+      createUnlinkedUserIdHasher((args) => supabase.rpc(PII_HMAC_HEX_RPC, args)),
+    );
     if (!retryEntry) {
       console.error('Failed to save log to DB:', error);
       return;

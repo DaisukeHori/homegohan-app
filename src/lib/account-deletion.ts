@@ -356,7 +356,7 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
   const { userId, admin } = params;
   const requestId = params.requestId ?? generateRequestId();
   const log = params.logger ?? createLogger(LOG_NAME, requestId);
-  // 削除前のログにだけ user_id を付ける (app_logs.user_id は auth.users への外部キー。削除後は auth.users に行が無いので、付けても user_id 列には入らない (db-logger が外部キー違反で user_id を外して入れ直し、元の id を metadata の user_id_not_in_auth_users に残す。#2259 P3)。消えた利用者の id をログに残さないため付けない)
+  // 削除前のログにだけ user_id を付ける (app_logs.user_id は auth.users への外部キー。削除後は auth.users に行が無いので、付けても user_id 列には入らない (db-logger が外部キー違反で user_id を外して入れ直し、元の id の HMAC を metadata の user_id_not_in_auth_users に残す。#2259 P3・#2283)。消えた利用者の id をログに残さないため付けない)
   const userLog = log.withUser(userId);
 
   let step: AccountDeletionStep = 'check_blockers';
@@ -445,7 +445,7 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
     const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
     if (deleteError) {
       if (!isUserAlreadyGone(deleteError)) throw deleteError;
-      // すでに消えているユーザーには user_id を付けない (削除後は auth.users に行が無いので、付けても user_id 列には入らない (db-logger が外部キー違反で user_id を外して入れ直し、元の id を metadata の user_id_not_in_auth_users に残す。#2259 P3)。消えた利用者の id をログに残さないため付けない)
+      // すでに消えているユーザーには user_id を付けない (削除後は auth.users に行が無いので、付けても user_id 列には入らない (db-logger が外部キー違反で user_id を外して入れ直し、元の id の HMAC を metadata の user_id_not_in_auth_users に残す。#2259 P3・#2283)。消えた利用者の id をログに残さないため付けない)
       log.warn('account deletion: user was already deleted', { request_id: requestId });
     } else {
       deletedNow = true;
@@ -460,7 +460,7 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
   } catch (error) {
     // deleteUser を呼んだあと (deleteUser の失敗・削除のあとの失敗) は、アカウントが消えたか・消える途中かを確かめられないので
     // user_id を付けない (成功のログ・すでに消えていたときの warn と同じ)。#2259 P3 から、app_logs.user_id の外部キー違反のログは
-    // user_id を空にして入れ直され、元の id が metadata (user_id_not_in_auth_users) に残る。呼ぶ前の失敗は今のまま user_id を付ける
+    // user_id を空にして入れ直され、元の id の HMAC が metadata (user_id_not_in_auth_users) に残る (#2283)。呼ぶ前の失敗は今のまま user_id を付ける
     const failureLog = deleteUserCalled ? log : userLog;
     failureLog.error(`account deletion failed at step: ${step}`, toError(error), {
       step,
