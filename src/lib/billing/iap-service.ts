@@ -36,7 +36,7 @@ export interface IapDeps {
  * 監査の行 (entry) には利用者を入れない (IapAuditEntry の details の注) ので、失敗のログは呼び出し元が渡す利用者
  * (イベントの app_user_id・TRANSFER の移動元と移動先) の withUser で出す。利用者ごとに 1 行ずつ出し、どの利用者で
  * app_logs の user_id 列を絞っても出てくるようにする (#2254 M3。利用者が auth.users に無い (退会した・TRANSFER の移動元が退会済みなど)
- * ときは、db-logger が user_id 列を空にして入れ直し、id を metadata (user_id_not_in_auth_users) に残す。#2259 P3)。
+ * ときは、db-logger が user_id 列を空にして入れ直し、id の HMAC を metadata (user_id_not_in_auth_users) に残す。#2259 P3・#2283)。
  * 利用者が分からないときは無印のロガーで 1 行
  */
 async function audit(

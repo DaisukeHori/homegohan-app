@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.8 (2026-11-05) |
+| 版 | v1.9 (2026-11-06) |
 | Status | 設計ゲート通過。段 A (#1941 4c8c8d31)・段 B (#1944 c95d114e) は main に実装済み |
 | Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。本冊はその配線の残りの冊のうち「日次の reconcile」(billing/03 §0.5 Q-11・§5.2 の縁の発生源 (2)・§18 の 4) に当たる。関連: billing/03 の整合ゲートの候補 (Webhook が落ちたまま期限を過ぎた購読が有料の権利を持ち続ける) |
 | 範囲の正本 | Issue #1912 の本文。本冊の §0.4 に、前提とする Issue の記述を逐語で写す。本冊が決める範囲は §0.2 |
@@ -1270,9 +1270,9 @@ IAP_RECONCILE_RECHECK_HOURS=
 | warn | `cron/iap-reconcile` | `ストアの購読の取り直しの環境変数の値が正しくないため、既定値を使います` | `{ ignored_env }` (名前だけ) |
 | info | `cron/iap-reconcile` | `ストアの購読の取り直しを処理しました` | 要約 (件数だけ)。候補 0 の回は書かない |
 | error | `cron/iap-reconcile` | `internalError` の固定の文 | 既存の形 (`error_code`・`requestId`)。`IapReconcileFailedError` なら `summary` (件数と種類だけ) |
-| warn | `billing/iap-reconcile-service` | `ストアの購読の取り直しを写せませんでした (運営の処置が要ります)` | `{ user_id, code }`。app_logs の `user_id` 列にも同じ利用者の id が入る (`withUser(candidate.user_id)`)。利用者が auth.users に無い (退会した・TRANSFER の移動元が退会済みなど) ときは、db-logger が user_id 列を空にして入れ直し、id を metadata (`user_id_not_in_auth_users`) に残す (#2259 P3) |
+| warn | `billing/iap-reconcile-service` | `ストアの購読の取り直しを写せませんでした (運営の処置が要ります)` | `{ user_id, code }`。app_logs の `user_id` 列にも同じ利用者の id が入る (`withUser(candidate.user_id)`)。利用者が auth.users に無い (退会した・TRANSFER の移動元が退会済みなど) ときは、db-logger が user_id 列を空にして入れ直し、id の HMAC (退会の記録と同じ `pii_hmac_hex('account_deletion_subject', id)`) を metadata (`user_id_not_in_auth_users`) に残す (#2259 P3・#2283) |
 | warn | `billing/iap-reconcile-service` | `RevenueCat の率の制限 (429) のため、この回の取り直しを止めました (残りは次の回)` | `{ candidates, synced }` |
-| warn | `billing/iap-reconcile-service` | `ストアの購読を取り直せませんでした` | `{ user_id, kind, scope, error_name, error_code }` (例外の文面は書かない)。app_logs の `user_id` 列にも同じ利用者の id が入る (`withUser(candidate.user_id)`)。利用者が auth.users に無い (退会した・TRANSFER の移動元が退会済みなど) ときは、db-logger が user_id 列を空にして入れ直し、id を metadata (`user_id_not_in_auth_users`) に残す (#2259 P3) |
+| warn | `billing/iap-reconcile-service` | `ストアの購読を取り直せませんでした` | `{ user_id, kind, scope, error_name, error_code }` (例外の文面は書かない)。app_logs の `user_id` 列にも同じ利用者の id が入る (`withUser(candidate.user_id)`)。利用者が auth.users に無い (退会した・TRANSFER の移動元が退会済みなど) ときは、db-logger が user_id 列を空にして入れ直し、id の HMAC (退会の記録と同じ `pii_hmac_hex('account_deletion_subject', id)`) を metadata (`user_id_not_in_auth_users`) に残す (#2259 P3・#2283) |
 | warn | `billing/iap-reconcile-service` | `取り直せなかった利用者がいるため、この回を失敗として終えます` | 要約 |
 | (写像) | — | 監査 `admin_audit_logs` の `system.billing.subscription_status_changed` (`details.source = 'iap_reconcile'`) は DB の関数が書く | — |
 
@@ -1619,3 +1619,4 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 | v1.6 | 2026-10-23 | 記録の追い付き (#1955 c385b06c の本冊の変更と、その取りこぼし。製品の挙動は変えない): 表紙の Status を「設計ゲート通過。段 A (#1941)・段 B (#1944) は main に実装済み」にした。§0.5 を確定の値 (毎時 41 分・猶予なし・期限の後の行だけ) にし、§2.2 に土台 (origin/main `0fb02e52`) の時点の事実である注を足し、§16 の表の 1 を確定にした。§8.5 の印の表の分類の文を「最後に取り直しを試した時刻」に、§13.1 の段 A の行の分類を 4 か所 (`jst-today-source-scan` を含む) にした。§0.2 の表の Q-2 を「推奨は」から「確定:」に、billing/03 §18 の 4 の扱いを「仮置きされている」から「確定している」にした |
 | v1.7 | 2026-11-05 | 記録の追随 (#2254 N docs-1105e。製品の挙動は変えない): #2254 M4 (#2257) の 4 つ目の片付け (beforeAll) と purge のテストを §12.3 の 46 として足し (§12.5 にも行を足し、§12.4 の受け入れは 47 に送った)、§11.3 のログの表の `billing/iap-reconcile-service` の warn 2 行に app_logs の `user_id` 列 (#2245 K5 (#2251) の `withUser`) を足した。F17 の billing/01 の行番号の参照を §12 の「写像の入口」の行の名前の参照にした |
 | v1.8 | 2026-11-05 | 記録の追随 (#2265 R docs-1105h。製品の挙動は変えない): §2.2 の事実表 (F1〜F24) の場所の欄と事実の欄、§7.1・§7.2 の表、§14.1 の 2 行の `path:N` の形の行番号の参照を、関数・定数・テストの名前の参照にした (F13 の `src/app/api/cron/push-outbox/route.ts:33-109` は今のファイルの末尾を越え、`resolvePushOutboxSettings` の行もずれていた。事実の中身は `0fb02e52` の時点のまま変えない。§14.1 の各行の括弧の中の `:N` は設計の時点の記録として残す)。§11.3 のログの表の `billing/iap-reconcile-service` の warn 2 行に、利用者が auth.users に無いときは db-logger が user_id 列を空にして入れ直し id を metadata に残すこと (#2259 P3 (#2260)) を足した |
+| v1.9 | 2026-11-06 | 記録の追随 (#2283 X1。製品の挙動は変えない): §11.3 のログの表の 2 行 (`ストアの購読の取り直しを写せませんでした (運営の処置が要ります)`・`ストアの購読を取り直せませんでした`) の「id を metadata (`user_id_not_in_auth_users`) に残す」を、db-logger が元の id を退会の記録と同じ HMAC にして残す形に合わせた |

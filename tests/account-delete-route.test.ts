@@ -168,7 +168,7 @@ describe('POST /api/account/delete: 結果の HTTP への変換', () => {
     const [, loggedError, metadata] = mocks.loggerError.mock.calls[0];
     expect((loggedError as Error).message).toBe('account deletion failed at step: storage');
     expect(metadata).toMatchObject({ step: 'storage' });
-    // 削除後かもしれないので user_id を付けない (削除後は auth.users に行が無いので、付けても user_id 列には入らない (db-logger が外部キー違反で user_id を外して入れ直し、元の id を metadata の user_id_not_in_auth_users に残す。#2259 P3)。消えた利用者の id をログに残さないため)
+    // 削除後かもしれないので user_id を付けない (削除後は auth.users に行が無いので、付けても user_id 列には入らない (db-logger が外部キー違反で user_id を外して入れ直し、元の id の HMAC を metadata の user_id_not_in_auth_users に残す。#2259 P3・#2283)。消えた利用者の id をログに残さないため)
     expect(mocks.withUser).not.toHaveBeenCalled();
     expect(mocks.createLogger).toHaveBeenCalledWith('POST /api/account/delete', 'req_route_test');
   });

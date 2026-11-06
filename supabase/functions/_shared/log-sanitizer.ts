@@ -304,12 +304,83 @@ export function sanitizeLogEntry(entry: SanitizableLogEntry): SanitizedLogEntry 
 export const FOREIGN_KEY_VIOLATION_CODE = '23503';
 
 /**
- * user_id を外して保存し直した行で、元の user_id を残す metadata のキー。
+ * user_id を外して保存し直した行で、元の user_id の HMAC を残す metadata のキー。
  * app_logs.user_id は auth.users への外部キー (app_logs_user_id_fkey) なので、auth.users に無い利用者
  * (退会して消えた利用者など) の id を入れた行は insert ごと落ちる。user_id 列を空にして入れ直し、
  * どの利用者のログだったかはこのキーで追えるようにする。
+ * 値は元の id そのものではなく、退会の記録と同じ方式の HMAC (pii_hmac_hex。UNLINKED_USER_ID_HMAC_DOMAIN を用途にする) にする (#2283)。
+ * 計算できなかったときは UNLINKED_USER_ID_HMAC_UNAVAILABLE を入れる (生の id は入れない)。
  */
 export const UNLINKED_USER_ID_METADATA_KEY = 'user_id_not_in_auth_users';
+
+/**
+ * 元の user_id の HMAC を計算する DB の関数 (supabase/migrations/20261016190000_deletion_record_and_invite_email_hash.sql の
+ * public.pii_hmac_hex(p_domain, p_value)。HMAC-SHA256 を 16 進 64 文字で返す。鍵は Vault の pii_hmac_key で、service_role だけが呼べる)。
+ * Next.js と Edge の db-logger はどちらも service_role のクライアントでこの関数を呼ぶので、同じ id なら同じ値になる。
+ */
+export const PII_HMAC_HEX_RPC = 'pii_hmac_hex';
+
+/**
+ * 元の user_id の HMAC の用途 (pii_hmac_hex の p_domain)。退会の記録 (gdpr_deletion_requests.subject_hash =
+ * pii_hmac_hex('account_deletion_subject', id)) と同じ用途にする。同じ利用者なら退会の記録の subject_hash と同じ値になり、
+ * 生の id を持たずにログと退会の記録を突き合わせられる。
+ */
+export const UNLINKED_USER_ID_HMAC_DOMAIN = 'account_deletion_subject';
+
+/** 元の user_id の HMAC を計算できなかったとき (鍵が無い・DB に届かない・応答が形に合わない) に、metadata の値として入れる印 */
+export const UNLINKED_USER_ID_HMAC_UNAVAILABLE = '[hmac unavailable]';
+
+/** pii_hmac_hex の値の形 (HMAC-SHA256 を 16 進で書いた 64 文字。Postgres の encode(..., 'hex') は小文字で返す) */
+const PII_HMAC_HEX_PATTERN = /^[0-9a-f]{64}$/;
+
+/** pii_hmac_hex の引数 */
+export interface PiiHmacHexArgs {
+  p_domain: string;
+  p_value: string;
+}
+
+/**
+ * pii_hmac_hex を呼ぶ関数。呼び出し元 (db-logger) が service_role のクライアントの rpc を包んで渡す
+ * (このファイルは import を持たないので、Supabase のクライアントを自分では作らない)。
+ */
+export type PiiHmacHexCall = (args: PiiHmacHexArgs) => PromiseLike<{ data: unknown; error: unknown }>;
+
+/** 元の user_id を HMAC にする関数。計算できなければ null */
+export type UnlinkedUserIdHasher = (userId: string) => Promise<string | null>;
+
+/** HMAC の値として使えるか (pii_hmac_hex の値の形か) */
+function isPiiHmacHex(value: unknown): value is string {
+  return typeof value === 'string' && PII_HMAC_HEX_PATTERN.test(value);
+}
+
+/**
+ * pii_hmac_hex を UNLINKED_USER_ID_HMAC_DOMAIN の用途で呼んで、元の user_id を HMAC にする関数を作る (#2283)。
+ * 呼び出しの失敗 (error・例外・形に合わない値) は null にする。例外は投げない。
+ */
+export function createUnlinkedUserIdHasher(callPiiHmacHex: PiiHmacHexCall): UnlinkedUserIdHasher {
+  return async (userId) => {
+    try {
+      const { data, error } = await callPiiHmacHex({ p_domain: UNLINKED_USER_ID_HMAC_DOMAIN, p_value: userId });
+      if (error) return null;
+      return isPiiHmacHex(data) ? data : null;
+    } catch {
+      return null;
+    }
+  };
+}
+
+/**
+ * 元の user_id を HMAC にする。uuid は小文字にしてから渡す (Postgres の uuid::text と同じ形。退会の記録の subject_hash と同じ値になる)。
+ * 計算できなければ (null・例外・形に合わない値) UNLINKED_USER_ID_HMAC_UNAVAILABLE を返す。生の id は返さない (fail closed)。
+ */
+async function hashUnlinkedUserId(hashUserId: UnlinkedUserIdHasher, userId: string): Promise<string> {
+  try {
+    const hashed = await hashUserId(userId.toLowerCase());
+    return isPiiHmacHex(hashed) ? hashed : UNLINKED_USER_ID_HMAC_UNAVAILABLE;
+  } catch {
+    return UNLINKED_USER_ID_HMAC_UNAVAILABLE;
+  }
+}
 
 /** insert の error が外部キー違反 (23503) か */
 export function isForeignKeyViolation(error: unknown): boolean {
@@ -319,21 +390,28 @@ export function isForeignKeyViolation(error: unknown): boolean {
 /**
  * app_logs への insert が error で落ちたとき、user_id を外して 1 回だけ入れ直すログ 1 行を返す (#2259 P3)。
  * 入れ直すのは、外部キー違反 (23503) で、かつ insert した行に user_id が入っていたとき
- * (= entry.user_id が uuid の形。sanitizeLogEntry が残す user_id と同じ判定) だけ。それ以外は null (入れ直さない)。
+ * (= entry.user_id が uuid の形。sanitizeLogEntry が残す user_id と同じ判定) だけ。それ以外は null (入れ直さない。hashUserId も呼ばない)。
  * app_logs の外部キーは user_id の 1 本だけなので、user_id のある行の 23503 は user_id が auth.users に無いことを表す。
  *
  * 返すのはサニタイズ前の形 (呼び出し元は従来どおり sanitizeLogEntry に通してから insert する。配線の契約は
- * tests/log-sanitizer.test.ts)。user_id は省き (NULL になる)、元の user_id を metadata の UNLINKED_USER_ID_METADATA_KEY に入れる。
+ * tests/log-sanitizer.test.ts)。user_id は省き (NULL になる)、元の user_id の HMAC (hashUserId の値。#2283) を
+ * metadata の UNLINKED_USER_ID_METADATA_KEY に入れる。元の id そのものは metadata に入れない
+ * (HMAC を計算できなければ UNLINKED_USER_ID_HMAC_UNAVAILABLE を入れる)。
  * このキーは metadata の先頭に置く (metadata が大きくて sanitizeMetadata が _preview に切り詰めても、プレビューの頭に残る)。
- * 引数は書き換えない。user_id は uuid の形に限るので、metadata に入れても秘密は増えない。
+ * 引数は書き換えない。例外は投げない。
  */
-export function entryForForeignKeyRetry(error: unknown, entry: SanitizableLogEntry): SanitizableLogEntry | null {
+export async function entryForForeignKeyRetry(
+  error: unknown,
+  entry: SanitizableLogEntry,
+  hashUserId: UnlinkedUserIdHasher,
+): Promise<SanitizableLogEntry | null> {
   if (!isForeignKeyViolation(error)) return null;
   const unlinkedUserId = toUserId(entry.user_id);
   if (unlinkedUserId === undefined) return null;
-  const metadata: Record<string, unknown> = { [UNLINKED_USER_ID_METADATA_KEY]: unlinkedUserId, ...entry.metadata };
-  // 元の metadata に同じ名前のキーがあっても、入れ直した理由の user_id で上書きする (位置は先頭のまま)
-  metadata[UNLINKED_USER_ID_METADATA_KEY] = unlinkedUserId;
+  const unlinkedUserIdHash = await hashUnlinkedUserId(hashUserId, unlinkedUserId);
+  const metadata: Record<string, unknown> = { [UNLINKED_USER_ID_METADATA_KEY]: unlinkedUserIdHash, ...entry.metadata };
+  // 元の metadata に同じ名前のキーがあっても、入れ直した理由の user_id の HMAC で上書きする (位置は先頭のまま)
+  metadata[UNLINKED_USER_ID_METADATA_KEY] = unlinkedUserIdHash;
   const retryEntry: SanitizableLogEntry = { ...entry, metadata };
   delete retryEntry.user_id;
   return retryEntry;
