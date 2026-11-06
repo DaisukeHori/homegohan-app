@@ -23,6 +23,10 @@ import { parseMarkdown } from "@/lib/markdown-lite";
 import { readAiChatUnavailableMessage } from "@/lib/ai/ai-chat-unavailable";
 // 『相談を終了』が失敗したときにチャットに出す文 (#2245 K1。出し分けはモバイルの AIAdvisorSheet と同じ)
 import { CONSULTATION_CLOSE_FAILED_MESSAGE, consultationCloseFailureOf } from "@/lib/ai/consultation-close-failure";
+// 終了した相談への送信を止める (#2283)。出している相談が終了していれば、入力欄・送信・提案の実行・1日献立の作成を止め、この文と
+// 『新しい相談を始める』を出す。送信が 409 (終了した相談) で返ったときも同じ。文はサーバーの 409 の本文と同じ定数
+import { AI_CONSULTATION_SESSION_CLOSED_MESSAGE } from "@/lib/ai/ai-api-messages";
+import { isConsultationSessionClosedResponse, isConsultationSessionStatusClosed } from "@/lib/ai/consultation-session-closed";
 // 提案の実行の結果 (成功・失敗) をチャットに出す一文。失敗 (success が偽) を『実行しました』と出さない (#2183 Z1)
 import {
   AI_CONSULTATION_ACTION_FAILED_FALLBACK_MESSAGE,
@@ -552,6 +556,19 @@ function sessionCreatedSince(sessions: readonly Session[], knownIds: ReadonlySet
 }
 
 /**
+ * 開いたとき (openChat) に、相談を出していなければ出す相談を一覧 (sessions。1 件以上・更新の新しい順) から選ぶ (#2283)。
+ * 終了していない相談を先に選び、その中ではメッセージのある相談を先にする。終了していない相談が無いときだけ終了した相談を出す
+ * (そのときも同じ順)。以前は status を見ずにメッセージのある相談を先に選んだので、アーカイブ (新しい空の相談を作れた) のあとに
+ * 開き直すと、メッセージのある終了した相談が選ばれ、入力の止まった終了の画面に着いた。モバイルの initSession
+ * (apps/mobile/src/components/ai/AIAdvisorSheet.tsx) も終了していない相談を先に選ぶ
+ */
+function sessionToShowOnOpen(sessions: readonly Session[]): Session {
+  const openSessions = sessions.filter((s) => !isConsultationSessionStatusClosed(s.status));
+  const candidates = openSessions.length > 0 ? openSessions : sessions;
+  return candidates.find((s) => s.messageCount > 0) ?? candidates[0];
+}
+
+/**
  * 相談を出していない (AI 相談の緊急停止中・新しい相談の作成の失敗など) ので、1日献立の「作成する」を止めているときに、モーダルの
  * ボタンの近くに出す理由の一文 (#2265 Q2。#2259 P1 で止めるようになったが、理由が出ず黙って押せなかった。止める条件は変えない。
  * 1日献立の作成の route は相談の緊急停止とは別なので、献立表の画面からは作れる)
@@ -981,6 +998,27 @@ export default function AIChatBubble() {
   // だけ足したので、作成を待つ間に相談を切り替えて出さなかった相談を一覧でまだ見ないうちに次の作成の応答が返らないと、読み直した
   // 一覧からこの (空の) 相談を『作れていた相談』として選びえた)
   const listedSessionIdsRef = useRef(new Set<string>());
+  // 終了したと分かった相談の id (#2283)。読めた一覧の status が終了の相談と、閉じる (/close) が受け付けた・すでに終了していた相談と、
+  // 送信が 409 (終了した相談) で返った相談。終了した相談は開き直らないので、足すだけで外さない (あとから返った古い一覧の写しで、
+  // 終了した相談を終了でない相談に戻さない)。ref は await をまたいだあとの今の値を見るため、state は描画のため
+  const closedSessionIdsRef = useRef(new Set<string>());
+  const [closedSessionIds, setClosedSessionIds] = useState<ReadonlySet<string>>(() => new Set());
+  /** 相談 (sessionIds) が終了したと分かった (#2283)。新しく分かった相談があるときだけ描画の state を置き換える */
+  const markSessionsClosed = useCallback((sessionIds: readonly string[]) => {
+    const added = sessionIds.filter((id) => !closedSessionIdsRef.current.has(id));
+    if (added.length === 0) return;
+    for (const id of added) closedSessionIdsRef.current.add(id);
+    setClosedSessionIds(new Set(closedSessionIdsRef.current));
+  }, []);
+  /** 相談 (sessionId) が終了したと分かっているか (今の値。#2283)。相談を出していない (null) ときは偽 */
+  const isSessionClosedNow = (sessionId: string | null): boolean =>
+    sessionId !== null && closedSessionIdsRef.current.has(sessionId);
+  // 1日献立のモーダルを開いたまま出している相談が終了したと分かった (送信が 409 で返った・閉じるが受け付けられた): モーダルを閉じる
+  // (#2283。「作成する」は終了した相談では押せない。理由と次の手は入力欄の上の一文が出すので、モーダルに同じ一文を重ねて出さない)
+  const shownSessionClosed = currentSessionId !== null && closedSessionIds.has(currentSessionId);
+  useEffect(() => {
+    if (shownSessionClosed) setShowDayMenuModal(false);
+  }, [shownSessionClosed]);
   // 一覧を読めなかった一文 (CHAT_LOAD_FAILURE_NOTE_IDS.sessions) を出してから、まだ一覧を読み直せていないか (#2275 T1)。真の間は、
   // 会話の置き換え (相談の切り替え・開き直しの会話の読み込み・新しい相談の作成) でもその一文を消さない (以前は会話の 1 件として
   // 置き換えで消え、一覧がまだ古いのに開き直しの案内が見えなくなった)。一覧を読めた (fetchSessions) ときに偽に戻す
@@ -1195,6 +1233,8 @@ export default function AIChatBubble() {
       if (loaded.kind === 'loaded') {
         setIsAuthenticated(true);
         for (const session of loaded.sessions) listedSessionIdsRef.current.add(session.id);
+        // 一覧で終了の相談は、終了したと分かった相談に足す (#2283。置かなかった古い一覧でも、終了は終了のまま)
+        markSessionsClosed(loaded.sessions.filter((session) => isConsultationSessionStatusClosed(session.status)).map((session) => session.id));
         // 一覧を読み直せた: 一覧を読めなかった一文は、次の会話の置き換えでは残さない (#2275 T1)
         sessionsLoadFailureOutstandingRef.current = false;
         // 一覧を置くのは、置いた一覧より後に始めた読み込みのときだけ (#2254 M1・#2259 P1。あとに始めて成功した読み込みのほうが新しい)。
@@ -1209,7 +1249,7 @@ export default function AIChatBubble() {
       console.error('Failed to fetch sessions:', e);
       return { kind: 'failed', timedOut: isConsultationRequestTimeout(e) };
     }
-  }, []);
+  }, [markSessionsClosed]);
 
   /**
    * 読み込みの失敗の一文 (#2265 Q2) を今の画面の会話の後ろに足す。同じ種類の前の一文は外す (二重に出さない)。
@@ -1393,7 +1433,7 @@ export default function AIChatBubble() {
       // ※ fetchSessions() の返り値を直接参照（stale state 回避）。今出している相談も閉包の state でなく ref で見る (#2254 M1)
       const shownSessionId = currentSessionIdRef.current;
       if (fetchedSessions.length > 0 && !shownSessionId) {
-        const activeSession = fetchedSessions.find(s => s.messageCount > 0) || fetchedSessions[0];
+        const activeSession = sessionToShowOnOpen(fetchedSessions);
         showSessionId(activeSession.id);
         // 相談を出していなかった: 読めなければ一文だけにする (#2275 T1)
         await fetchMessages(activeSession.id, { keepShownOnFailure: false });
@@ -1789,6 +1829,8 @@ export default function AIChatBubble() {
   const sendMessage = async (text: string) => {
     const userMessage = text.trim();
     if (!userMessage || !currentSessionId || isSending || sendingRef.current || closingSessionRef.current || loadingRef.current) return;
+    // 終了した相談には送らない (#2283。入力欄・送信ボタン・おすすめの質問も止めている。サーバーも 409 で拒む)
+    if (isSessionClosedNow(currentSessionId)) return;
     sendingRef.current = true;
     awaitingReplyRef.current = true;
     startViewOperation();
@@ -1888,6 +1930,19 @@ export default function AIChatBubble() {
               ? { ...m, content: unavailableMessage, isStreaming: false }
               : m
           ));
+          return;
+        }
+        // 終了した相談への送信を拒まれた (409。#2283。アーカイブのあとに新しい相談の作成が失敗して閉じた相談が残った・ほかの画面で
+        // 閉じた): 送っていないので、送った文の仮のメッセージを消して入力欄に戻し (同意で止められたときと同じ)、終了した相談として
+        // 入力欄・送信を止めて『新しい相談を始める』の一文を出す (描画の側)。一覧を読み直して status をサーバーに合わせる。読み直しも
+        // 失敗したら、古い一覧のままなので開き直してもらう一文を、まだこの相談を出していれば足す (閉じるが『すでに終了』で返ったときと同じ)
+        if (await isConsultationSessionClosedResponse(res)) {
+          undoOptimisticMessages();
+          markSessionsClosed([currentSessionId]);
+          const listed = await fetchSessions();
+          if (listed.kind === 'failed' && currentSessionIdRef.current === currentSessionId) {
+            showChatLoadFailure('sessions', listed.timedOut, true);
+          }
           return;
         }
         throw new Error(`HTTP error: ${res.status}`);
@@ -2032,6 +2087,8 @@ export default function AIChatBubble() {
     // 会話の読み込みの最中も実行しない (#2254 M1。結果の一文が、あとから返った読み込みの会話の置き換えで消える。読み込みの最中は
     // 読み込み中の輪がカードを隠す。ref で見るのは、読み込みを始めたのと同じ描画のうちの押下も止めるため。送信と同じ)
     if (closingSessionRef.current || loadingRef.current) return;
+    // 終了した相談の提案は実行しない (#2283。ボタンも止めている)
+    if (isSessionClosedNow(currentSessionIdRef.current)) return;
     // 同じカードの実行がもう始まっている (同じ描画のうちの 2 度目の押下・同意の確認を待つ間の押下): 実行しない (#2259 P1。以前は
     // 実行中の印 (state) だけを見ていたので、同じ描画のうちに 2 回押すと 2 回とも実行に入り、先に終わった方がカードの印を外した)
     if (executingActionIdsRef.current.has(messageId)) return;
@@ -2049,6 +2106,8 @@ export default function AIChatBubble() {
       // 読み込みが終わった): 実行しない (#2259 P1。同意の確認を待つ間は応答待ちの件数に入らないので、切り替えを止めていない。実行すると
       // 結果の一文が切り替えた先の相談の画面に出る)
       if (closingSessionRef.current || loadingRef.current || currentSessionIdRef.current !== sessionAtPress) return;
+      // 同意の確認を待つ間に相談が終了したと分かった: 実行しない (#2283。上と同じ)
+      if (isSessionClosedNow(sessionAtPress)) return;
       // ここから応答 (結果の一文) までは『相談を終了』・新しい相談・相談の切り替えを止める (#2254 M1。finally で件数から出す)
       beginActionRequest();
       actionRequestBegun = true;
@@ -2273,6 +2332,9 @@ export default function AIChatBubble() {
 
       if (closed.ok) {
         const data = closed.data;
+        // 閉じた相談は終了した相談 (#2283。このあとの新しい相談の作成が失敗して閉じた相談が残っても、一覧の読み直しの成否に関わらず
+        // 入力欄・送信を止めて『新しい相談を始める』を出す)
+        markSessionsClosed([currentSessionId]);
         await showFreshSessionAfterClose();
 
         if (data.summary) {
@@ -2306,6 +2368,8 @@ export default function AIChatBubble() {
         // すでに終了していた (400) ときは、一覧を読み直して画面を今の状態に合わせてから出す)
         const failure = consultationCloseFailureOf(closed.status, closed.body);
         if (failure.kind === 'already-closed') {
+          // すでに終了していた相談も終了した相談 (#2283)
+          markSessionsClosed([currentSessionId]);
           const listed = await fetchSessions();
           showCloseFailure(currentSessionId, failure.message);
           // 読み直しも失敗したら、古い一覧のままなので開き直してもらう (#2265 Q2)
@@ -2324,6 +2388,8 @@ export default function AIChatBubble() {
           isConsultationRequestTimeout(e) ? CLOSE_SESSION_TIMEOUT_MESSAGE : CONSULTATION_CLOSE_FAILED_MESSAGE,
         );
       } else if (!freshSessionStarted) {
+        // 閉じるを受け付けたので、閉じた相談は終了した相談 (#2283。成功のときと同じ)
+        markSessionsClosed([currentSessionId]);
         // 受け付けたあとの例外 (本文の読み取りの時間切れ・本文が JSON でない): 相談はサーバーで閉じているので、成功のときと同じく
         // 一覧を読み直して新しい相談を出し、画面をサーバーの状態に合わせる (#2265 Q2。以前は何もせず、終了した相談の画面が残った)。
         // 失敗の一文は出さない。要約は本文が読めないので出さない
@@ -2371,6 +2437,8 @@ export default function AIChatBubble() {
     // 相談の無い画面のまま送信・『相談を終了』が押せなかった)
     const sessionAtPress = currentSessionIdRef.current;
     if (sessionAtPress === null) return;
+    // 終了した相談では作らない (#2283。作成中・完了の一文を終了した相談の画面に足さない。ボタンも止めている)
+    if (isSessionClosedNow(sessionAtPress)) return;
     // 日付の欄が空・範囲の外なら作らない (#2245 K1。ボタンも止めている)
     if (!isDayMenuDateSelectable(selectedDate, dayMenuDateRangeOf(todayLocal()))) return;
 
@@ -2385,7 +2453,9 @@ export default function AIChatBubble() {
       closingSessionRef.current ||
       dayMenuInFlightRef.current ||
       loadingRef.current ||
-      currentSessionIdRef.current !== sessionAtPress
+      currentSessionIdRef.current !== sessionAtPress ||
+      // 同意の確認を待つ間に相談が終了したと分かった (#2283。上と同じ)
+      isSessionClosedNow(sessionAtPress)
     ) {
       return;
     }
@@ -2475,7 +2545,10 @@ export default function AIChatBubble() {
 
   // 送信・入力・おすすめの質問を止めるか: 送信中・相談を閉じる応答待ちの最中 (#2235 I8)・会話の読み込みの最中 (読み込み中の輪。
   // #2254 M1。送った文と返答が、あとから返った読み込みの会話の置き換えで消える。sendMessage の入口でも止めている)
-  const inputLocked = isSending || isClosingSession || isLoading;
+  // 出している相談が終了したと分かっているとき (shownSessionClosed。#2283。一覧の status・閉じるの応答・送信の 409) は、入力欄・
+  // 送信・おすすめの質問・提案の実行・1日献立の作成を止め、入力欄の上に『この相談は終了しています…』と『新しい相談を始める』を出す。
+  // 終了した相談でも止める (#2283。sendMessage の入口でも止めている)
+  const inputLocked = isSending || isClosingSession || isLoading || shownSessionClosed;
   // 1日献立の作成の最中か・提案の実行の応答待ちが 1 件でもあるか (#2254 M1。描画の側)
   const resultRequestPending = isDayMenuInFlight || actionRequestsInFlight > 0;
   // 『相談を終了』を止めるか: 閉じる応答待ち・送信中 (#2235 I8)・1日献立の作成の最中・提案の実行の応答待ちの最中 (#2254 M1)・相談が無い。
@@ -2501,6 +2574,8 @@ export default function AIChatBubble() {
     !isClosingSession &&
     !isLoading &&
     !dayMenuWithoutSession &&
+    // 終了した相談でも止める (#2283。generateDayMenu の入口と同じ)
+    !shownSessionClosed &&
     dayMenuRange !== null &&
     !dayMenuDateUnselectable;
   // 1日献立変更を押せるか: 送信中・作成中・相談を閉じる応答待ちの最中でないとき (#2245 K1。閉じる応答待ちを足した)
@@ -2508,8 +2583,17 @@ export default function AIChatBubble() {
   // 作成の最中 (isDayMenuInFlight) も止める (作成は一度に 1 つ。generateDayMenu の入口でも止めている)
   // 相談を出していないときも止める (#2259 P1。初めて開いたときの一覧を待つ間に作成を始めると、開く (openChat) が画面の操作で戻って
   // 相談を選ばず、相談の無い画面のまま送信・『相談を終了』が押せなかった。generateDayMenu の入口でも止めている)
+  // 終了した相談でも止める (#2283。generateDayMenu の入口でも止めている)
   const dayMenuButtonLocked =
-    isSending || isGeneratingDayMenu || isDayMenuInFlight || isClosingSession || isLoading || dayMenuWithoutSession;
+    isSending ||
+    isGeneratingDayMenu ||
+    isDayMenuInFlight ||
+    isClosingSession ||
+    isLoading ||
+    dayMenuWithoutSession ||
+    shownSessionClosed;
+  // 提案のカードの「実行する」を止めるか (#2283 で、終了した相談を足した。executeAction の入口でも止めている)
+  const executeLockedOf = (messageId: string) => executingActionIds.has(messageId) || isClosingSession || shownSessionClosed;
 
   return (
     <>
@@ -2895,9 +2979,9 @@ export default function AIChatBubble() {
                               <div className="flex gap-2">
                                 <button
                                   onClick={() => executeAction(msg.proposedActions!.type, msg.id)}
-                                  disabled={executingActionIds.has(msg.id) || isClosingSession}
+                                  disabled={executeLockedOf(msg.id)}
                                   className="flex-1 py-2 rounded-lg flex items-center justify-center gap-1"
-                                  style={{ background: colors.success, opacity: (executingActionIds.has(msg.id) || isClosingSession) ? BUSY_BUTTON_OPACITY : 1 }}
+                                  style={{ background: colors.success, opacity: executeLockedOf(msg.id) ? BUSY_BUTTON_OPACITY : 1 }}
                                 >
                                   {executingActionIds.has(msg.id) ? (
                                     <Loader2 size={14} color="#fff" className="animate-spin" />
@@ -2969,6 +3053,29 @@ export default function AIChatBubble() {
                 className="p-3 border-t"
                 style={{ background: colors.card, borderColor: colors.border }}
               >
+                {/* 終了した相談 (#2283): 入力欄・送信を止め、理由と次の手 (新しい相談を始める) を出す。一文は描画の state から 1 つだけ
+                    出す (会話には足さない)。『新しい相談を始める』は相談の一覧の行と同じ押下 (pressNewSession) で、同じ条件で止める */}
+                {shownSessionClosed && (
+                  <div
+                    role="status"
+                    data-testid="ai-chat-session-closed"
+                    className="mb-2 flex items-center gap-2"
+                  >
+                    <p style={{ flex: 1, fontSize: 12, margin: 0, color: colors.textLight, lineHeight: 1.5 }}>
+                      {AI_CONSULTATION_SESSION_CLOSED_MESSAGE}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={pressNewSession}
+                      disabled={sessionSwitchLocked}
+                      data-testid="ai-chat-session-closed-new-session"
+                      className="px-3 py-1.5 rounded-full whitespace-nowrap disabled:opacity-50"
+                      style={{ background: colors.primary, color: '#fff', fontSize: 12, fontWeight: 500 }}
+                    >
+                      新しい相談を始める
+                    </button>
+                  </div>
+                )}
                 <div className="flex items-center gap-2">
                   <input
                     ref={inputRef}

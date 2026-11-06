@@ -131,6 +131,16 @@ export const AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE = '相談が見つかり�
 export const AI_CONSULTATION_MESSAGE_NOT_FOUND_MESSAGE = 'メッセージが見つかりません';
 /** 400: 終了した相談をもう一度終了しようとした */
 export const AI_CONSULTATION_SESSION_ALREADY_CLOSED_MESSAGE = 'この相談はすでに終了しています';
+/**
+ * 409: 終了した相談に送ろうとした (会話の続きの POST。#2283)。画面は code (AI_CONSULTATION_SESSION_CLOSED_CODE) で見分け、
+ * 同じ文と『新しい相談を始める』を出す (Web の AI 相談はこの定数をそのまま出す。モバイルは写しを持つ:
+ * apps/mobile/src/lib/ai-consultation-session-closed.ts。一致は tests/ai-consultation-session-closed-2283.test.ts が確かめる)。
+ * 上の 400 (閉じる route の『すでに終了しています』) とは分ける: あちらは終了の操作への答えで、次の手は要らない。こちらは送れなかった
+ * 理由と次の手 (新しい相談) を伝える。状態コードも違うので、閉じる route の画面の出し分け (consultationCloseFailureOf) は変えない
+ */
+export const AI_CONSULTATION_SESSION_CLOSED_MESSAGE = 'この相談は終了しています。新しい相談を始めてください';
+/** 409 の code: 終了した相談に送ろうとした (#2283) */
+export const AI_CONSULTATION_SESSION_CLOSED_CODE = 'AI_CONSULTATION_SESSION_CLOSED';
 /** 400: 重要なメッセージの一覧は、この API では取れない (一覧の API を使う) */
 export const AI_CONSULTATION_IMPORTANT_LIST_MOVED_MESSAGE =
   '重要なメッセージの一覧は、/api/ai/consultation/important-messages から取得してください';
