@@ -15,7 +15,7 @@
  *   5. getAiActionLogWriter は service role のクライアント (getSupabaseAdmin) を返す
  *   6. 画面 ('use client')・モバイル (apps/mobile) は書かない。Edge Function (supabase/functions) も書かない
  *   7. .from('ai_action_logs') の直後は select か書き込み (問い合わせを変数に入れてから書く形は見分けられないので禁止)。
- *      表の名前を文字列で持つのは決まった箇所 (TABLE_NAME_LITERALS。読むだけ) だけ
+ *      表の名前を文字列で持つのは決まった箇所 (TABLE_NAME_LITERALS。読むだけ) と、失敗のログの文脈 (internalError の引数) だけ
  *   8. migration の SQL の関数・トリガーが ai_action_logs に書かない (書く RPC を作ったら、この一覧と Y2 を見直す)
  *
  * 限界 (見張りであって、証明ではない): 書いてよい行か (持ち主の確認) は見ない。それは route のテスト
@@ -120,6 +120,26 @@ const TABLE_NAME_LITERALS: Record<string, { count: number; why: string }> = {
   'src/lib/account-export-tables.ts': { count: 1, why: '書き出しの表の一覧 (読むだけ)' },
 };
 
+/** 失敗のログの文脈 (internalError(…, { table: 'ai_action_logs' })) の呼び出し。表の名前はログの印で、問い合わせには使わない */
+const LOG_LABEL_CALL = 'internalError(';
+
+/** 失敗のログの文脈の呼び出し (引数の括弧の中) を外した本文 */
+function withoutLogLabelCalls(code: string): string {
+  let out = '';
+  let from = 0;
+  for (let start = code.indexOf(LOG_LABEL_CALL); start >= 0; start = code.indexOf(LOG_LABEL_CALL, from)) {
+    let depth = 0;
+    let end = start + LOG_LABEL_CALL.length - 1;
+    for (; end < code.length; end++) {
+      if (code[end] === '(') depth += 1;
+      else if (code[end] === ')' && --depth === 0) break;
+    }
+    out += code.slice(from, start);
+    from = end + 1;
+  }
+  return out + code.slice(from);
+}
+
 const isClientComponent = (file: string) => /^\s*['"]use client['"]/.test(codeOf(file));
 const isMobile = (file: string) => file.startsWith('apps/mobile/');
 
@@ -218,7 +238,7 @@ describe('ai_action_logs への書き込みは service role (getAiActionLogWrite
     const literal = new RegExp(`['"\`]${TABLE}['"\`]`, 'g');
     const found: Record<string, number> = {};
     for (const file of appFiles.filter(mentionsTable)) {
-      const code = codeOf(file);
+      const code = withoutLogLabelCalls(codeOf(file));
       const outsideFrom = (code.match(literal)?.length ?? 0) - findTableAccesses(code).length;
       if (outsideFrom > 0) found[file] = outsideFrom;
     }
