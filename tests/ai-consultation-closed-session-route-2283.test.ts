@@ -7,6 +7,8 @@
  * 失敗して閉じた相談が画面に残ると、閉じた相談に会話が足されていった。拒むときは本文を読む前に断り、メッセージの行・
  * AI の呼び出し・提案の記録 (ai_action_logs) を作らず、AI の利用回数 (consume_ai_usage) も数えない。
  * 開いた相談は今まで通り送れる。所有者の確認 (404) が先 (他人の閉じた相談は 409 でなく 404 にして、有無を漏らさない)。
+ * 拒否は AI を呼ばないので、AI の部品の用意 (getFastLLMClient) より前に断る (AI の設定が欠けた環境でも 409)。
+ * 実 DB と next dev での同じ確認は tests/integration/security/ai-consultation-closed-session-2283.test.ts。
  *
  * 差し替えるのは Supabase のクライアント・AI の呼び出しなど外との境目だけ (tests/ai-consultation-latest-messages-2144.test.ts と
  * 同じ形)。Supabase の作り物は、表ごとの insert / update / upsert / delete と rpc の呼び出しを記録する。
@@ -41,6 +43,8 @@ const h = vi.hoisted(() => ({
   /** rpc の呼び出しの記録 (consume_ai_usage など) */
   rpcCalls: [] as string[],
   llmCreate: vi.fn(async () => ({ choices: [{ message: { content: '{"isImportant": false}' } }] })),
+  /** 真なら AI の呼び出しの部品 (getFastLLMClient) が、設定の欠けた環境と同じく MissingEnvError を投げる */
+  llmMissing: false,
 }));
 
 /** Supabase のクエリの作り物。select の await は空の行、single は h.single の行。書き込みは記録する */
@@ -128,10 +132,16 @@ vi.mock('@/lib/env-required', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/env-required')>()),
   getSupabaseServiceConfig: () => ({ url: 'https://supabase.example.test', serviceRoleKey: 'service-role-key-test' }),
 }));
-vi.mock('@/lib/ai/fast-llm', () => ({
-  getFastLLMClient: () => ({ chat: { completions: { create: h.llmCreate } } }),
-  getFastLLMModel: () => 'test-model',
-}));
+vi.mock('@/lib/ai/fast-llm', async () => {
+  const { MissingEnvError } = await import('@/lib/env-required');
+  return {
+    getFastLLMClient: () => {
+      if (h.llmMissing) throw new MissingEnvError('XAI_API_KEY');
+      return { chat: { completions: { create: h.llmCreate } } };
+    },
+    getFastLLMModel: () => 'test-model',
+  };
+});
 
 /** AI (knowledge-gpt) への呼び出し (fetch) */
 const aiFetch = vi.fn(async () => Response.json({ choices: [{ message: { content: 'わかりました。' } }] }));
@@ -140,6 +150,7 @@ beforeEach(() => {
   h.single = {};
   h.writes = [];
   h.rpcCalls = [];
+  h.llmMissing = false;
   h.llmCreate.mockClear();
   aiFetch.mockClear();
   vi.stubGlobal('fetch', aiFetch);
@@ -219,6 +230,28 @@ describe('#2283 (B) 終了した相談への会話の続きの POST', () => {
 
     expect(res.status).toBe(404);
     expect((await res.json()).code).toBeUndefined();
+    expectNothingWritten();
+  });
+
+  it('AI の設定が欠けた環境でも、終了した相談は 409 で断る (拒否は AI を呼ばないので、AI の部品の用意より前に断る)', async () => {
+    // 結合テストの next dev には AI の鍵が無い。以前は AI の部品の用意 (getFastLLMClient) が相談の確認より前にあり、500 になった
+    placeSession('closed');
+    h.llmMissing = true;
+
+    const res = await post();
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: AI_CONSULTATION_SESSION_CLOSED_CODE });
+    expectNothingWritten();
+  });
+
+  it('AI の設定が欠けた環境では、開いた相談への送信はメッセージを保存する前に 500 (#1182 の順を保つ)', async () => {
+    placeSession('active');
+    h.llmMissing = true;
+
+    const res = await post();
+
+    expect(res.status).toBe(500);
     expectNothingWritten();
   });
 

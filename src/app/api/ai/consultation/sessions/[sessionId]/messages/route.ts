@@ -1217,7 +1217,6 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     // (保存したあとで気づくと、メッセージだけが残って AI の返答が付かない) (#1182)
     const { url: supabaseUrl, serviceRoleKey } = getSupabaseServiceConfig();
 
-    const openai = getFastLLMClient();
     // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
     if (!isUuid(params.sessionId)) {
       return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
@@ -1243,6 +1242,10 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     if (isConsultationSessionStatusClosed(session.status)) {
       return NextResponse.json(consultationSessionClosedBody(), { status: CONSULTATION_SESSION_CLOSED_STATUS });
     }
+
+    // AI の呼び出しの部品も、メッセージを保存する前に用意する (#1182。欠けていれば MissingEnvError で汎用の 500)。終了した相談の
+    // 拒否より後に置く (#2283。拒否は AI を呼ばないので、AI の設定が欠けた環境 (結合テストの next dev など) でも 409 で断る)
+    const openai = getFastLLMClient();
 
     // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
     const body = await request.json().catch(() => null);
