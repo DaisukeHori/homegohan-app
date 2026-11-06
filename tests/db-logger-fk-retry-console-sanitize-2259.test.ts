@@ -4,7 +4,8 @@
  *
  * 1. app_logs.user_id は auth.users への外部キー (app_logs_user_id_fkey) なので、auth.users に無い利用者
  *    (退会して消えた利用者など) の withUser(userId) のログは insert が外部キー違反 (23503) で落ち、関数ログにだけ残っていた。
- *    直した後: 23503 で落ちた user_id つきの行は、user_id を外して 1 回だけ入れ直し、元の user_id を metadata に残す。
+ *    直した後: 23503 で落ちた user_id つきの行は、user_id を外して 1 回だけ入れ直し、元の user_id の HMAC を metadata に残す
+ *    (生の id は残さない。#2283。HMAC の計算そのものは tests/db-logger-unlinked-user-id-hmac-2283.test.ts)。
  *    ほかの失敗 (23503 以外・user_id の無い行) は入れ直さない。入れ直しも落ちたら、それ以上は入れ直さない。
  * 2. Edge の db-logger は console (Supabase の関数ログ) に metadata を生のまま出していた (app_logs への保存は
  *    sanitizeLogEntry を通すので影響しない)。直した後: Next.js 側と同じく、console にも sanitizeMetadata を通した metadata を出す。
@@ -22,8 +23,10 @@ const MISSING_USER_ID = '00000000-0000-4000-8000-000000002259';
 const FOREIGN_KEY_VIOLATION = '23503';
 /** Postgres の一意制約違反のエラーコード (外部キー違反でない失敗の例) */
 const UNIQUE_VIOLATION = '23505';
-/** 入れ直した行で、元の user_id を残す metadata のキー (log-sanitizer.ts の UNLINKED_USER_ID_METADATA_KEY) */
+/** 入れ直した行で、元の user_id の HMAC を残す metadata のキー (log-sanitizer.ts の UNLINKED_USER_ID_METADATA_KEY) */
 const UNLINKED_USER_ID_KEY = 'user_id_not_in_auth_users';
+/** テストの rpc (pii_hmac_hex) が返す HMAC の値 (16 進 64 文字の形だけ合わせた固定値) */
+const MISSING_USER_ID_HMAC = 'ab'.repeat(32);
 /** マイクロタスクを流す回数 (保存 → insert → 入れ直しの insert の呼び出しが流れきるのに足りる回数) */
 const MICROTASK_DRAIN_ROUNDS = 40;
 
@@ -45,6 +48,7 @@ const FK_ERROR = {
 const h = vi.hoisted(() => ({
   env: {} as Record<string, string | undefined>,
   insert: vi.fn(),
+  rpc: vi.fn(),
   createClient: vi.fn(),
 }));
 
@@ -103,7 +107,8 @@ beforeEach(() => {
   vi.resetModules();
   h.env = { SUPABASE_URL, SERVICE_ROLE_JWT: SERVICE_ROLE_KEY };
   h.insert.mockReset().mockResolvedValue({ error: null });
-  h.createClient.mockReset().mockReturnValue({ from: () => ({ insert: h.insert }) });
+  h.rpc.mockReset().mockResolvedValue({ data: MISSING_USER_ID_HMAC, error: null });
+  h.createClient.mockReset().mockReturnValue({ from: () => ({ insert: h.insert }), rpc: h.rpc });
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', SUPABASE_URL);
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', SERVICE_ROLE_KEY);
   vi.stubGlobal('Deno', { env: { get: (key: string) => h.env[key] } });
@@ -117,7 +122,7 @@ afterEach(() => {
 });
 
 describe.each(VARIANTS)('$name: app_logs.user_id の外部キーで落ちた行 (#2259 P3)', ({ load }) => {
-  it('withUser の error が外部キー違反 (23503) で落ちたら、user_id を外して 1 回だけ入れ直し、元の user_id を metadata に残す', async () => {
+  it('withUser の error が外部キー違反 (23503) で落ちたら、user_id を外して 1 回だけ入れ直し、元の user_id の HMAC を metadata に残す', async () => {
     h.insert.mockResolvedValueOnce({ error: FK_ERROR }).mockResolvedValueOnce({ error: null });
     const { createLogger } = await load();
 
@@ -129,7 +134,7 @@ describe.each(VARIANTS)('$name: app_logs.user_id の外部キーで落ちた行 
     const [first, retried] = rows;
     expect(first.user_id).toBe(MISSING_USER_ID);
     expect(retried.user_id).toBeUndefined();
-    expect(retried.metadata).toEqual({ event: 'TRANSFER', [UNLINKED_USER_ID_KEY]: MISSING_USER_ID });
+    expect(retried.metadata).toEqual({ event: 'TRANSFER', [UNLINKED_USER_ID_KEY]: MISSING_USER_ID_HMAC });
     // user_id と metadata のほかは、最初の行と同じものを入れ直す
     const retriedRest = omitKeys(retried, ['metadata']);
     expect(retriedRest).toEqual(omitKeys(first, ['user_id', 'metadata']));
@@ -139,7 +144,7 @@ describe.each(VARIANTS)('$name: app_logs.user_id の外部キーで落ちた行 
     expect(vi.mocked(console.error).mock.calls.some((args) => String(args[0]).includes('Failed to save log to DB'))).toBe(false);
   });
 
-  it.each(['debug', 'info', 'warn'] as const)('withUser の %s も、metadata の無い行でも入れ直す (metadata は元の user_id だけ)', async (level) => {
+  it.each(['debug', 'info', 'warn'] as const)('withUser の %s も、metadata の無い行でも入れ直す (metadata は元の user_id の HMAC だけ)', async (level) => {
     h.insert.mockResolvedValueOnce({ error: FK_ERROR }).mockResolvedValueOnce({ error: null });
     const { createLogger } = await load();
 
@@ -149,7 +154,7 @@ describe.each(VARIANTS)('$name: app_logs.user_id の外部キーで落ちた行 
     const rows = insertedRows();
     expect(rows).toHaveLength(2);
     expect(rows[1].user_id).toBeUndefined();
-    expect(rows[1]).toMatchObject({ level, message: '利用者のログ', metadata: { [UNLINKED_USER_ID_KEY]: MISSING_USER_ID } });
+    expect(rows[1]).toMatchObject({ level, message: '利用者のログ', metadata: { [UNLINKED_USER_ID_KEY]: MISSING_USER_ID_HMAC } });
   });
 
   it('入れ直しも落ちたら、それ以上は入れ直さず console.error に残す (insert は 2 回まで)', async () => {
@@ -241,39 +246,42 @@ describe('log-sanitizer の entryForForeignKeyRetry (#2259 P3)', () => {
   async function loadSanitizer() {
     return import('../supabase/functions/_shared/log-sanitizer.ts');
   }
+  /** 元の user_id を HMAC にする関数 (テストでは固定の値を返す) */
+  const hashUserId = async () => MISSING_USER_ID_HMAC;
 
-  it('外部キー違反で user_id のある行: user_id を省き、metadata の先頭に元の user_id を足した新しい行を返す (引数は書き換えない)', async () => {
+  it('外部キー違反で user_id のある行: user_id を省き、metadata の先頭に元の user_id の HMAC を足した新しい行を返す (引数は書き換えない)', async () => {
     const { entryForForeignKeyRetry } = await loadSanitizer();
     const entry = { level: 'error', source: 'api-route', user_id: MISSING_USER_ID, message: 'x', metadata: { a: 1 } };
     const snapshot = structuredClone(entry);
 
-    const retried = entryForForeignKeyRetry(FK_ERROR, entry);
+    const retried = await entryForForeignKeyRetry(FK_ERROR, entry, hashUserId);
 
-    expect(retried).toEqual({ level: 'error', source: 'api-route', message: 'x', metadata: { [UNLINKED_USER_ID_KEY]: MISSING_USER_ID, a: 1 } });
+    expect(retried).toEqual({ level: 'error', source: 'api-route', message: 'x', metadata: { [UNLINKED_USER_ID_KEY]: MISSING_USER_ID_HMAC, a: 1 } });
     expect(retried).not.toHaveProperty('user_id');
     expect(Object.keys(retried?.metadata ?? {})[0]).toBe(UNLINKED_USER_ID_KEY);
     expect(entry).toEqual(snapshot);
   });
 
-  it('元の metadata に同じ名前のキーがあっても、入れ直した理由の user_id で上書きする', async () => {
+  it('元の metadata に同じ名前のキーがあっても、入れ直した理由の user_id の HMAC で上書きする', async () => {
     const { entryForForeignKeyRetry } = await loadSanitizer();
     const entry = { level: 'warn', source: 'edge-function', user_id: MISSING_USER_ID, message: 'x', metadata: { [UNLINKED_USER_ID_KEY]: 'other', b: 2 } };
-    expect(entryForForeignKeyRetry(FK_ERROR, entry)?.metadata).toEqual({ [UNLINKED_USER_ID_KEY]: MISSING_USER_ID, b: 2 });
+    expect((await entryForForeignKeyRetry(FK_ERROR, entry, hashUserId))?.metadata).toEqual({ [UNLINKED_USER_ID_KEY]: MISSING_USER_ID_HMAC, b: 2 });
   });
 
-  it('metadata が大きくて sanitizeLogEntry が切り詰めても、元の user_id はプレビューの頭に残る', async () => {
+  it('metadata が大きくて sanitizeLogEntry が切り詰めても、元の user_id の HMAC はプレビューの頭に残る', async () => {
     const { entryForForeignKeyRetry, sanitizeLogEntry } = await loadSanitizer();
     /** 8KB の上限を十分に超える長さ */
     const OVERSIZED_CHARS = 20_000;
     const entry = { level: 'error', source: 'api-route', user_id: MISSING_USER_ID, message: 'x', metadata: { big: 'y'.repeat(OVERSIZED_CHARS) } };
 
-    const retried = entryForForeignKeyRetry(FK_ERROR, entry);
+    const retried = await entryForForeignKeyRetry(FK_ERROR, entry, hashUserId);
     if (!retried) throw new Error('入れ直す行が返らなかった');
     const row = sanitizeLogEntry(retried);
 
     expect(row.user_id).toBeUndefined();
     expect(row.metadata?._truncated).toBe(true);
-    expect(String(row.metadata?._preview)).toContain(`"${UNLINKED_USER_ID_KEY}":"${MISSING_USER_ID}"`);
+    expect(String(row.metadata?._preview)).toContain(`"${UNLINKED_USER_ID_KEY}":"${MISSING_USER_ID_HMAC}"`);
+    expect(String(row.metadata?._preview)).not.toContain(MISSING_USER_ID);
   });
 
   it.each([
@@ -284,7 +292,7 @@ describe('log-sanitizer の entryForForeignKeyRetry (#2259 P3)', () => {
   ])('error が %s なら null (入れ直さない)', async (_label, error) => {
     const { entryForForeignKeyRetry } = await loadSanitizer();
     const entry = { level: 'warn', source: 'edge-function', user_id: MISSING_USER_ID, message: 'x' };
-    expect(entryForForeignKeyRetry(error, entry)).toBeNull();
+    expect(await entryForForeignKeyRetry(error, entry, hashUserId)).toBeNull();
   });
 
   it.each([
@@ -293,6 +301,6 @@ describe('log-sanitizer の entryForForeignKeyRetry (#2259 P3)', () => {
   ])('%s 行は 23503 でも null', async (_label, userId) => {
     const { entryForForeignKeyRetry } = await loadSanitizer();
     const entry = { level: 'warn', source: 'edge-function', user_id: userId, message: 'x' };
-    expect(entryForForeignKeyRetry(FK_ERROR, entry)).toBeNull();
+    expect(await entryForForeignKeyRetry(FK_ERROR, entry, hashUserId)).toBeNull();
   });
 });

@@ -145,6 +145,9 @@ export const AI_CONSULTATION_RPC_WRITTEN_TABLES: Readonly<
   search_ingredients_full_by_embedding: { tables: [], definedIn: [] },
   search_menu_examples: { tables: [], definedIn: [] },
   search_recipes_with_nutrition: { tables: [], definedIn: [] },
+  // ログの保存 (src/lib/db-logger.ts・_shared/db-logger.ts) が、app_logs の外部キー違反で入れ直すときに
+  // 元の user_id を HMAC にする関数 (値を返すだけで、書く表は無い。#2283)
+  pii_hmac_hex: { tables: [], definedIn: [] },
 };
 
 /**
