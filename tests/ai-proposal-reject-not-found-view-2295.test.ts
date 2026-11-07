@@ -13,7 +13,7 @@
  *   - notExecutable (failed・行が無い): notExecutableReason: 'failed'
  *   - executable (間に pending に戻った)・読めなかった: 何も添えない
  * UUID でない・持ち主でない 404 は今のまま何も添えない。行の状態は ai_consultation_sessions.user_id = 本人 で絞って読む
- * (ほかの人の行の状態は添えない)。POST の応答は変えない。
+ * (ほかの人の行の状態は添えない)。POST の応答は変えない (#2299 で、POST の 404 も断った提案には proposedActionHidden を添えるように改めた)。
  *
  * 差し替えるのは外との境目 (Supabase のクライアント・ログ・レート制限など) だけ。Supabase は、行を持つ小さな表として振る舞う
  * (eq の条件で絞る・update は条件に合う行だけを書き換える)。RLS は真似しない (コードが本人で絞ることを確かめるため)。
@@ -314,10 +314,11 @@ describe('DELETE の 404 (条件つきの更新が 0 行。読んだあとに先
   });
 });
 
-describe('POST の 404 は変えない (行の状態を読む部分を DELETE と共にしても、応答は今のまま)', () => {
+describe('POST の 404 (行の状態を読む部分を DELETE と共にする。rejected は #2299 で proposedActionHidden に改めた)', () => {
   it.each([
     ['行が無い', [] as Row[], BARE_BODY],
-    ['rejected', [logRow('rejected')], FAILED_BODY],
+    // #2299: 別のタブで断った提案は、開き直したときの GET と同じくカードを閉じる (以前は failed に写していた)
+    ['rejected', [logRow('rejected')], HIDDEN_BODY],
     ['executed', [logRow('executed')], { error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE, notExecutableReason: 'runningOrDone' }],
     ['approved のまま', [logRow('approved')], UNCONFIRMED_BODY],
     ['failed', [logRow('failed')], FAILED_BODY],
