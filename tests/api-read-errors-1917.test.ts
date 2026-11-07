@@ -682,7 +682,8 @@ describe.each([
   },
   {
     name: 'DELETE /api/ai/consultation/actions/[actionId]/execute',
-    readsWhenMissing: 2,
+    // 無ければカードの見え方を添えるために、そのメッセージの行の状態をもう 1 回読む (#2295 integrity-1107c の是正)
+    readsWhenMissing: 3,
     call: async () =>
       (await import('@/app/api/ai/consultation/actions/[actionId]/execute/route')).DELETE(
         new Request(`${BASE}/api/ai/consultation/actions/${ROW_ID}/execute`, { method: 'DELETE' }),
@@ -704,7 +705,7 @@ describe.each([
     state.missingTable = 'ai_action_logs';
     const res = await call();
     expect(res.status).toBe(404);
-    // アクションの ID・メッセージの ID で 1 回ずつ探す (実行の API は、さらに理由のために 1 回読む)
+    // アクションの ID・メッセージの ID で 1 回ずつ探す (実行の API は理由のために、断る API はカードの見え方のために、さらに 1 回読む)
     expect(state.fromTables.filter((t) => t === 'ai_action_logs')).toHaveLength(readsWhenMissing);
   });
 });

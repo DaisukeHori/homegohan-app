@@ -176,6 +176,50 @@ export function proposedActionNotExecutableReasonOfView(view: ProposedActionView
   return null;
 }
 
+/**
+ * 断る API (DELETE /api/ai/consultation/actions/[actionId]/execute) の 404 の本文に添える、カードの見え方 (#2295)。
+ * 404 は、行が断られた (別の画面で断った)・実行済み・失敗・実行中の印のまま・行が無い、のどれでも返る。画面が「実行中か実行済み」と
+ * 決め打ちしないよう、相談を開き直したときの GET (proposedActionViewOf) と同じ見え方を添える:
+ *   - hidden (断った・実行済み): proposedActionHidden: true (画面はカードを閉じる)
+ *   - unconfirmed (実行中の印のまま): notExecutableReason: 'unconfirmed'
+ *   - notExecutable (失敗・行が無い): notExecutableReason: 'failed'
+ *   - executable (間に pending に戻った): 何も添えない (画面はカードを残し、断れなかった文を出す)
+ */
+export interface ProposedActionRejectNotFoundFields {
+  proposedActionHidden?: true;
+  notExecutableReason?: ProposedActionNotExecutableReason;
+}
+
+/** カードの見え方から、断る API の 404 の本文に添える値を決める (#2295) */
+export function proposedActionRejectNotFoundFieldsOfView(view: ProposedActionView): ProposedActionRejectNotFoundFields {
+  if (view === 'hidden') return { proposedActionHidden: true };
+  const reason = proposedActionNotExecutableReasonOfView(view);
+  return reason ? { notExecutableReason: reason } : {};
+}
+
+/** 断る API の 404 の本文から読んだ、画面の出し方 (#2295) */
+export type ProposedActionRejectNotFoundOutcome =
+  /** カードを閉じる (断った・実行済み。開き直したときの GET と同じ) */
+  | { kind: 'hidden' }
+  /** カードは残し、「実行する」を出さずに理由の案内を出す */
+  | { kind: 'notExecutable'; reason: ProposedActionNotExecutableReason }
+  /** 何も添えられていない・読めない: カードを残し、断れなかった文を出す */
+  | { kind: 'unknown' };
+
+/**
+ * 断る API の 404 の本文を読む (#2295)。許した値 (proposedActionHidden が true・notExecutableReason が理由のどれか) だけを通し、
+ * それ以外 (本文が無い・JSON でない・値が違う) は unknown
+ */
+export function proposedActionRejectNotFoundOutcomeOfBody(body: unknown): ProposedActionRejectNotFoundOutcome {
+  if (!body || typeof body !== 'object') return { kind: 'unknown' };
+  const fields = body as { proposedActionHidden?: unknown; notExecutableReason?: unknown };
+  if (fields.proposedActionHidden === true) return { kind: 'hidden' };
+  if (isProposedActionNotExecutableReason(fields.notExecutableReason)) {
+    return { kind: 'notExecutable', reason: fields.notExecutableReason };
+  }
+  return { kind: 'unknown' };
+}
+
 /** 提案のカードで「実行する」の代わりに出す案内 (やり直せない失敗・記録が無い) */
 export const AI_PROPOSED_ACTION_NOT_EXECUTABLE_GUIDE = 'この提案はここからは実行できません。もう一度 AI に頼んでください。';
 
@@ -230,7 +274,8 @@ export const AI_CONSULTATION_ACTION_LOG_INSERT_FAILED_MESSAGE = '提案を記録
 
 /**
  * 提案のカードの「断る」(DELETE /api/ai/consultation/actions/[actionId]/execute) が断れなかったときに会話へ足す文 (#2295)。
- * 応答が 404 (実行中・実行済み) 以外の失敗 (500・401・応答が読めない・通信の失敗) のときに出す。カードは残すので、もう一度断れる。
+ * 応答が失敗 (500・401・応答が読めない・通信の失敗) のときと、404 の本文にカードの見え方が添えられていないとき
+ * (間に pending に戻った・行の状態を読めなかった) に出す。カードは残すので、もう一度断れる。
  * 応答の本文 (error) の文面は画面に出さず、いつもこの固定の文にする
  */
 export const AI_PROPOSED_ACTION_REJECT_FAILED_MESSAGE = '提案を断れませんでした。時間をおいてもう一度お試しください。';

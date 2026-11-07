@@ -8,7 +8,11 @@
  *
  * 直したあと:
  *   - 2xx: カードを閉じる
- *   - 404: カードを閉じず「この提案は実行中か実行済みです。」の案内にする (既存の文)
+ *   - 404: 本文に添えられたカードの見え方 (相談を開き直したときの GET と同じ) で分ける (integrity-1107c の是正):
+ *       proposedActionHidden: true (断った・実行済み) はカードを閉じる / notExecutableReason は「実行する」を出さずに理由の案内
+ *       (既存の文) / 何も添えられていない・本文が JSON でない はカードを残し、固定の失敗の文を 1 つ足す。
+ *       以前は 404 をいつも「この提案は実行中か実行済みです。」にしていたので、2 つのタブで同じ相談を開いてタブ A で断ったあと、
+ *       タブ B で断ると (行は rejected で 404)、実行していないのに「実行中か実行済み」と出ていた
  *   - それ以外 (500・401・通信の失敗): カードを残し (「実行する」「断る」は押せるまま)、固定の失敗の文を会話に 1 つ足す
  *     (応答の本文 error の文面は出さない)
  *   - 断るの応答待ちの間は、そのカードの「実行する」「断る」を止める
@@ -156,6 +160,10 @@ async function click(button: HTMLButtonElement) {
 /** 手で書いた期待値 (定数の文が変わったらこのテストも直す) */
 const REJECT_FAILED_TEXT = '提案を断れませんでした。時間をおいてもう一度お試しください。';
 const RUNNING_OR_DONE_GUIDE_TEXT = 'この提案は実行中か実行済みです。';
+const UNCONFIRMED_GUIDE_TEXT = 'この提案を実行できたかを確かめられませんでした。しばらくしてから相談を開き直してください。';
+const NOT_EXECUTABLE_GUIDE_TEXT = 'この提案はここからは実行できません。もう一度 AI に頼んでください。';
+/** 断る API の 404 の本文の error (AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE と同じ扱い。画面には出さない) */
+const NOT_FOUND_ERROR = 'not found error text 2295';
 /** 提案の見出し (ACTION_LABELS の add_pantry_item の名前。手で書いた期待値) */
 const PANTRY_LABEL = '冷蔵庫に追加';
 /** 画面に出してはいけない応答の本文の文面 */
@@ -214,17 +222,59 @@ describe('#2295 「断る」の応答で画面を分ける', () => {
     expect(deleteCalls()).toBe(1);
   });
 
-  it('404: カードは閉じず「実行中か実行済み」の案内にする (「実行する」「断る」は出さない・失敗の文と本文は出さない)', async () => {
-    handlers[DELETE_KEY] = async () => json(404, { error: RAW_SERVER_ERROR });
+  it('2 つのタブの再現: タブ A で断ったあと、タブ B で断る (行は rejected で 404・proposedActionHidden): カードを閉じる。「実行中か実行済み」と出さない', async () => {
+    handlers[DELETE_KEY] = async () => json(404, { error: NOT_FOUND_ERROR, proposedActionHidden: true });
+    await openChat();
+    expect(text()).toContain(PANTRY_LABEL);
+    await click(rejectButton()!);
+    await pollUntil(() => !cardShown());
+    expect(cardShown()).toBe(false);
+    expect(text()).not.toContain(RUNNING_OR_DONE_GUIDE_TEXT);
+    expect(rejectFailedCount()).toBe(0);
+    expect(text()).not.toContain(NOT_FOUND_ERROR);
+    expect(deleteCalls()).toBe(1);
+  });
+
+  it.each([
+    ['unconfirmed (実行中の印のまま)', 'unconfirmed', UNCONFIRMED_GUIDE_TEXT],
+    ['failed (失敗・行が無い)', 'failed', NOT_EXECUTABLE_GUIDE_TEXT],
+    ['runningOrDone', 'runningOrDone', RUNNING_OR_DONE_GUIDE_TEXT],
+  ])('404 で notExecutableReason が %s: カードは閉じず理由の案内にする (「実行する」「断る」は出さない・失敗の文と本文は出さない)', async (_label, reason, guide) => {
+    handlers[DELETE_KEY] = async () => json(404, { error: NOT_FOUND_ERROR, notExecutableReason: reason });
     await openChat();
     await click(rejectButton()!);
     await pollUntil(() => guideShown());
     expect(guideShown()).toBe(true);
     expect(text()).toContain(PANTRY_LABEL);
-    expect(text()).toContain(RUNNING_OR_DONE_GUIDE_TEXT);
+    expect(text()).toContain(guide);
+    for (const other of [UNCONFIRMED_GUIDE_TEXT, NOT_EXECUTABLE_GUIDE_TEXT, RUNNING_OR_DONE_GUIDE_TEXT].filter((g) => g !== guide)) {
+      expect(text()).not.toContain(other);
+    }
     expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeUndefined();
     expect(rejectButton()).toBeNull();
     expect(rejectFailedCount()).toBe(0);
+    expect(text()).not.toContain(NOT_FOUND_ERROR);
+  });
+
+  it.each([
+    ['何も添えない (間に pending に戻った・行の状態を読めなかった)', async () => json(404, { error: RAW_SERVER_ERROR })],
+    ['許していない値 (notExecutableReason が理由のどれでもない・proposedActionHidden が true でない)', async () =>
+      json(404, { error: RAW_SERVER_ERROR, notExecutableReason: 'executed', proposedActionHidden: 'true' })],
+    ['本文が JSON でない', async () => new Response(RAW_SERVER_ERROR, { status: 404 })],
+  ])('404 で %s: カードを残し (「実行する」「断る」は押せる)、固定の失敗の文を 1 つ足す。「実行中か実行済み」と出さない', async (_label, handler) => {
+    handlers[DELETE_KEY] = handler;
+    await openChat();
+    await click(rejectButton()!);
+    await pollUntil(() => rejectFailedCount() > 0);
+    expect(rejectFailedCount()).toBe(1);
+    expect(text()).toContain(PANTRY_LABEL);
+    expect(guideShown()).toBe(false);
+    expect(text()).not.toContain(RUNNING_OR_DONE_GUIDE_TEXT);
+    const execute = buttonByText(EXECUTE_BUTTON_TEXT);
+    expect(execute).toBeDefined();
+    expect(execute!.disabled).toBe(false);
+    expect(rejectButton()).not.toBeNull();
+    expect(rejectButton()!.disabled).toBe(false);
     expect(text()).not.toContain(RAW_SERVER_ERROR);
   });
 

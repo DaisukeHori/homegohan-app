@@ -36,13 +36,14 @@ import {
 } from "@/lib/ai/consultation-action-outcome";
 // 提案のカードに「実行する」を出せないとき (やり直せない失敗・実行中・記録が無い) の案内 (#2189 W1-a)。
 // 案内の文は理由で分ける: 実行中・実行済みは頼み直しを勧めない (#2195 V2)
-// 「断る」が断れなかったとき (404 以外の失敗) に会話へ足す固定の文 (#2295)
+// 「断る」が断れなかったとき (失敗・404 にカードの見え方が添えられていない) に会話へ足す固定の文と、404 の本文の読み方 (#2295)
 import {
   AI_PROPOSED_ACTION_REJECT_FAILED_MESSAGE,
   PROPOSED_ACTION_NOT_EXECUTABLE_REASON,
   aiProposedActionNotExecutableGuideOf,
   isProposedActionNotExecutableReason,
   proposedActionNotExecutableReasonOfView,
+  proposedActionRejectNotFoundOutcomeOfBody,
   proposedActionViewOf,
   type ProposedActionNotExecutableReason,
 } from "@/lib/ai/consultation-action-lifecycle";
@@ -362,8 +363,9 @@ function isNotRetryableBody(body: unknown): boolean {
 const ACTION_NOT_EXECUTABLE_RESPONSE_STATUSES: ReadonlySet<number> = new Set([400, 404]);
 
 /**
- * 断る API (DELETE /api/ai/consultation/actions/[actionId]/execute) がこの状態コードを返したら、提案の行はもう pending でない
- * (別の画面・自動実行が先に実行を始めた・実行済み。#2294 で、読んだあとに先に取られた行も同じ 404)。カードは「実行中か実行済み」の案内にする (#2295)
+ * 断る API (DELETE /api/ai/consultation/actions/[actionId]/execute) がこの状態コードを返したら、断れる (pending の) 行が無い
+ * (断った・実行済み・失敗・実行中の印のまま・行が無い。#2294 で、読んだあとに先に取られた行も同じ 404)。画面は本文に添えられた
+ * カードの見え方 (相談を開き直したときの GET と同じ) で分ける (#2295)
  */
 const REJECT_NOT_PENDING_RESPONSE_STATUS = 404;
 
@@ -2242,7 +2244,10 @@ export default function AIChatBubble() {
   // アクション拒否。応答の status で画面を分ける (#2295。以前は status を見ずにいつもカードを閉じ、500 で断れていないのにカードが消えた
   // (開き直すと pending のカードがまた出た)。404 でも、提案が実行中・実行済みであることが伝わらなかった):
   //   - 2xx: カードを閉じる
-  //   - 404: 行がもう pending でない (別の画面・自動実行が先に実行を始めた・実行済み)。カードは閉じず「実行中か実行済み」の案内にする
+  //   - 404: 断れる (pending の) 行が無い。本文に添えられたカードの見え方 (相談を開き直したときの GET と同じ) で分ける:
+  //       proposedActionHidden (断った・実行済み) はカードを閉じる / notExecutableReason は「実行する」を出さずに理由の案内にする /
+  //       何も添えられていない・読めない (間に pending に戻った・行の状態を読めなかった) はカードを残し、固定の失敗の文を足す
+  //       (以前は 404 をいつも「実行中か実行済み」にしていたので、別の画面で断っただけの提案にもそう出ていた)
   //   - それ以外 (500・401・通信の失敗): カードを残し (もう一度押せる)、固定の失敗の文を会話に足す (応答の本文の文面は出さない)
   const rejectAction = async (messageId: string) => {
     // 同じカードの「断る」がもう応答待ち (同じ描画のうちの 2 度目の押下): 断らない (ボタンも止めている)
@@ -2271,8 +2276,18 @@ export default function AIChatBubble() {
         return;
       }
       if (res.status === REJECT_NOT_PENDING_RESPONSE_STATUS) {
-        markProposedActionNotExecutable(messageId, PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone);
-        return;
+        const body: unknown = await res.json().catch(() => null);
+        const outcome = proposedActionRejectNotFoundOutcomeOfBody(body);
+        if (outcome.kind === 'hidden') {
+          setMessages(prev => prev.map(m =>
+            m.id === messageId ? { ...m, proposedActions: null } : m
+          ));
+          return;
+        }
+        if (outcome.kind === 'notExecutable') {
+          markProposedActionNotExecutable(messageId, outcome.reason);
+          return;
+        }
       }
       showRejectFailed();
     } catch (e) {
