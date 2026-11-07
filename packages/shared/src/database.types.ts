@@ -108,6 +108,7 @@ export type Database = {
         Row: {
           action_params: Json
           action_type: string
+          claim_token: string | null
           created_at: string | null
           executed_at: string | null
           id: string
@@ -119,6 +120,7 @@ export type Database = {
         Insert: {
           action_params: Json
           action_type: string
+          claim_token?: string | null
           created_at?: string | null
           executed_at?: string | null
           id?: string
@@ -130,6 +132,7 @@ export type Database = {
         Update: {
           action_params?: Json
           action_type?: string
+          claim_token?: string | null
           created_at?: string | null
           executed_at?: string | null
           id?: string
