@@ -53,7 +53,7 @@
 - RLS の PUBLIC 実行権限・列権限は「migration に REVOKE/GRANT が無い」ことからの推定
 - `GET /api/org/invites` が参照する `organizations`/`departments`/`role`/`department_id` は migration 管理外のレガシースキーマの可能性（誤検知寄りに格下げ済み）
 - `ai_consultation_*` / `nutrition_targets` / `health_insights` / `health_challenges` / `user_badges` の DDL・RLS がリポジトリに無い → 本番で RLS 確認し migration として取り込むこと
-- `ai_action_logs` は取り込み済み (DDL・RLS は baseline `20251126124224` と `20261107120000_ai_action_logs_select_only.sql`。利用者 (authenticated) は自分の相談の行を読むだけで書けない・anon は権限なし。#2283)
+- `ai_action_logs` は取り込み済み (DDL・RLS は baseline `20251126124224` と `20261107120000_ai_action_logs_select_only.sql`。利用者 (authenticated) は自分の相談の行を読むだけで書けない・anon は権限なし。#2283。実行の印の token の列 `claim_token` は `20261107140000_ai_action_logs_claim_token.sql`。#2299)
 
 ### 保留中の唯一のタスク
 - **#1058（横断デザインシステムの完全監査）** は Claude の週次利用上限で未完。2026-07-12 18:00(JST) のリセット後に完全監査を実施し #1058 に追記する。既知分（重複コンポーネント/デッドコード/グローバルa11y基盤チェックリスト）は起票済み。
