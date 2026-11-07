@@ -218,13 +218,13 @@ SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS 
     const token = randomUUID();
     const claimed = await srAdmin
       .from(TABLE)
-      .update({ status: AI_ACTION_LOG_STATUS.approved, [COLUMN]: token })
+      .update({ status: AI_ACTION_LOG_STATUS.running, [COLUMN]: token })
       .eq('id', id)
       .eq('status', AI_ACTION_LOG_STATUS.pending)
       .select('id');
     expect(claimed.error).toBeNull();
     expect(claimed.data).toEqual([{ id }]);
-    expect(await rowOf(id)).toMatchObject({ [COLUMN]: token, status: AI_ACTION_LOG_STATUS.approved });
+    expect(await rowOf(id)).toMatchObject({ [COLUMN]: token, status: AI_ACTION_LOG_STATUS.running });
 
     // 別のリクエストの token で絞った書き戻しは 0 行 (行は変わらない)
     const before = await rowOf(id);
@@ -233,7 +233,7 @@ SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS 
       .from(TABLE)
       .update({ status: AI_ACTION_LOG_STATUS.pending })
       .eq('id', id)
-      .eq('status', AI_ACTION_LOG_STATUS.approved)
+      .eq('status', AI_ACTION_LOG_STATUS.running)
       .eq(COLUMN, otherToken)
       .select('id');
     expect(stale.error).toBeNull();
@@ -245,7 +245,7 @@ SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS 
       .from(TABLE)
       .update({ status: AI_ACTION_LOG_STATUS.executed, result: { note: MARK } })
       .eq('id', id)
-      .eq('status', AI_ACTION_LOG_STATUS.approved)
+      .eq('status', AI_ACTION_LOG_STATUS.running)
       .eq(COLUMN, token)
       .select('id');
     expect(own.error).toBeNull();
@@ -256,7 +256,7 @@ SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS 
     const insertToken = randomUUID();
     const inserted = await srAdmin
       .from(TABLE)
-      .insert({ ...logRow(owner, AI_ACTION_LOG_STATUS.approved), [COLUMN]: insertToken })
+      .insert({ ...logRow(owner, AI_ACTION_LOG_STATUS.running), [COLUMN]: insertToken })
       .select(`id, ${COLUMN}`)
       .single();
     expect(inserted.error).toBeNull();
@@ -266,7 +266,7 @@ SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS 
   it('K-3: 本人は claim_token を読めるが、UPDATE・claim_token つきの INSERT はできない (42501・行は変わらない)', async () => {
     const id = await seedLog(owner);
     const token = randomUUID();
-    const claimed = await srAdmin.from(TABLE).update({ status: AI_ACTION_LOG_STATUS.approved, [COLUMN]: token }).eq('id', id).select('id');
+    const claimed = await srAdmin.from(TABLE).update({ status: AI_ACTION_LOG_STATUS.running, [COLUMN]: token }).eq('id', id).select('id');
     expect(claimed.error).toBeNull();
     const db = asUser(owner.jwt);
 
@@ -284,7 +284,7 @@ SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS 
     const directName = `${MARK} k3`;
     const inserted = await db
       .from(TABLE)
-      .insert({ ...logRow(owner, AI_ACTION_LOG_STATUS.approved), action_params: { name: directName }, [COLUMN]: randomUUID() })
+      .insert({ ...logRow(owner, AI_ACTION_LOG_STATUS.running), action_params: { name: directName }, [COLUMN]: randomUUID() })
       .select('id');
     expect(inserted.error?.code).toBe(INSUFFICIENT_PRIVILEGE);
     const { data: directRows, error: directError } = await srAdmin.from(TABLE).select('id').eq('action_params->>name', directName);
