@@ -213,6 +213,8 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
   {
     table: 'ai_action_logs',
     scope: viaParent('ai_consultation_sessions', 'session_id'),
+    // claim_token は実行の印を付けたリクエストの token (#2299。サーバーが書き戻しを絞るための内部の値で、利用者のデータではない)
+    omit: ['claim_token'],
     // 結果 (result) の失敗の文 (error) には、#1172 の前に書かれた DB の生のエラー文が入っていることがある
     transform: redactAiActionLogResult,
   },

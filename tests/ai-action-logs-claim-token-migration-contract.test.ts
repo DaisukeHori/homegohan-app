@@ -11,11 +11,14 @@
  *   T-4 戻し口は claim_token を DROP COLUMN IF EXISTS するだけ (権限・ポリシー・ほかの列に触れない)
  *   T-5 型の生成物 (src/types/database.types.ts・packages/shared/src/database.types.ts) の ai_action_logs の Row / Insert / Update に
  *       claim_token があり、生成物の形 (Row は `string | null`・Insert / Update は省略可) で、列の並び (名前の順) に入っている
+ *   T-6 個人データの書き出し (src/lib/account-export-tables.ts) は ai_action_logs の claim_token を出さない (サーバーの内部の値。
+ *       tests/account-export-tables.test.ts の「秘密っぽい列名」の検査がこの列を拾う)
  * 実際の挙動は tests/integration/rls/ai-action-logs-claim-token-2299.test.ts (実 DB) が確かめる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { ACCOUNT_EXPORT_TABLES } from '@/lib/account-export-tables';
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase', 'migrations');
@@ -176,5 +179,14 @@ describe('T-5 型の生成物 (#2299 W2a)', () => {
   it('2 つの型ファイルの ai_action_logs の節は同じ', () => {
     const [a, b] = TYPE_FILES.map(sectionsOf);
     expect(a).toEqual(b);
+  });
+});
+
+describe('T-6 個人データの書き出し (#2299 W2a)', () => {
+  it('ai_action_logs の claim_token を omit で外す', () => {
+    const spec = ACCOUNT_EXPORT_TABLES.find((t) => t.table === TABLE);
+    expect(spec).toBeDefined();
+    expect(spec?.columns).toBeUndefined();
+    expect(spec?.omit ?? []).toContain(COLUMN);
   });
 });
