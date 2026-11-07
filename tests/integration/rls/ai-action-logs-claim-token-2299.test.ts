@@ -12,8 +12,10 @@
  *   | 本人                    | claim_token の UPDATE・claim_token つきの INSERT          | 42501・行は変わらない (K-3)       |
  *   | 未認証 (anon)           | claim_token の SELECT・UPDATE                             | 42501 (K-4)                       |
  *   | 戻し口                  | 1 つのトランザクションで流して巻き戻す                    | 流した直後は列が無い・巻き戻ったあとは列がある (K-5) |
+ *   | アプリの書き戻し (W2b)  | 2 つの token で ABA の順 (A の 1 回目が書けたのに応答を失う → B が印を取る → A の 2 回目) | A の 2 回目は 0 行・B の行は上書きされず、B の書き戻しが当たる (K-6) |
  * 権限とポリシーそのもの (SELECT だけの 1 本・anon は権限なし) は tests/integration/rls/ai-action-logs-select-only-2283.test.ts が見る。
- * claim_token を claim のときに書き、書き戻しを claim_token で絞るアプリの側は後段の W2b。
+ * claim_token を claim のときに書き、書き戻しを claim_token で絞るアプリの側は後段の W2b (K-6 は、その書き戻しの関数
+ * writeBackAiActionLog を、route と同じ書き手 getAiActionLogWriter で流す)。
  *
  * 修正前 (migration を流す前) は K-1・K-2・K-3 の読み取り・K-5 が赤になる (列が無い)。
  *
@@ -30,6 +32,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { AI_ACTION_LOG_STATUS } from '@/lib/ai/consultation-action-lifecycle';
+import { type AiActionLogWriter, newAiActionLogClaimToken, writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
+import { getAiActionLogWriter } from '@/lib/ai/ai-action-log-writer';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -183,6 +187,45 @@ async function rowOf(id: string): Promise<Record<string, unknown> | null> {
   return data as Record<string, unknown> | null;
 }
 
+/** K-6 の書き戻しのログの名前 (writeBackAiActionLog の routeName) */
+const WRITE_BACK_ROUTE_NAME = 'tests/integration/rls/ai-action-logs-claim-token-2299';
+/** 応答を失った (DB には書けたのに接続が切れた) ときに返す、偽の error */
+const LOST_RESPONSE_ERROR = { message: 'response lost after the write (test)', code: 'XX000' };
+
+/** 書き戻しの問い合わせの形 (update のあとの eq / select / maybeSingle だけを中継する) */
+interface WriteBackQuery {
+  eq(column: string, value: unknown): WriteBackQuery;
+  select(columns: string): WriteBackQuery;
+  maybeSingle(): PromiseLike<{ data: unknown; error: unknown }>;
+}
+
+/**
+ * 本物の書き手 (getAiActionLogWriter) を包み、1 回目の update を DB に書いたうえで応答を失わせる (error を返す)。
+ * 応答を失った直後 (2 回目の試みの前) に afterLostResponse を流す (ここで別の実行が印を取る)
+ */
+function writerLosingFirstResponse(afterLostResponse: () => Promise<void>): AiActionLogWriter {
+  const real = getAiActionLogWriter();
+  let attempts = 0;
+  const wrap = (inner: WriteBackQuery): WriteBackQuery => ({
+    eq: (column, value) => wrap(inner.eq(column, value)),
+    select: (columns) => wrap(inner.select(columns)),
+    maybeSingle: async () => {
+      attempts += 1;
+      const result = await inner.maybeSingle();
+      if (attempts > 1) return result;
+      // 1 回目は DB には書けている (書けていなければ、この順の前提が崩れている)
+      expect(result.error).toBeNull();
+      expect(result.data).not.toBeNull();
+      await afterLostResponse();
+      return { data: null, error: LOST_RESPONSE_ERROR };
+    },
+  });
+  const from = (table: string) => ({
+    update: (payload: Record<string, unknown>) => wrap(real.from(table).update(payload) as unknown as WriteBackQuery),
+  });
+  return { from } as unknown as AiActionLogWriter;
+}
+
 beforeAll(async () => {
   owner = await createUser('owner');
 }, LONG);
@@ -301,6 +344,51 @@ SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS 
     const updated = await db.from(TABLE).update({ [COLUMN]: randomUUID() }).eq('id', id).select('id');
     expect(updated.error?.code).toBe(INSUFFICIENT_PRIVILEGE);
     expect(await rowOf(id)).toEqual(before);
+  }, LONG);
+
+  it('K-6: 2 つの token で ABA の順を流しても、A の 2 回目の書き戻しは B の行を上書きせず (0 行・{ error: null })、B の書き戻しが当たる', async () => {
+    const id = await seedLog(owner);
+    const tokenA = newAiActionLogClaimToken();
+    const tokenB = newAiActionLogClaimToken();
+    /** execute の POST の claim と同じ 1 文 (pending のときだけ実行中の印にし、token を書く) */
+    const claim = (token: string) =>
+      srAdmin
+        .from(TABLE)
+        .update({ status: AI_ACTION_LOG_STATUS.running, [COLUMN]: token })
+        .eq('id', id)
+        .eq('status', AI_ACTION_LOG_STATUS.pending)
+        .select('id');
+    const claimedA = await claim(tokenA);
+    expect(claimedA.error).toBeNull();
+    expect(claimedA.data).toEqual([{ id }]);
+
+    // A: やり直せる失敗で pending に戻す書き戻し。1 回目は書けたのに応答を失い、その間に B が印を取る
+    let claimedB: Awaited<ReturnType<typeof claim>> | null = null;
+    const writerA = writerLosingFirstResponse(async () => {
+      expect(await rowOf(id)).toMatchObject({ status: AI_ACTION_LOG_STATUS.pending, [COLUMN]: tokenA });
+      claimedB = await claim(tokenB);
+    });
+    const resultA = await writeBackAiActionLog(
+      writerA,
+      WRITE_BACK_ROUTE_NAME,
+      { userId: owner.id, actionLogId: id, actionType: 'add_pantry_item', claimToken: tokenA },
+      { status: AI_ACTION_LOG_STATUS.pending, executed_at: null },
+    );
+
+    expect(claimedB).toMatchObject({ error: null, data: [{ id }] });
+    expect(resultA).toEqual({ error: null });
+    // A の 2 回目は token が一致しないので書かない (修正前は B の approved を pending で上書きしていた)
+    expect(await rowOf(id)).toMatchObject({ status: AI_ACTION_LOG_STATUS.running, [COLUMN]: tokenB });
+
+    // B: 実行が成功して executed に書き戻す。B の token で当たる
+    const resultB = await writeBackAiActionLog(
+      getAiActionLogWriter(),
+      WRITE_BACK_ROUTE_NAME,
+      { userId: owner.id, actionLogId: id, actionType: 'add_pantry_item', claimToken: tokenB },
+      { status: AI_ACTION_LOG_STATUS.executed, result: { note: MARK }, executed_at: new Date().toISOString() },
+    );
+    expect(resultB).toEqual({ error: null });
+    expect(await rowOf(id)).toMatchObject({ status: AI_ACTION_LOG_STATUS.executed, [COLUMN]: tokenB, result: { note: MARK } });
   }, LONG);
 
   it('K-5: 戻し口を流すと列が消える (巻き戻すので DB には残らない)', async () => {

@@ -21,7 +21,7 @@ import {
   type ProposedActionExecuteNotExecutableFields,
   type ProposedActionNotExecutableReason,
 } from '@/lib/ai/consultation-action-lifecycle';
-import { writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
+import { newAiActionLogClaimToken, writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
 import { getAiActionLogWriter, isAiActionLogOwnedBy } from '@/lib/ai/ai-action-log-writer';
 
 // 指定日付の user_daily_meals を取得または作成するヘルパー関数
@@ -233,10 +233,13 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
     // (2 つの画面から同時に押す・自動実行の最中に押すと、同じ提案を二重に実行していた。失敗した提案を pending のまま残して
     // やり直せるようにしたので、二重の実行を DB の 1 文で防ぐ)
     // 行への書き込みは service role のクライアントで行う (#2283 Y1。利用者には読むだけにする。持ち主は上で確かめた)
+    // 印には、このリクエストだけの token (claim_token) も書く。書き戻しはこの token の行だけに書くので、別の実行が付け直した印を
+    // 上書きしない (#2299 の B)
     const actionLogDb = getAiActionLogWriter();
+    const claimToken = newAiActionLogClaimToken();
     const { data: claimed, error: claimError } = await actionLogDb
       .from('ai_action_logs')
-      .update({ status: AI_ACTION_LOG_STATUS.running })
+      .update({ status: AI_ACTION_LOG_STATUS.running, claim_token: claimToken })
       .eq('id', action.id)
       .eq('status', AI_ACTION_LOG_STATUS.pending)
       .select('id')
@@ -258,7 +261,7 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
       );
     }
 
-    const writeBackCtx = { userId: user.id, actionLogId: action.id, actionType: action.action_type };
+    const writeBackCtx = { userId: user.id, actionLogId: action.id, actionType: action.action_type, claimToken };
 
     // #1047 F2-21: アクション実行の中核ロジックは src/lib/ai/consultation-action-executor.ts
     // に抽出済み（messages/route.ts からも self-fetch ではなく直接呼び出す）。

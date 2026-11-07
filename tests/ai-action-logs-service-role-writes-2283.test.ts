@@ -101,15 +101,15 @@ const writesOf = (file: string) => findTableAccesses(codeOf(file)).filter((a) =>
 const WRITE_PATHS: Record<string, { ops: string[]; what: string }> = {
   'src/app/api/ai/consultation/actions/[actionId]/execute/route.ts': {
     ops: ['update', 'update'],
-    what: 'POST: pending → 実行中の印 (approved) を取る条件つきの更新 / DELETE: pending → 却下 (rejected) の条件つきの更新 (#2292)。どちらも行の相談の持ち主を isAiActionLogOwnedBy で確かめてから',
+    what: 'POST: pending → 実行中の印 (approved) を取る条件つきの更新 (取るたびに新しい claim_token を書く。#2299 の B) / DELETE: pending → 却下 (rejected) の条件つきの更新 (#2292)。どちらも行の相談の持ち主を isAiActionLogOwnedBy で確かめてから',
   },
   'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts': {
     ops: ['insert'],
-    what: 'POST の自動実行: 行を実行中の印で作る。相談の持ち主を isConsultationSessionOwnedBy で確かめてから',
+    what: 'POST の自動実行: 行を実行中の印で作る (新しい claim_token も書く。#2299 の B)。相談の持ち主を isConsultationSessionOwnedBy で確かめてから',
   },
   'src/lib/ai/consultation-action-log-writes.ts': {
     ops: ['update'],
-    what: '実行のあとの書き戻し (writeBackAiActionLog。execute の POST と messages の POST の自動実行が呼ぶ)。行が実行中の印 (approved) のときだけ書く条件つきの更新 (#2295)',
+    what: '実行のあとの書き戻し (writeBackAiActionLog。execute の POST と messages の POST の自動実行が呼ぶ)。行が実行中の印 (approved) で、印がその実行の claim_token のときだけ書く条件つきの更新 (#2295・#2299 の B。claim_token は書き換えない)',
   },
 };
 

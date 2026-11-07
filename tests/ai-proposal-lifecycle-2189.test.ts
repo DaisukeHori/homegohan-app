@@ -315,7 +315,11 @@ describe('POST /api/ai/consultation/actions/[actionId]/execute (#2189 W1-a)', ()
     const { status } = await execute();
 
     expect(status).toBe(429);
-    expect(actionLogWrites().map((w) => w.payload)).toEqual([{ status: 'approved' }, { status: 'pending' }]);
+    // 実行中の印には、このリクエストの token (claim_token) も書く (#2299 の B)。戻しは token を書き換えない
+    expect(actionLogWrites().map((w) => w.payload)).toEqual([
+      { status: 'approved', claim_token: expect.stringMatching(/^[0-9a-f-]{36}$/) },
+      { status: 'pending' },
+    ]);
   });
 
   it('対応していない種類: 400 で、行は failed (以前は pending のまま残り、何度押しても 400)', async () => {
@@ -719,9 +723,12 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
     expect(backs).toHaveLength(2);
     expect(backs[0].payload).toEqual(backs[1].payload);
     expect(backs[1].payload).toMatchObject({ status: 'executed', result: { itemId: 'p1', created: true } });
-    // 書き戻しは行が実行中の印 (approved) のときだけ書く条件つきの更新 (#2295。2 回目が、その間に別の操作が進めた行を上書きしない)
-    expect(backs[0].filters).toEqual([['id', ACTION_LOG_ID], ['status', 'approved']]);
-    expect(backs[1].filters).toEqual([['id', ACTION_LOG_ID], ['status', 'approved']]);
+    // 書き戻しは行が実行中の印 (approved) で、印がこの実行の token のときだけ書く条件つきの更新 (#2295・#2299 の B。
+    // 2 回目が、その間に別の操作が進めた行・別の実行が付け直した印を上書きしない)
+    const claimToken = (actionLogWrites()[0].payload as Row).claim_token;
+    expect(claimToken).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/));
+    expect(backs[0].filters).toEqual([['id', ACTION_LOG_ID], ['status', 'approved'], ['claim_token', claimToken]]);
+    expect(backs[1].filters).toEqual([['id', ACTION_LOG_ID], ['status', 'approved'], ['claim_token', claimToken]]);
     expect(h.logError).not.toHaveBeenCalledWith(WRITE_BACK_FAILED_LOG, expect.anything(), expect.anything());
   });
 
