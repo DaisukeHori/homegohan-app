@@ -227,3 +227,10 @@ export function proposedActionNotExecutableReasonOfStatuses(
  * 行が無いので、カードの「実行する」からも実行できない
  */
 export const AI_CONSULTATION_ACTION_LOG_INSERT_FAILED_MESSAGE = '提案を記録できなかったため、実行しませんでした。もう一度 AI に頼んでください。';
+
+/**
+ * 提案のカードの「断る」(DELETE /api/ai/consultation/actions/[actionId]/execute) が断れなかったときに会話へ足す文 (#2295)。
+ * 応答が 404 (実行中・実行済み) 以外の失敗 (500・401・応答が読めない・通信の失敗) のときに出す。カードは残すので、もう一度断れる。
+ * 応答の本文 (error) の文面は画面に出さず、いつもこの固定の文にする
+ */
+export const AI_PROPOSED_ACTION_REJECT_FAILED_MESSAGE = '提案を断れませんでした。時間をおいてもう一度お試しください。';

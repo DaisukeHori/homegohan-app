@@ -109,7 +109,7 @@ const WRITE_PATHS: Record<string, { ops: string[]; what: string }> = {
   },
   'src/lib/ai/consultation-action-log-writes.ts': {
     ops: ['update'],
-    what: '実行のあとの書き戻し (writeBackAiActionLog。execute の POST と messages の POST の自動実行が呼ぶ)',
+    what: '実行のあとの書き戻し (writeBackAiActionLog。execute の POST と messages の POST の自動実行が呼ぶ)。行が実行中の印 (approved) のときだけ書く条件つきの更新 (#2295)',
   },
 };
 
