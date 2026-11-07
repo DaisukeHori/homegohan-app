@@ -197,6 +197,64 @@ export function proposedActionRejectNotFoundFieldsOfView(view: ProposedActionVie
   return reason ? { notExecutableReason: reason } : {};
 }
 
+/**
+ * 実行の API (POST /api/ai/consultation/actions/[actionId]/execute) の 400 / 404 の本文に添える値 (#2299)。
+ * 断った提案 (proposedActionRejectedOnlyOf) には proposedActionHidden: true を添え (画面はカードを閉じる。相談を開き直したときの
+ * GET の hidden と同じ)、それ以外は「実行する」を出さない理由 (notExecutableReason) を添える (理由が無いときは何も添えない)
+ */
+export interface ProposedActionExecuteNotExecutableFields {
+  proposedActionHidden?: true;
+  notExecutableReason?: ProposedActionNotExecutableReason;
+}
+
+/**
+ * 1 つのメッセージに付いた行の状態たちが「断った提案」か (#2299): rejected があり、executed も approved (実行中の印) も無い。
+ * executed があるときは、頼み直すと二重になるので「実行中か実行済み」の案内を残す (#2195 V2)。approved があるときは、
+ * 実行できたかを確かめられない (#2201 U3) ので、カードを閉じない
+ */
+export function proposedActionRejectedOnlyOf(statuses: readonly unknown[]): boolean {
+  return (
+    statuses.includes(AI_ACTION_LOG_STATUS.rejected) &&
+    !statuses.includes(AI_ACTION_LOG_STATUS.executed) &&
+    !statuses.includes(AI_ACTION_LOG_STATUS.running)
+  );
+}
+
+/**
+ * 実行の API の 404 (メッセージ ID で pending の行が無い) と 400 (読んだ時点で pending でない) の本文に添える値 (#2299)。
+ * statuses はそのメッセージの本人の行の状態たち (400 は読んだ 1 行の状態だけ)。読めなかったときは null (何も添えない)。
+ * 断った提案は proposedActionHidden: true、それ以外は今までの理由 (proposedActionNotExecutableReasonOfStatuses。行が無いときは何も添えない)
+ */
+export function proposedActionExecuteNotExecutableFieldsOfStatuses(
+  statuses: readonly unknown[] | null,
+): ProposedActionExecuteNotExecutableFields {
+  if (!statuses) return {};
+  if (proposedActionRejectedOnlyOf(statuses)) return { proposedActionHidden: true };
+  const reason = proposedActionNotExecutableReasonOfStatuses(statuses);
+  return reason ? { notExecutableReason: reason } : {};
+}
+
+/**
+ * 実行の API の 400 (実行中の印の取得 (claim) が 0 行。読んでから取るまでの間に先を越された) の本文に添える値 (#2299)。
+ * statuses は claim のあとに読み直した、そのメッセージの本人の行の状態たち (読めなかったときは null)。
+ * 間に別の画面が断った (断った提案) なら proposedActionHidden: true、それ以外 (実行中の印・実行済み・読めない など) は
+ * 今までと同じ runningOrDone (別の画面・自動実行が先に取った)
+ */
+export function proposedActionExecuteClaimLostFieldsOfStatuses(
+  statuses: readonly unknown[] | null,
+): ProposedActionExecuteNotExecutableFields {
+  if (statuses && proposedActionRejectedOnlyOf(statuses)) return { proposedActionHidden: true };
+  return { notExecutableReason: PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone };
+}
+
+/**
+ * 実行の API の 400 / 404 の本文が、カードを閉じる (proposedActionHidden: true) ことを示しているか (#2299)。
+ * 許した値 (true) だけを通す (proposedActionRejectNotFoundOutcomeOfBody と同じ読み方)
+ */
+export function isProposedActionHiddenBody(body: unknown): boolean {
+  return !!body && typeof body === 'object' && (body as { proposedActionHidden?: unknown }).proposedActionHidden === true;
+}
+
 /** 断る API の 404 の本文から読んだ、画面の出し方 (#2295) */
 export type ProposedActionRejectNotFoundOutcome =
   /** カードを閉じる (断った・実行済み。開き直したときの GET と同じ) */
@@ -212,8 +270,8 @@ export type ProposedActionRejectNotFoundOutcome =
  */
 export function proposedActionRejectNotFoundOutcomeOfBody(body: unknown): ProposedActionRejectNotFoundOutcome {
   if (!body || typeof body !== 'object') return { kind: 'unknown' };
-  const fields = body as { proposedActionHidden?: unknown; notExecutableReason?: unknown };
-  if (fields.proposedActionHidden === true) return { kind: 'hidden' };
+  if (isProposedActionHiddenBody(body)) return { kind: 'hidden' };
+  const fields = body as { notExecutableReason?: unknown };
   if (isProposedActionNotExecutableReason(fields.notExecutableReason)) {
     return { kind: 'notExecutable', reason: fields.notExecutableReason };
   }

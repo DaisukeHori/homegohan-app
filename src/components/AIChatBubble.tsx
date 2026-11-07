@@ -44,6 +44,7 @@ import {
   isProposedActionNotExecutableReason,
   proposedActionNotExecutableReasonOfView,
   proposedActionRejectNotFoundOutcomeOfBody,
+  isProposedActionHiddenBody,
   proposedActionViewOf,
   type ProposedActionNotExecutableReason,
 } from "@/lib/ai/consultation-action-lifecycle";
@@ -2183,6 +2184,12 @@ export default function AIChatBubble() {
         // 出させたので、ここでは重ねて出さない (提案は残っているので、明日また実行できる)。
         // ただし行を pending に戻せなかった (retryable: false) ときは、明日押しても実行できないので案内にする (#2195 V2)
         const { body } = response;
+        // すでに処理された・見つからない (400 / 404) 提案のうち、断った提案 (別のタブで断った) は、カードを閉じる (#2299。相談を
+        // 開き直したときの GET と同じ見え方。以前は「もう一度 AI に頼んでください」や「実行中か実行済み」と出ていた)。失敗の文は足さない
+        if (ACTION_NOT_EXECUTABLE_RESPONSE_STATUSES.has(response.status) && isProposedActionHiddenBody(body)) {
+          dismissProposedAction(messageId);
+          return;
+        }
         if (response.dailyLimited) {
           if (isNotRetryableBody(body)) markProposedActionNotExecutable(messageId, notExecutableReasonOfBody(body));
           return;
@@ -2253,7 +2260,9 @@ export default function AIChatBubble() {
   const rejectAction = async (messageId: string) => {
     // 相談を閉じる (/close) の応答待ちの間・終了した相談の提案は断らない (#2295 integrity-1107d。executeAction の入口と同じ。
     // ボタンも止めている。ref で見るのは、閉じると同じ描画のうちの押下も止めるため)
-    if (closingSessionRef.current) return;
+    // 会話の読み込みの最中も断らない (#2299。executeAction の入口と同じ。結果 (カードを閉じる・失敗の文) が、あとから返った読み込みの
+    // 会話の置き換えで消える。読み込みの最中は読み込み中の輪がカードを隠す)
+    if (closingSessionRef.current || loadingRef.current) return;
     if (isSessionClosedNow(currentSessionIdRef.current)) return;
     // 同じカードの「実行する」が応答待ち (同意の確認を待つ間を含む): 断らない (#2295 integrity-1107d。executeAction の入口が「断る」の
     // 応答待ちを見るのと対称。以前は止めず、実行中に断ると行が approved なので DELETE が 404 + unconfirmed を返し、実行中のカードに
@@ -2273,20 +2282,29 @@ export default function AIChatBubble() {
       ]);
     };
     try {
-      const res = await fetch(`/api/ai/consultation/actions/${messageId}/execute`, {
-        method: 'DELETE',
+      // 応答は executeAction と同じ AI_CHAT_REQUEST_TIME_LIMIT_MS を上限に待つ (#2299。以前は上限が無く、応答が返らない間は
+      // カードの「実行する」「断る」が止まったままだった)。応答の本文を読むところまで上限の中で行う。上限に達したら下の catch で
+      // カードを残して失敗の文を出す (サーバーで断れていても、押し直すと 404 の proposedActionHidden でカードが閉じる)
+      const response = await withinConsultationRequestTimeLimit(AI_CHAT_REQUEST_TIME_LIMIT_MS, async (signal) => {
+        const res = await fetch(`/api/ai/consultation/actions/${messageId}/execute`, {
+          method: 'DELETE',
+          signal,
+        });
+        if (res.ok) return { kind: 'ok' } as const;
+        const body: unknown =
+          res.status === REJECT_NOT_PENDING_RESPONSE_STATUS ? await res.json().catch(() => null) : null;
+        return { kind: 'error', status: res.status, body } as const;
       });
 
-      if (res.ok) {
+      if (response.kind === 'ok') {
         // アクションを削除
         setMessages(prev => prev.map(m =>
           m.id === messageId ? { ...m, proposedActions: null } : m
         ));
         return;
       }
-      if (res.status === REJECT_NOT_PENDING_RESPONSE_STATUS) {
-        const body: unknown = await res.json().catch(() => null);
-        const outcome = proposedActionRejectNotFoundOutcomeOfBody(body);
+      if (response.status === REJECT_NOT_PENDING_RESPONSE_STATUS) {
+        const outcome = proposedActionRejectNotFoundOutcomeOfBody(response.body);
         if (outcome.kind === 'hidden') {
           setMessages(prev => prev.map(m =>
             m.id === messageId ? { ...m, proposedActions: null } : m
@@ -2301,7 +2319,8 @@ export default function AIChatBubble() {
       showRejectFailed();
     } catch (e) {
       console.error('Failed to reject action:', e);
-      // 通信の失敗: 断れたかは分からないが、カードは残す (開き直すと行の状態でカードが決まる)
+      // 通信の失敗・応答が上限までに返らなかった (#2299): 断れたかは分からないが、カードは残す (開き直すと行の状態でカードが決まる。
+      // 押し直すと、断れていれば 404 の proposedActionHidden でカードが閉じる)
       showRejectFailed();
     } finally {
       rejectingActionIdsRef.current.delete(messageId);

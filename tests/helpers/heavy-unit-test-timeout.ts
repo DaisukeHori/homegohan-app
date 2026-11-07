@@ -100,6 +100,9 @@
  * #2295 で足したもの: tests/ai-proposal-reject-response-2295.test.tsx は、同じ型 (AI 相談の吹き出しを描き、文が出るまでの待ちに
  *   tests/helpers/act-wait.ts を使う。tests/ai-proposal-card-2189.test.tsx と同じ形)。
  *
+ * #2299 で足したもの: tests/ai-proposal-execute-hidden-web-2299.test.tsx は、同じ型 (AI 相談の吹き出しを描き、文が出るまでの待ちに
+ *   tests/helpers/act-wait.ts を使う。tests/ai-proposal-reject-response-2295.test.tsx と同じ形)。
+ *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる
  * (各ファイルの先頭で applyHeavyUnitTestTimeout() を呼んで vi.setConfig する。時間切れはテスト・フックを登録したときの
@@ -166,6 +169,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/ai-consultation-latest-messages-2144.test.ts",
   "tests/ai-consultation-receiver-placement-guard-2206.test.ts",
   "tests/ai-proposal-card-2189.test.tsx",
+  "tests/ai-proposal-execute-hidden-web-2299.test.tsx",
   "tests/ai-proposal-reject-response-2295.test.tsx",
   "tests/ai-rate-limit-contracts.test.ts",
   "tests/ai-usage-direct-jwt-edge.test.ts",
