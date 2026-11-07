@@ -690,7 +690,8 @@ export default function AIChatBubble() {
   // 終わった実行がもう一方のカードの実行中の印を消し、まだ応答待ちのカードの「実行する」をまた押せた
   const [executingActionIds, setExecutingActionIds] = useState<ReadonlySet<string>>(() => new Set());
   // 実行を始めた提案のカード (メッセージの id) を ref でも持つ (#2259 P1)。印 (state) は描画を待つので、同じ描画のうちの 2 度目の押下を
-  // 止められない (closingSessionRef と同じ形)
+  // 止められない (closingSessionRef と同じ形)。実行の応答待ちの間は、そのカードの「断る」も止める (#2295 integrity-1107d。rejectAction の
+  // 入口でも見る)
   const executingActionIdsRef = useRef(new Set<string>());
   // 「断る」の応答待ちの提案のカード (メッセージの id) の集まり (#2295)。応答待ちの間は、そのカードの「実行する」「断る」を止める
   // (以前は止めず、断るの応答待ちの間に「断る」をもう一度押せ、「実行する」も押せた)。ref でも持つのは、同じ描画のうちの
@@ -2250,6 +2251,14 @@ export default function AIChatBubble() {
   //       (以前は 404 をいつも「実行中か実行済み」にしていたので、別の画面で断っただけの提案にもそう出ていた)
   //   - それ以外 (500・401・通信の失敗): カードを残し (もう一度押せる)、固定の失敗の文を会話に足す (応答の本文の文面は出さない)
   const rejectAction = async (messageId: string) => {
+    // 相談を閉じる (/close) の応答待ちの間・終了した相談の提案は断らない (#2295 integrity-1107d。executeAction の入口と同じ。
+    // ボタンも止めている。ref で見るのは、閉じると同じ描画のうちの押下も止めるため)
+    if (closingSessionRef.current) return;
+    if (isSessionClosedNow(currentSessionIdRef.current)) return;
+    // 同じカードの「実行する」が応答待ち (同意の確認を待つ間を含む): 断らない (#2295 integrity-1107d。executeAction の入口が「断る」の
+    // 応答待ちを見るのと対称。以前は止めず、実行中に断ると行が approved なので DELETE が 404 + unconfirmed を返し、実行中のカードに
+    // 『確かめられませんでした』が出た。ボタンも止めている。ref で見るのは、同じ描画のうちの押下も止めるため)
+    if (executingActionIdsRef.current.has(messageId)) return;
     // 同じカードの「断る」がもう応答待ち (同じ描画のうちの 2 度目の押下): 断らない (ボタンも止めている)
     if (rejectingActionIdsRef.current.has(messageId)) return;
     rejectingActionIdsRef.current.add(messageId);
@@ -2656,9 +2665,12 @@ export default function AIChatBubble() {
     isLoading ||
     dayMenuWithoutSession ||
     shownSessionClosed;
-  // 提案のカードの「実行する」を止めるか (#2283 で、終了した相談を足した。executeAction の入口でも止めている)
-  // 「断る」の応答待ちの間も止める (#2295。rejectAction の入口でも止めている)
-  const executeLockedOf = (messageId: string) =>
+  // 提案のカードの「実行する」「断る」を止めるか (#2283 で、終了した相談を足した。executeAction・rejectAction の入口でも止めている)
+  // 「断る」の応答待ちの間も止める (#2295)。「実行する」の応答待ちの間は「断る」も止める (#2295 integrity-1107d。以前は「断る」を
+  // 断るの応答待ちの間だけ止めていたので、実行中に「断る」を押せ、行が approved なので DELETE が 404 + unconfirmed を返し、実行中の
+  // カードに『確かめられませんでした』が出た。そのあと実行がやり直せる失敗で終わる (行が pending に戻る) と、「実行する」が出ないまま
+  // 残った)。2 つのボタンは同じ条件で止める
+  const proposedActionLockedOf = (messageId: string) =>
     executingActionIds.has(messageId) || rejectingActionIds.has(messageId) || isClosingSession || shownSessionClosed;
 
   return (
@@ -3045,9 +3057,9 @@ export default function AIChatBubble() {
                               <div className="flex gap-2">
                                 <button
                                   onClick={() => executeAction(msg.proposedActions!.type, msg.id)}
-                                  disabled={executeLockedOf(msg.id)}
+                                  disabled={proposedActionLockedOf(msg.id)}
                                   className="flex-1 py-2 rounded-lg flex items-center justify-center gap-1"
-                                  style={{ background: colors.success, opacity: executeLockedOf(msg.id) ? BUSY_BUTTON_OPACITY : 1 }}
+                                  style={{ background: colors.success, opacity: proposedActionLockedOf(msg.id) ? BUSY_BUTTON_OPACITY : 1 }}
                                 >
                                   {executingActionIds.has(msg.id) ? (
                                     <Loader2 size={14} color="#fff" className="animate-spin" />
@@ -3060,10 +3072,10 @@ export default function AIChatBubble() {
                                 </button>
                                 <button
                                   onClick={() => rejectAction(msg.id)}
-                                  disabled={rejectingActionIds.has(msg.id)}
+                                  disabled={proposedActionLockedOf(msg.id)}
                                   aria-label="提案を断る"
                                   className="px-3 py-2 rounded-lg"
-                                  style={{ background: colors.border, opacity: rejectingActionIds.has(msg.id) ? BUSY_BUTTON_OPACITY : 1 }}
+                                  style={{ background: colors.border, opacity: proposedActionLockedOf(msg.id) ? BUSY_BUTTON_OPACITY : 1 }}
                                 >
                                   <XCircle size={14} color={colors.textMuted} />
                                 </button>
