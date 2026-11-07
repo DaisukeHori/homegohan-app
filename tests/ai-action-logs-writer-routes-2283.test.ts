@@ -287,11 +287,14 @@ describe('DELETE /api/ai/consultation/actions/[actionId]/execute (却下。#2283
     h.single[ACTION_LOGS] = pendingLog(USER);
     // 条件 (status = pending) に合う行が無く、更新が 1 行も返らない
     h.written[ACTION_LOGS] = null;
+    // 読み直すと、行は実行中の印 (approved。別の画面・自動実行が先に取った)
+    h.rows[ACTION_LOGS] = [{ status: 'approved' }];
 
     const res = await executeRoute.DELETE(...actionRequest('DELETE'));
 
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE });
+    // そのメッセージの行の状態から、カードの見え方を添える (#2295 integrity-1107c の是正。approved のままは GET と同じ unconfirmed)
+    expect(await res.json()).toEqual({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE, notExecutableReason: 'unconfirmed' });
     // 実行中・実行済みの行を rejected で上書きしない: 更新は pending の条件つきで 1 回だけ
     expect(actionLogWrites().map((w) => [w.client, w.op, w.payload, w.filters])).toEqual([REJECT_WRITE]);
   });

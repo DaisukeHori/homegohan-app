@@ -17,6 +17,8 @@ import {
   notExecutableReasonAfterRun,
   proposedActionNotExecutableReasonOfStatus,
   proposedActionNotExecutableReasonOfStatuses,
+  proposedActionRejectNotFoundFieldsOfView,
+  proposedActionViewOf,
   type ProposedActionNotExecutableReason,
 } from '@/lib/ai/consultation-action-lifecycle';
 import { writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
@@ -68,22 +70,56 @@ function notExecutableResponse(
 }
 
 /**
- * メッセージ ID で実行を待っている (pending の) 行が見つからなかったとき、そのメッセージの行の状態から「実行する」を出さない理由を決める。
- * Web の提案のカードはメッセージ ID で実行の API を呼ぶので、別の画面・自動実行が実行中か実行済みの提案を押すとここに来る。
- * 自分の相談の行だけを見る (ほかの人の行の有無は返さない)。読めなかった・行が無いときは null (理由を添えない)
+ * メッセージに付いた行 (ai_action_logs) の状態を読む。実行の API (POST) と断る API (DELETE) の 404 が、添える値を決めるのに使う。
+ * 自分の相談の行だけを見る (ai_consultation_sessions.user_id = 本人。ほかの人の行の有無は返さない)。読めなかったときは null
  */
-async function notExecutableReasonOfMessage(
+async function actionLogStatusesOfMessage(
   supabase: Awaited<ReturnType<typeof createClient>>,
   messageId: string,
   userId: string,
-): Promise<ProposedActionNotExecutableReason | null> {
+): Promise<unknown[] | null> {
   const { data, error } = await supabase
     .from('ai_action_logs')
     .select('status, ai_consultation_sessions!inner(user_id)')
     .eq('message_id', messageId)
     .eq('ai_consultation_sessions.user_id', userId);
   if (error || !Array.isArray(data)) return null;
-  return proposedActionNotExecutableReasonOfStatuses((data as Array<{ status: unknown }>).map((row) => row.status));
+  return (data as Array<{ status: unknown }>).map((row) => row.status);
+}
+
+/**
+ * メッセージ ID で実行を待っている (pending の) 行が見つからなかったとき、そのメッセージの行の状態から「実行する」を出さない理由を決める。
+ * Web の提案のカードはメッセージ ID で実行の API を呼ぶので、別の画面・自動実行が実行中か実行済みの提案を押すとここに来る。
+ * 読めなかった・行が無いときは null (理由を添えない)
+ */
+async function notExecutableReasonOfMessage(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  messageId: string,
+  userId: string,
+): Promise<ProposedActionNotExecutableReason | null> {
+  const statuses = await actionLogStatusesOfMessage(supabase, messageId, userId);
+  return statuses ? proposedActionNotExecutableReasonOfStatuses(statuses) : null;
+}
+
+/**
+ * 断る API の 404 (pending の行が無い・条件つきの更新が 0 行) に、カードの見え方を添える (#2295)。
+ * 404 は、行が断られた (別の画面で断った)・実行済み・失敗・実行中の印のまま・行が無い、のどれでも返るので、画面が
+ * 「実行中か実行済み」と決め打ちしないよう、相談を開き直したときの GET と同じ見え方 (proposedActionViewOf) を添える。
+ * 読めなかった・メッセージ ID が無いときは何も添えない (画面はカードを残し、断れなかった文を出す)
+ */
+async function rejectNotFoundResponse(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  messageId: unknown,
+  userId: string,
+): Promise<NextResponse> {
+  const statuses = typeof messageId === 'string' ? await actionLogStatusesOfMessage(supabase, messageId, userId) : null;
+  // GET と同じく、文字でない状態は数えない
+  const fields = statuses
+    ? proposedActionRejectNotFoundFieldsOfView(
+        proposedActionViewOf(statuses.filter((status): status is string => typeof status === 'string')),
+      )
+    : {};
+  return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE, ...fields }, { status: 404 });
 }
 
 // アクション実行
@@ -331,7 +367,8 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
         return internalError('DELETE /api/ai/consultation/actions/[actionId]/execute', msgError, { userId: user.id, table: 'ai_action_logs' });
       }
       if (!actionByMessage) {
-        return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
+        // 断れる (pending の) 行が無い: 断った・実行済み・失敗・実行中の印のまま・行が無い。カードの見え方を添える (#2295)
+        return rejectNotFoundResponse(supabase, params.actionId, user.id);
       }
       action = actionByMessage;
     }
@@ -360,8 +397,9 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
 
     if (error) throw error;
     if (!rejected) {
-      // 読んだあとに別の画面・自動実行が先に取った (実行中か実行済み)。読んだ時点で pending でなかったときと同じ 404
-      return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
+      // 読んだあとに別の画面・自動実行が先に取った・別の画面で断った。読んだ時点で pending でなかったときと同じ 404 で、
+      // そのメッセージの行の状態からカードの見え方を添える (#2295)
+      return rejectNotFoundResponse(supabase, action.message_id, user.id);
     }
 
     return NextResponse.json({ success: true });
