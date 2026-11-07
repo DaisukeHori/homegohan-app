@@ -36,7 +36,9 @@ import {
 } from "@/lib/ai/consultation-action-outcome";
 // 提案のカードに「実行する」を出せないとき (やり直せない失敗・実行中・記録が無い) の案内 (#2189 W1-a)。
 // 案内の文は理由で分ける: 実行中・実行済みは頼み直しを勧めない (#2195 V2)
+// 「断る」が断れなかったとき (404 以外の失敗) に会話へ足す固定の文 (#2295)
 import {
+  AI_PROPOSED_ACTION_REJECT_FAILED_MESSAGE,
   PROPOSED_ACTION_NOT_EXECUTABLE_REASON,
   aiProposedActionNotExecutableGuideOf,
   isProposedActionNotExecutableReason,
@@ -358,6 +360,12 @@ function isNotRetryableBody(body: unknown): boolean {
  * 400 = すでに処理された (実行中・実行済み・断った)・対応していない種類 / 404 = 実行を待っている提案の行が無い
  */
 const ACTION_NOT_EXECUTABLE_RESPONSE_STATUSES: ReadonlySet<number> = new Set([400, 404]);
+
+/**
+ * 断る API (DELETE /api/ai/consultation/actions/[actionId]/execute) がこの状態コードを返したら、提案の行はもう pending でない
+ * (別の画面・自動実行が先に実行を始めた・実行済み。#2294 で、読んだあとに先に取られた行も同じ 404)。カードは「実行中か実行済み」の案内にする (#2295)
+ */
+const REJECT_NOT_PENDING_RESPONSE_STATUS = 404;
 
 /** 自動実行の結果のメッセージを、AI の応答を確定させてから足すまでの間 (ミリ秒)。応答の表示の直後に重ねず、少し遅らせて出す */
 export const AUTO_ACTION_OUTCOME_MESSAGE_DELAY_MS = 300;
@@ -682,6 +690,11 @@ export default function AIChatBubble() {
   // 実行を始めた提案のカード (メッセージの id) を ref でも持つ (#2259 P1)。印 (state) は描画を待つので、同じ描画のうちの 2 度目の押下を
   // 止められない (closingSessionRef と同じ形)
   const executingActionIdsRef = useRef(new Set<string>());
+  // 「断る」の応答待ちの提案のカード (メッセージの id) の集まり (#2295)。応答待ちの間は、そのカードの「実行する」「断る」を止める
+  // (以前は止めず、断るの応答待ちの間に「断る」をもう一度押せ、「実行する」も押せた)。ref でも持つのは、同じ描画のうちの
+  // 2 度目の押下も止めるため (executingActionIdsRef と同じ形)
+  const [rejectingActionIds, setRejectingActionIds] = useState<ReadonlySet<string>>(() => new Set());
+  const rejectingActionIdsRef = useRef(new Set<string>());
   const [showSessionList, setShowSessionList] = useState(false);
   const [hasUnread, setHasUnread] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
@@ -2092,6 +2105,8 @@ export default function AIChatBubble() {
     // 同じカードの実行がもう始まっている (同じ描画のうちの 2 度目の押下・同意の確認を待つ間の押下): 実行しない (#2259 P1。以前は
     // 実行中の印 (state) だけを見ていたので、同じ描画のうちに 2 回押すと 2 回とも実行に入り、先に終わった方がカードの印を外した)
     if (executingActionIdsRef.current.has(messageId)) return;
+    // 同じカードの「断る」が応答待ち: 実行しない (#2295。ボタンも止めている)
+    if (rejectingActionIdsRef.current.has(messageId)) return;
     executingActionIdsRef.current.add(messageId);
     setExecutingActionIds(prev => new Set(prev).add(messageId));
     // 押したときに出していた相談 (#2259 P1。同意の確認を待つ間に切り替えた相談の画面に、結果の一文を出さない)
@@ -2224,19 +2239,53 @@ export default function AIChatBubble() {
     ));
   };
 
-  // アクション拒否
+  // アクション拒否。応答の status で画面を分ける (#2295。以前は status を見ずにいつもカードを閉じ、500 で断れていないのにカードが消えた
+  // (開き直すと pending のカードがまた出た)。404 でも、提案が実行中・実行済みであることが伝わらなかった):
+  //   - 2xx: カードを閉じる
+  //   - 404: 行がもう pending でない (別の画面・自動実行が先に実行を始めた・実行済み)。カードは閉じず「実行中か実行済み」の案内にする
+  //   - それ以外 (500・401・通信の失敗): カードを残し (もう一度押せる)、固定の失敗の文を会話に足す (応答の本文の文面は出さない)
   const rejectAction = async (messageId: string) => {
+    // 同じカードの「断る」がもう応答待ち (同じ描画のうちの 2 度目の押下): 断らない (ボタンも止めている)
+    if (rejectingActionIdsRef.current.has(messageId)) return;
+    rejectingActionIdsRef.current.add(messageId);
+    setRejectingActionIds(prev => new Set(prev).add(messageId));
+    // 押したときに出していた相談 (応答待ちの間に切り替えた相談の画面に、失敗の文を出さない。executeAction と同じ)
+    const sessionAtPress = currentSessionIdRef.current;
+    const showRejectFailed = () => {
+      if (currentSessionIdRef.current !== sessionAtPress) return;
+      setMessages(prev => [
+        ...prev,
+        actionOutcomeChatMessage({ kind: 'failed', content: AI_PROPOSED_ACTION_REJECT_FAILED_MESSAGE }),
+      ]);
+    };
     try {
-      await fetch(`/api/ai/consultation/actions/${messageId}/execute`, {
+      const res = await fetch(`/api/ai/consultation/actions/${messageId}/execute`, {
         method: 'DELETE',
       });
-      
-      // アクションを削除
-      setMessages(prev => prev.map(m => 
-        m.id === messageId ? { ...m, proposedActions: null } : m
-      ));
+
+      if (res.ok) {
+        // アクションを削除
+        setMessages(prev => prev.map(m =>
+          m.id === messageId ? { ...m, proposedActions: null } : m
+        ));
+        return;
+      }
+      if (res.status === REJECT_NOT_PENDING_RESPONSE_STATUS) {
+        markProposedActionNotExecutable(messageId, PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone);
+        return;
+      }
+      showRejectFailed();
     } catch (e) {
       console.error('Failed to reject action:', e);
+      // 通信の失敗: 断れたかは分からないが、カードは残す (開き直すと行の状態でカードが決まる)
+      showRejectFailed();
+    } finally {
+      rejectingActionIdsRef.current.delete(messageId);
+      setRejectingActionIds(prev => {
+        const next = new Set(prev);
+        next.delete(messageId);
+        return next;
+      });
     }
   };
 
@@ -2593,7 +2642,9 @@ export default function AIChatBubble() {
     dayMenuWithoutSession ||
     shownSessionClosed;
   // 提案のカードの「実行する」を止めるか (#2283 で、終了した相談を足した。executeAction の入口でも止めている)
-  const executeLockedOf = (messageId: string) => executingActionIds.has(messageId) || isClosingSession || shownSessionClosed;
+  // 「断る」の応答待ちの間も止める (#2295。rejectAction の入口でも止めている)
+  const executeLockedOf = (messageId: string) =>
+    executingActionIds.has(messageId) || rejectingActionIds.has(messageId) || isClosingSession || shownSessionClosed;
 
   return (
     <>
@@ -2994,8 +3045,10 @@ export default function AIChatBubble() {
                                 </button>
                                 <button
                                   onClick={() => rejectAction(msg.id)}
+                                  disabled={rejectingActionIds.has(msg.id)}
+                                  aria-label="提案を断る"
                                   className="px-3 py-2 rounded-lg"
-                                  style={{ background: colors.border }}
+                                  style={{ background: colors.border, opacity: rejectingActionIds.has(msg.id) ? BUSY_BUTTON_OPACITY : 1 }}
                                 >
                                   <XCircle size={14} color={colors.textMuted} />
                                 </button>
