@@ -3,8 +3,12 @@
  *
  * 問題 (修正前): DELETE /api/ai/consultation/actions/[actionId]/execute の応答の status を見ずに、いつもカードを閉じた。
  *   - 500 (DB の失敗): 断れていないのにカードが消え、開き直すと pending のカードがまた出た
- *   - 404 (別の画面・自動実行が先に実行を始めた・実行済み。#2294): 提案が実行中・実行済みであることが伝わらなかった
+ *   - 404 (断れる pending の行が無い: 別の画面で断った・別の画面や自動実行が先に実行を始めた・実行済み・間に pending に戻った など):
+ *     何が起きたのかが伝わらなかった (#2296 では 404 をいつも「実行中か実行済み」としていたが、断ったあとの行も 404 になる)
  *   - 断るの応答待ちの間も「断る」「実行する」を押せた
+ *   - 「実行する」の応答待ちの間も「断る」を押せた (integrity-1107d)。行が approved なので DELETE が 404 + unconfirmed を返し、
+ *     実行中のカードに『確かめられませんでした』が出た。そのあと実行がやり直せる失敗で終わる (行が pending に戻る) と、
+ *     「実行する」が出ないまま残った (開き直すと GET は「実行する」のカードを出す)
  *
  * 直したあと:
  *   - 2xx: カードを閉じる
@@ -16,6 +20,8 @@
  *   - それ以外 (500・401・通信の失敗): カードを残し (「実行する」「断る」は押せるまま)、固定の失敗の文を会話に 1 つ足す
  *     (応答の本文 error の文面は出さない)
  *   - 断るの応答待ちの間は、そのカードの「実行する」「断る」を止める
+ *   - 「実行する」の応答待ちの間・相談を閉じる途中・終了した相談では、「断る」も「実行する」と同じく止める (ボタンの disabled と
+ *     rejectAction の入口の両方。integrity-1107d)。実行がやり直せる失敗で終わったら、どちらも押せるように戻る
  */
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -63,6 +69,7 @@ vi.mock('framer-motion', () => {
 
 const { default: AIChatBubble } = await import('@/components/AIChatBubble');
 const { AI_PROPOSED_ACTION_REJECT_FAILED_MESSAGE } = await import('@/lib/ai/consultation-action-lifecycle');
+const { CONSULTATION_SESSION_CLOSED_STATUS, consultationSessionClosedBody } = await import('@/lib/ai/consultation-session-closed');
 
 const SESSION_ID = 'session-1';
 const MESSAGE_ID = 'message-1';
@@ -337,5 +344,138 @@ describe('#2295 「断る」の応答で画面を分ける', () => {
     expect(buttonByText(EXECUTE_BUTTON_TEXT)!.disabled).toBe(false);
     expect(deleteCalls()).toBe(1);
     expect(executeHandler).not.toHaveBeenCalled();
+  });
+});
+
+/** 実行の API の、やり直せる失敗の応答 (200 で success: false。retryable を添えない = やり直せる。行は pending に戻る) */
+const RETRYABLE_EXECUTE_FAILED_ERROR = 'retryable execute failed 2295';
+function retryableExecuteFailedResponse(): Response {
+  return json(200, { success: false, result: { error: RETRYABLE_EXECUTE_FAILED_ERROR }, actionType: 'add_pantry_item' });
+}
+
+function executeButton(): HTMLButtonElement {
+  const button = buttonByText(EXECUTE_BUTTON_TEXT);
+  expect(button).toBeDefined();
+  return button!;
+}
+
+function executeCalls(): number {
+  return vi.mocked(fetch).mock.calls.filter(
+    ([input, init]) => (init?.method ?? 'GET').toUpperCase() === 'POST' && String(input).endsWith(`/actions/${MESSAGE_ID}/execute`),
+  ).length;
+}
+
+describe('#2295 integrity-1107d 「実行する」の応答待ち・閉じる途中・終了した相談では「断る」も止める', () => {
+  it('「実行する」の応答待ちの間は「断る」を止める (同じ描画のうちの押下も DELETE を出さない)。やり直せる失敗で終わると、どちらも押せるように戻る', async () => {
+    const pendingExecute = deferred<Response>();
+    handlers[EXECUTE_KEY] = () => pendingExecute.promise;
+    const deleteHandler = vi.fn(async () => json(200, { success: true }));
+    handlers[DELETE_KEY] = deleteHandler;
+    await openChat();
+    const execute = executeButton();
+    const reject = rejectButton()!;
+    await act(async () => {
+      execute.click();
+      // 同じ描画のうちの「断る」の押下 (ボタンの止めがまだ描かれていない): rejectAction の入口で止める
+      reject.click();
+    });
+    await pollUntil(() => executeCalls() === 1);
+    expect(executeCalls()).toBe(1);
+    expect(deleteCalls()).toBe(0);
+    // 実行の応答待ちの間は、「実行する」も「断る」も押せない
+    expect(executeButton().disabled).toBe(true);
+    expect(rejectButton()!.disabled).toBe(true);
+    // 描かれたあとの押下も断らない
+    await click(rejectButton()!);
+    expect(deleteCalls()).toBe(0);
+    expect(deleteHandler).not.toHaveBeenCalled();
+    expect(guideShown()).toBe(false);
+    expect(text()).not.toContain(UNCONFIRMED_GUIDE_TEXT);
+
+    // 実行がやり直せる失敗で終わる (行は pending に戻る): カードは「実行する」のまま残り、どちらも押せるように戻る
+    await act(async () => {
+      pendingExecute.resolve(retryableExecuteFailedResponse());
+    });
+    await pollUntil(() => text().includes(RETRYABLE_EXECUTE_FAILED_ERROR));
+    expect(text()).toContain(RETRYABLE_EXECUTE_FAILED_ERROR);
+    await pollUntil(() => !executeButton().disabled);
+    expect(guideShown()).toBe(false);
+    expect(text()).not.toContain(UNCONFIRMED_GUIDE_TEXT);
+    expect(executeButton().disabled).toBe(false);
+    expect(rejectButton()!.disabled).toBe(false);
+
+    // 戻ったあとは断れる (DELETE は 1 回だけ・カードを閉じる)
+    await click(rejectButton()!);
+    await pollUntil(() => !cardShown());
+    expect(cardShown()).toBe(false);
+    expect(deleteCalls()).toBe(1);
+    expect(executeCalls()).toBe(1);
+  });
+
+  it('相談を閉じる (/close) の応答待ちの間は「断る」を止める (閉じると同じ描画のうちの押下も DELETE を出さない)', async () => {
+    const pendingClose = deferred<Response>();
+    handlers[`POST /api/ai/consultation/sessions/${SESSION_ID}/close`] = () => pendingClose.promise;
+    handlers[DELETE_KEY] = async () => json(200, { success: true });
+    await openChat();
+    const closeButton = container.querySelector<HTMLButtonElement>('button[title="相談を終了して要約を保存"]');
+    expect(closeButton).not.toBeNull();
+    const reject = rejectButton()!;
+    await act(async () => {
+      closeButton!.click();
+      // 閉じると同じ描画のうちの「断る」の押下 (ボタンの止めがまだ描かれていない): rejectAction の入口で止める
+      reject.click();
+    });
+    expect(deleteCalls()).toBe(0);
+    expect(rejectButton()!.disabled).toBe(true);
+    expect(executeButton().disabled).toBe(true);
+    await click(rejectButton()!);
+    expect(deleteCalls()).toBe(0);
+  });
+
+  it('終了した相談 (一覧の status が終了) では「断る」を止める (押しても DELETE を出さない)', async () => {
+    handlers['GET /api/ai/consultation/sessions?status=all'] = async () =>
+      json(200, { sessions: [{ id: SESSION_ID, title: 'AI相談', messageCount: 1, status: 'closed' }] });
+    handlers[DELETE_KEY] = async () => json(200, { success: true });
+    await openChat();
+    await pollUntil(() => rejectButton() !== null);
+    expect(text()).toContain(PANTRY_LABEL);
+    expect(rejectButton()!.disabled).toBe(true);
+    expect(executeButton().disabled).toBe(true);
+    await click(rejectButton()!);
+    expect(deleteCalls()).toBe(0);
+  });
+
+  it('送信が 409 (終了した相談) で返って終了と分かった直後 (止めがまだ描かれていない) の「断る」も、rejectAction の入口で止める', async () => {
+    handlers[`POST /api/ai/consultation/sessions/${SESSION_ID}/messages?stream=true`] = async () =>
+      json(CONSULTATION_SESSION_CLOSED_STATUS, consultationSessionClosedBody());
+    handlers[DELETE_KEY] = async () => json(200, { success: true });
+    await openChat();
+    // 終了と分かった (markSessionsClosed) すぐあとに一覧を読み直す。その読み直しの中 (描画の前) で「断る」を押す
+    let rejectEnabledWhenPressed: boolean | null = null;
+    handlers['GET /api/ai/consultation/sessions?status=all'] = async () => {
+      const reject = rejectButton();
+      if (reject && rejectEnabledWhenPressed === null) {
+        rejectEnabledWhenPressed = !reject.disabled;
+        reject.click();
+      }
+      return json(200, { sessions: [{ id: SESSION_ID, title: 'AI相談', messageCount: 1, status: 'closed' }] });
+    };
+    const input = container.querySelector<HTMLInputElement>('input[placeholder="メッセージを入力..."]');
+    expect(input).not.toBeNull();
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setValue.call(input, '明日の朝ごはんは?');
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const sendButton = container.querySelector<HTMLButtonElement>('button[aria-label="メッセージを送信"]');
+    expect(sendButton).not.toBeNull();
+    await act(async () => {
+      sendButton!.click();
+    });
+    await pollUntil(() => rejectEnabledWhenPressed !== null && rejectButton()?.disabled === true);
+    // 押したときはボタンがまだ押せた (止めは描かれていない) ので、止めたのは rejectAction の入口
+    expect(rejectEnabledWhenPressed).toBe(true);
+    expect(rejectButton()!.disabled).toBe(true);
+    expect(deleteCalls()).toBe(0);
   });
 });
