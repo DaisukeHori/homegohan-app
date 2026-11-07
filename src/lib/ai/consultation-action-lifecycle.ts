@@ -270,8 +270,8 @@ export type ProposedActionRejectNotFoundOutcome =
  */
 export function proposedActionRejectNotFoundOutcomeOfBody(body: unknown): ProposedActionRejectNotFoundOutcome {
   if (!body || typeof body !== 'object') return { kind: 'unknown' };
-  const fields = body as { proposedActionHidden?: unknown; notExecutableReason?: unknown };
-  if (fields.proposedActionHidden === true) return { kind: 'hidden' };
+  if (isProposedActionHiddenBody(body)) return { kind: 'hidden' };
+  const fields = body as { notExecutableReason?: unknown };
   if (isProposedActionNotExecutableReason(fields.notExecutableReason)) {
     return { kind: 'notExecutable', reason: fields.notExecutableReason };
   }
