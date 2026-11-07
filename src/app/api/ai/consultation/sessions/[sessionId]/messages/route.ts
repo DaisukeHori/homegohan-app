@@ -23,7 +23,7 @@ import {
   proposedActionViewOf,
   type ProposedActionNotExecutableReason,
 } from '@/lib/ai/consultation-action-lifecycle';
-import { writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
+import { newAiActionLogClaimToken, writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
 import { getAiActionLogWriter, isConsultationSessionOwnedBy } from '@/lib/ai/ai-action-log-writer';
 import { aiProfilePreferenceTypesForPrompt } from '@/lib/ai/profile-preference-updates';
 import { isMealType, MEAL_LABELS, MEAL_ORDER } from '@homegohan/shared';
@@ -198,6 +198,8 @@ async function executeAndFinalizeAction(
     };
   }
   const actionLogDb = getAiActionLogWriter();
+  // 行は実行中の印で作り、このリクエストだけの token (claim_token) も書く。書き戻しはこの token の行だけに書く (#2299 の B)
+  const claimToken = newAiActionLogClaimToken();
   const { data: actionLog, error: insertError } = await actionLogDb
     .from('ai_action_logs')
     .insert({
@@ -206,6 +208,7 @@ async function executeAndFinalizeAction(
       action_type: proposedActions.type,
       action_params: proposedActions.params || {},
       status: AI_ACTION_LOG_STATUS.running,
+      claim_token: claimToken,
     })
     .select('id')
     .single();
@@ -225,7 +228,7 @@ async function executeAndFinalizeAction(
     };
   }
 
-  const writeBackCtx = { userId: user.id, actionLogId: actionLog.id, actionType: proposedActions.type };
+  const writeBackCtx = { userId: user.id, actionLogId: actionLog.id, actionType: proposedActions.type, claimToken };
 
   try {
     const executionResult = await runConsultationAction(supabase, user, {

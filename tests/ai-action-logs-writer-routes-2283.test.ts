@@ -168,6 +168,16 @@ beforeEach(() => {
 });
 
 const actionLogWrites = () => h.writes.filter((w) => w.table === ACTION_LOGS);
+
+/** UUID の形 (claim_token は crypto.randomUUID() の値) */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** 実行中の印を付けた書き込み (取得の update / 自動実行の insert) が書いた claim_token (#2299 の B)。UUID の形でなければ落とす */
+function claimTokenOf(write: { payload: unknown }): string {
+  const token = (write.payload as Row).claim_token;
+  expect(token).toEqual(expect.stringMatching(UUID_SHAPE));
+  return token as string;
+}
 const actionLogReads = () => h.reads.filter((r) => r.table === ACTION_LOGS);
 
 /** 行の相談の持ち主が ownerId の、実行を待っている (pending の) 提案の行 (相談と結んで読んだ形) */
@@ -217,7 +227,8 @@ describe('POST /api/ai/consultation/actions/[actionId]/execute (#2283 Y1)', () =
       ['service', 'update', 'approved'],
       ['service', 'update', 'executed'],
     ]);
-    // 取得は行の id と pending の 2 つの条件 (今の条件のまま)・書き戻しは行の id と実行中の印 (approved) の 2 つの条件 (#2295)
+    // 取得は行の id と pending の 2 つの条件 (今の条件のまま)・書き戻しは行の id と実行中の印 (approved) (#2295) と、
+    // 取得で書いた token (#2299 の B) の 3 つの条件
     expect(writes[0].filters).toEqual([
       ['id', ACTION_LOG_ID],
       ['status', 'pending'],
@@ -225,6 +236,7 @@ describe('POST /api/ai/consultation/actions/[actionId]/execute (#2283 Y1)', () =
     expect(writes[1].filters).toEqual([
       ['id', ACTION_LOG_ID],
       ['status', 'approved'],
+      ['claim_token', claimTokenOf(writes[0])],
     ]);
     expect(actionLogReads().length).toBeGreaterThan(0);
     expect(actionLogReads().every((r) => r.client === 'user')).toBe(true);
@@ -388,6 +400,7 @@ describe.each([
     expect(writes[1].filters).toEqual([
       ['id', ACTION_LOG_ID],
       ['status', 'approved'],
+      ['claim_token', claimTokenOf(writes[0])],
     ]);
     expect((h.run.mock.calls[0][0] as { kind: string }).kind).toBe('user');
     // 提案の記録のほか (メッセージ・相談) は、利用者のセッションのまま書く (この Y1 では移さない)
@@ -419,5 +432,103 @@ describe.each([
     expect(h.writes).toEqual([]);
     expect(h.adminCreated).toBe(0);
     expect(h.run).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #2299 の B: 実行中の印を付けるたびに新しい token (claim_token) を書き、同じ実行の書き戻しはその token で絞る。
+ * 経路は execute の POST の 3 つ (成功などのあとの確定・実行が投げたときの戻し・今日の上限の戻し) と、
+ * messages の POST の自動実行の 2 つ (確定・実行が投げたときの戻し)
+ */
+describe('#2299 の B 実行中の印の token (claim_token)', () => {
+  /** 書き戻しの条件 (id・実行中の印・印を付けた書き込みの token) */
+  const writeBackFilters = (token: string) => [
+    ['id', ACTION_LOG_ID],
+    ['status', 'approved'],
+    ['claim_token', token],
+  ];
+  const AI_DAILY_LIMIT_DENIED = { allowed: false as const, limit: 10, used: 10, usageDate: '2026-11-01' };
+
+  it.each([
+    ['成功のあとの確定', () => h.run.mockResolvedValueOnce({ success: true, result: { itemId: 'p1', created: true } }), 200],
+    ['実行が投げたときの戻し', () => h.run.mockRejectedValueOnce(new Error('boom')), 500],
+    [
+      '今日の上限の戻し',
+      () => h.run.mockResolvedValueOnce({ success: false, result: { error: '上限' }, aiDailyLimit: AI_DAILY_LIMIT_DENIED }),
+      429,
+    ],
+  ] as const)('execute の POST (%s): 取得の update に新しい token を書き、書き戻しにはその同じ token を渡す', async (_label, arrange, expectedStatus) => {
+    h.single[ACTION_LOGS] = pendingLog(USER);
+    arrange();
+
+    const res = await executeRoute.POST(...actionRequest('POST'));
+
+    expect(res.status).toBe(expectedStatus);
+    const [claim, writeBack, ...rest] = actionLogWrites();
+    expect(rest).toEqual([]);
+    expect(claim).toMatchObject({ op: 'update', payload: { status: 'approved' } });
+    const token = claimTokenOf(claim);
+    expect(writeBack.op).toBe('update');
+    expect(writeBack.filters).toEqual(writeBackFilters(token));
+    // 書き戻しは token を書き換えない
+    expect(writeBack.payload as Row).not.toHaveProperty('claim_token');
+  });
+
+  it('execute の POST: リクエストごとに別の token を書く', async () => {
+    h.single[ACTION_LOGS] = pendingLog(USER);
+    h.run.mockResolvedValue({ success: true, result: { itemId: 'p1', created: true } });
+
+    await executeRoute.POST(...actionRequest('POST'));
+    await executeRoute.POST(...actionRequest('POST'));
+
+    const claims = actionLogWrites().filter((w) => (w.payload as Row).status === 'approved');
+    expect(claims).toHaveLength(2);
+    const [first, second] = claims.map(claimTokenOf);
+    expect(first).not.toBe(second);
+    // それぞれの書き戻しは、自分の取得の token
+    const writeBacks = actionLogWrites().filter((w) => (w.payload as Row).status === 'executed');
+    expect(writeBacks.map((w) => w.filters)).toEqual([writeBackFilters(first), writeBackFilters(second)]);
+  });
+
+  describe.each([
+    ['SSE', true],
+    ['JSON', false],
+  ])('messages の POST の自動実行 (%s)', (_label, stream) => {
+    it.each([
+      ['確定', () => h.run.mockResolvedValueOnce({ success: true, result: { itemId: 'p1', created: true } })],
+      ['実行が投げたときの戻し', () => h.run.mockRejectedValueOnce(new Error('boom'))],
+    ] as const)('%s: 行の insert に新しい token を書き、書き戻しにはその同じ token を渡す', async (_case, arrange) => {
+      sessionOf(USER);
+      stubAiReply(`卵を足しますね。${ACTION_JSON}`, stream);
+      arrange();
+
+      const { status } = await postMessage(stream);
+
+      expect(status).toBe(200);
+      const [insert, writeBack, ...rest] = actionLogWrites();
+      expect(rest).toEqual([]);
+      expect(insert).toMatchObject({ op: 'insert', payload: { status: 'approved' } });
+      const token = claimTokenOf(insert);
+      expect(writeBack.op).toBe('update');
+      expect(writeBack.filters).toEqual(writeBackFilters(token));
+      expect(writeBack.payload as Row).not.toHaveProperty('claim_token');
+    });
+
+    it('リクエストごとに別の token を書く', async () => {
+      sessionOf(USER);
+      h.run.mockResolvedValue({ success: true, result: { itemId: 'p1', created: true } });
+
+      stubAiReply(`卵を足しますね。${ACTION_JSON}`, stream);
+      await postMessage(stream);
+      stubAiReply(`卵を足しますね。${ACTION_JSON}`, stream);
+      await postMessage(stream);
+
+      const inserts = actionLogWrites().filter((w) => w.op === 'insert');
+      expect(inserts).toHaveLength(2);
+      const [first, second] = inserts.map(claimTokenOf);
+      expect(first).not.toBe(second);
+      const writeBacks = actionLogWrites().filter((w) => w.op === 'update');
+      expect(writeBacks.map((w) => w.filters)).toEqual([writeBackFilters(first), writeBackFilters(second)]);
+    });
   });
 });

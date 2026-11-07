@@ -33,7 +33,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import ws from 'ws';
 import { AI_ACTION_LOG_STATUS, aiActionLogStatusAfterRun } from '@/lib/ai/consultation-action-lifecycle';
-import { writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
+import { newAiActionLogClaimToken, writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
 import { getAiActionLogWriter } from '@/lib/ai/ai-action-log-writer';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -334,19 +334,28 @@ describe('#2283 Y2 サーバー (service_role) の書き込みは今までどお
     const created = await srAdmin.from(TABLE).insert(logRow(owner)).select('id').single();
     expect(created.error).toBeNull();
     const id = created.data!.id as string;
-    // 実行の API の取り方 (pending のときだけ実行中の印にする 1 文)。2 本同時に流しても行を返すのは 1 本だけ
+    // 実行の API の取り方 (pending のときだけ実行中の印にする 1 文。印には取った実行の token も書く。#2299 の B)。
+    // 2 本同時に流しても行を返すのは 1 本だけ
+    const claimTokens = [newAiActionLogClaimToken(), newAiActionLogClaimToken()];
     const claims = await Promise.all(
-      [srAdmin, client(serviceKey)].map((db) =>
-        db.from(TABLE).update({ status: AI_ACTION_LOG_STATUS.running }).eq('id', id).eq('status', AI_ACTION_LOG_STATUS.pending).select('id').maybeSingle(),
+      [srAdmin, client(serviceKey)].map((db, i) =>
+        db
+          .from(TABLE)
+          .update({ status: AI_ACTION_LOG_STATUS.running, claim_token: claimTokens[i] })
+          .eq('id', id)
+          .eq('status', AI_ACTION_LOG_STATUS.pending)
+          .select('id')
+          .maybeSingle(),
       ),
     );
     expect(claims.map((r) => r.error)).toEqual([null, null]);
     expect(claims.filter((r) => r.data !== null)).toHaveLength(1);
-    // 書き戻し (route と同じ関数・同じ書き手)
+    const winnerToken = claimTokens[claims.findIndex((r) => r.data !== null)];
+    // 書き戻し (route と同じ関数・同じ書き手。取った実行の token で絞る)
     const { error: writeBackError } = await writeBackAiActionLog(
       getAiActionLogWriter(),
       AUTO_EXECUTE_ROUTE_NAME,
-      { userId: owner.id, actionLogId: id, actionType: 'add_pantry_item' },
+      { userId: owner.id, actionLogId: id, actionType: 'add_pantry_item', claimToken: winnerToken },
       { status: AI_ACTION_LOG_STATUS.executed, result: { created: true }, executed_at: new Date().toISOString() },
     );
     expect(writeBackError).toBeNull();
@@ -366,9 +375,17 @@ describe('#2283 Y2 サーバー (service_role) の書き込みは今までどお
     const actionType = 'add_pantry_item';
     const actionParams = { name: `${DIRECT} auto` };
     const actionLogDb = getAiActionLogWriter();
+    const claimToken = newAiActionLogClaimToken();
     const { data: actionLog, error: insertError } = await actionLogDb
       .from(TABLE)
-      .insert({ session_id: owner.sessionId, message_id: owner.messageId, action_type: actionType, action_params: actionParams, status: AI_ACTION_LOG_STATUS.running })
+      .insert({
+        session_id: owner.sessionId,
+        message_id: owner.messageId,
+        action_type: actionType,
+        action_params: actionParams,
+        status: AI_ACTION_LOG_STATUS.running,
+        claim_token: claimToken,
+      })
       .select('id')
       .single();
     expect(insertError).toBeNull();
@@ -385,7 +402,7 @@ describe('#2283 Y2 サーバー (service_role) の書き込みは今までどお
     const { error: finalizeError } = await writeBackAiActionLog(
       actionLogDb,
       AUTO_EXECUTE_ROUTE_NAME,
-      { userId: owner.id, actionLogId, actionType },
+      { userId: owner.id, actionLogId, actionType, claimToken },
       { status, result: executionResult.result, executed_at: new Date().toISOString() },
     );
     expect(finalizeError).toBeNull();

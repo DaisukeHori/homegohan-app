@@ -20,6 +20,12 @@
  * 先に進めた) ので、書き直さずに書けたとして返す。呼び出し側 (execute の POST・messages の POST の自動実行) は、どれも行を
  * 実行中の印にしてから (POST は pending → approved の条件つきの 1 文、自動実行は approved で作る) 書き戻す。
  *
+ * 実行中の印は、どの実行が付けたかも見分ける (#2299 の B)。status = approved だけで絞ると、次の順で別の実行の印を上書きしえた:
+ * A の書き戻しの 1 回目が DB には書けたのに応答を失う → その間に B が pending → approved を取る → A の 2 回目が B の approved を
+ * pending で上書きする → B の書き戻しは 0 行になり、実行済みの提案の行が pending に残る (開き直すと「実行する」が出て二重に実行しうる)。
+ * そこで、印を付けるたびに新しい token (ai_action_logs.claim_token。newAiActionLogClaimToken) を書き、書き戻しは自分の token の
+ * 行だけに書く (ctx.claimToken)。token の列は supabase/migrations/20261107140000_ai_action_logs_claim_token.sql (#2301)。
+ *
  * サーバーだけで読む (ブラウザでは読まない)。
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -41,8 +47,37 @@ export const AI_ACTION_LOG_WRITE_BACK_NOT_RUNNING_LOG =
   'AI 相談の提案の行を書き戻そうとしたら、行がもう実行中の印ではありませんでした (書き戻しませんでした)';
 
 /**
- * 行を書き戻す。行が実行中の印 (approved) のときだけ書く。失敗したら 1 回だけ書き直す。
+ * 上の warn に添える理由 (reason)。0 行は、行がもう実行中の印でない (前の試みが書けた・ほかの操作が先に進めた) か、
+ * 別の実行が印を付け直した (claim_token が一致しない。#2299 の B) かのどちらか。1 文の更新では見分けられないので、両方を含む値にする。
+ * token の値そのものはログに出さない
+ */
+export const AI_ACTION_LOG_WRITE_BACK_NOT_RUNNING_REASON = 'not_running_or_claimed_by_another';
+
+/** 書き戻しの文脈 (ログの項目と、書き戻す行の条件) */
+export interface AiActionLogWriteBackContext {
+  userId: string;
+  actionLogId: string;
+  actionType: string;
+  /**
+   * この実行が実行中の印を付けたときに書いた token (ai_action_logs.claim_token。#2299 の B)。書き戻しはこの token の行だけに書く。
+   * 必須にして、呼び出し側が渡し忘れたら型で止める
+   */
+  claimToken: string;
+}
+
+/**
+ * 実行中の印 (approved) を付けるときに書く、新しい token (ai_action_logs.claim_token。#2299 の B)。
+ * 印を付けるたび (execute の POST の claim・messages の POST の自動実行の insert) に新しく作り、同じ実行の書き戻しに渡す
+ */
+export function newAiActionLogClaimToken(): string {
+  return crypto.randomUUID();
+}
+
+/**
+ * 行を書き戻す。行が実行中の印 (approved) で、印がこの実行の token (ctx.claimToken) のときだけ書く。失敗したら 1 回だけ書き直す。
  * 条件に合う行が無ければ (0 行) 書き直さずに null を返す (上書きしない。1 回目の試みで 0 行なら warn を残す)。
+ * 書き戻しでは claim_token を書き換えない (消さない): 次に印を付ける実行が新しい token で上書きするので、残っていても古い実行の
+ * 書き戻しは当たらない。消すと、書き戻しの payload に列が増えるだけで守りは変わらない (#2299 の B の決定)。
  * 最後まで書けなかったら構造化ログに残し、その失敗を返す (書けたら null)
  *
  * @param routeName ログの function_name (呼び出した route)
@@ -50,7 +85,7 @@ export const AI_ACTION_LOG_WRITE_BACK_NOT_RUNNING_LOG =
 export async function writeBackAiActionLog(
   actionLogDb: AiActionLogWriter,
   routeName: string,
-  ctx: { userId: string; actionLogId: string; actionType: string },
+  ctx: AiActionLogWriteBackContext,
   payload: Record<string, unknown>,
 ): Promise<{ error: unknown }> {
   let lastError: unknown = null;
@@ -60,6 +95,8 @@ export async function writeBackAiActionLog(
       .update(payload)
       .eq('id', ctx.actionLogId)
       .eq('status', AI_ACTION_LOG_STATUS.running)
+      // 別の実行が印を付け直した行には書かない (#2299 の B。status だけでは、どの実行の印かを見分けられない)
+      .eq('claim_token', ctx.claimToken)
       .select('id')
       .maybeSingle();
     if (error) {
@@ -67,7 +104,7 @@ export async function writeBackAiActionLog(
       continue;
     }
     if (!data && attempt === 1) warnNotRunning(routeName, ctx, payload);
-    // 書けた、または行がもう実行中の印でない (前の試みが書けた・ほかの操作が先に進めた): どちらも書き直さない
+    // 書けた、または行がもう実行中の印でない (前の試みが書けた・ほかの操作が先に進めた・別の実行が印を付け直した): どれも書き直さない
     return { error: null };
   }
   try {
@@ -91,14 +128,16 @@ export async function writeBackAiActionLog(
 /** 1 回目の試みで行が実行中の印でなかったことを構造化ログに warn で残す (記録に失敗しても書き戻しの結果は変えない) */
 function warnNotRunning(
   routeName: string,
-  ctx: { userId: string; actionLogId: string; actionType: string },
+  ctx: AiActionLogWriteBackContext,
   payload: Record<string, unknown>,
 ): void {
   try {
+    // token の値は出さない (理由だけ)
     createLogger(routeName, generateRequestId()).withUser(ctx.userId).warn(AI_ACTION_LOG_WRITE_BACK_NOT_RUNNING_LOG, {
       action_id: ctx.actionLogId,
       action_type: ctx.actionType,
       status: payload.status,
+      reason: AI_ACTION_LOG_WRITE_BACK_NOT_RUNNING_REASON,
     });
   } catch (loggingError) {
     console.error(`[${routeName}] 書き戻しの warn の構造化ログへの記録に失敗しました`, loggingError);

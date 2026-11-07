@@ -7,6 +7,8 @@
  *
  * 直したあと:
  *   - 毎回の update に .eq('status', 'approved') (実行中の印) を足し、.select('id').maybeSingle() で書けた行を受け取る
+ *     (#2299 の B で、印を付けた実行の token の条件 .eq('claim_token', ctx.claimToken) も足した。ABA の順は
+ *     tests/ai-action-log-write-back-claim-token-2299.test.ts)
  *   - 書けた行が無い (0 行) ときは、書き直さずに { error: null } を返す (上書きしない)。1 回目の試みで 0 行なら warn を残す
  *   - 2 回とも error なら、今までどおり error を返してログ (error) に残す
  *
@@ -42,7 +44,14 @@ const {
 
 const ROUTE = 'POST /api/ai/consultation/actions/[actionId]/execute';
 const ACTION_LOG_ID = '33333333-3333-4333-8333-333333333333';
-const CTX = { userId: '11111111-1111-4111-8111-111111111111', actionLogId: ACTION_LOG_ID, actionType: 'add_pantry_item' };
+/** この実行が実行中の印を付けたときに書いた token (#2299 の B) */
+const CLAIM_TOKEN = '66666666-6666-4666-8666-666666666666';
+const CTX = {
+  userId: '11111111-1111-4111-8111-111111111111',
+  actionLogId: ACTION_LOG_ID,
+  actionType: 'add_pantry_item',
+  claimToken: CLAIM_TOKEN,
+};
 const PAYLOAD = { status: 'pending', executed_at: null };
 /** 手で書いた期待値 (定数の文が変わったらこのテストも直す) */
 const WRITE_BACK_FAILED_LOG = 'AI 相談の提案の行を実行のあとに書き戻せませんでした (実行中の印のまま残ります)';
@@ -110,7 +119,7 @@ describe('#2295 書き戻しは行が実行中の印 (approved) のときだけ�
     expect(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS).toBe(2);
   });
 
-  it('1 回目で書けた: update は [id, status=approved] の条件つきで 1 回だけ出て、書けた行を受け取る。ログは残さない', async () => {
+  it('1 回目で書けた: update は [id, status=approved, claim_token=<token>] の条件つきで 1 回だけ出て、書けた行を受け取る。ログは残さない', async () => {
     const { db, updates } = fakeDb(['row']);
 
     const result = await writeBackAiActionLog(db, ROUTE, CTX, PAYLOAD);
@@ -123,6 +132,7 @@ describe('#2295 書き戻しは行が実行中の印 (approved) のときだけ�
         filters: [
           ['id', ACTION_LOG_ID],
           ['status', 'approved'],
+          ['claim_token', CLAIM_TOKEN],
         ],
         selected: 'id',
         terminal: 'maybeSingle',
@@ -143,6 +153,7 @@ describe('#2295 書き戻しは行が実行中の印 (approved) のときだけ�
     expect(updates[1].filters).toEqual([
       ['id', ACTION_LOG_ID],
       ['status', 'approved'],
+      ['claim_token', CLAIM_TOKEN],
     ]);
     expect(updates[1].terminal).toBe('maybeSingle');
     expect(h.logWarn).not.toHaveBeenCalled();
@@ -171,10 +182,12 @@ describe('#2295 書き戻しは行が実行中の印 (approved) のときだけ�
       expect.anything(),
       expect.objectContaining({ action_id: ACTION_LOG_ID, action_type: 'add_pantry_item', status: 'pending', attempts: 2 }),
     );
+    // token の値はログに出さない (#2299 の B)
+    expect(JSON.stringify(h.logError.mock.calls)).not.toContain(CLAIM_TOKEN);
     expect(h.logWarn).not.toHaveBeenCalled();
   });
 
-  it('1 回目が 0 行 (行がもう実行中の印でない。想定外): 書き直さずに { error: null }、warn を残す', async () => {
+  it('1 回目が 0 行 (行がもう実行中の印でない・別の実行が印を付け直した。想定外): 書き直さずに { error: null }、warn を残す (token の値は出さない)', async () => {
     const { db, updates } = fakeDb(['none']);
 
     const result = await writeBackAiActionLog(db, ROUTE, CTX, PAYLOAD);
@@ -186,7 +199,9 @@ describe('#2295 書き戻しは行が実行中の印 (approved) のときだけ�
       action_id: ACTION_LOG_ID,
       action_type: 'add_pantry_item',
       status: 'pending',
+      reason: 'not_running_or_claimed_by_another',
     });
+    expect(JSON.stringify(h.logWarn.mock.calls)).not.toContain(CLAIM_TOKEN);
     expect(h.logError).not.toHaveBeenCalled();
   });
 });

@@ -1072,8 +1072,9 @@ describe('consultation execute (#1149): 献立の生成のアクションが上�
     expect(res.status).toBe(429);
     expect(await bodyOf(res)).toMatchObject({ code: 'AI_DAILY_LIMIT', limit: 10 });
     // 書くのは実行中の印 (approved) と、pending への戻しだけ (executed / failed にしない・result を書かない)
+    // 実行中の印には、このリクエストの token (claim_token) も書く (#2299 の B)。戻しは token を書き換えない
     expect(h.state.writes.filter((w) => w.table === 'ai_action_logs').map((w) => w.payload)).toEqual([
-      { status: 'approved' },
+      { status: 'approved', claim_token: expect.stringMatching(/^[0-9a-f-]{36}$/) },
       { status: 'pending' },
     ]);
   });
