@@ -11,14 +11,14 @@ import { API_UNAUTHENTICATED_MESSAGE, API_FORBIDDEN_MESSAGE } from '@/lib/api/er
 import { AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
 import {
   AI_ACTION_LOG_STATUS,
-  PROPOSED_ACTION_NOT_EXECUTABLE_REASON,
   aiActionLogStatusAfterFailure,
   aiActionLogStatusAfterRun,
   notExecutableReasonAfterRun,
-  proposedActionNotExecutableReasonOfStatus,
-  proposedActionNotExecutableReasonOfStatuses,
+  proposedActionExecuteClaimLostFieldsOfStatuses,
+  proposedActionExecuteNotExecutableFieldsOfStatuses,
   proposedActionRejectNotFoundFieldsOfView,
   proposedActionViewOf,
+  type ProposedActionExecuteNotExecutableFields,
   type ProposedActionNotExecutableReason,
 } from '@/lib/ai/consultation-action-lifecycle';
 import { writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
@@ -70,7 +70,21 @@ function notExecutableResponse(
 }
 
 /**
- * メッセージに付いた行 (ai_action_logs) の状態を読む。実行の API (POST) と断る API (DELETE) の 404 が、添える値を決めるのに使う。
+ * 実行できない提案の応答 (400 / 404) に、カードの見え方を添える (#2299)。断った提案 (別のタブで断った) は proposedActionHidden: true
+ * (画面はカードを閉じる。相談を開き直したときの GET の hidden と同じ)、それ以外は「実行する」を出さない理由 (#2195 V2)。
+ * 状態 (status) と error の固定の文は変えない
+ */
+function notExecutableFieldsResponse(
+  error: string,
+  status: 400 | 404,
+  fields: ProposedActionExecuteNotExecutableFields,
+): NextResponse {
+  return NextResponse.json({ error, ...fields }, { status });
+}
+
+/**
+ * メッセージに付いた行 (ai_action_logs) の状態を読む。実行の API (POST) の 404 と claim が 0 行の 400 (#2299)、断る API (DELETE) の 404 が、
+ * 添える値を決めるのに使う。
  * 自分の相談の行だけを見る (ai_consultation_sessions.user_id = 本人。ほかの人の行の有無は返さない)。読めなかったときは null
  */
 async function actionLogStatusesOfMessage(
@@ -88,17 +102,18 @@ async function actionLogStatusesOfMessage(
 }
 
 /**
- * メッセージ ID で実行を待っている (pending の) 行が見つからなかったとき、そのメッセージの行の状態から「実行する」を出さない理由を決める。
+ * メッセージ ID で実行を待っている (pending の) 行が見つからなかったとき、そのメッセージの行の状態から本文に添える値を決める。
  * Web の提案のカードはメッセージ ID で実行の API を呼ぶので、別の画面・自動実行が実行中か実行済みの提案を押すとここに来る。
- * 読めなかった・行が無いときは null (理由を添えない)
+ * 別のタブで断った提案 (rejected があり、executed も approved も無い) は proposedActionHidden: true (#2299。以前は rejected を
+ * failed に写し、「もう一度 AI に頼んでください」と出ていた)、それ以外は「実行する」を出さない理由 (#2195 V2)。
+ * 読めなかった・行が無いときは何も添えない
  */
-async function notExecutableReasonOfMessage(
+async function notExecutableFieldsOfMessage(
   supabase: Awaited<ReturnType<typeof createClient>>,
   messageId: string,
   userId: string,
-): Promise<ProposedActionNotExecutableReason | null> {
-  const statuses = await actionLogStatusesOfMessage(supabase, messageId, userId);
-  return statuses ? proposedActionNotExecutableReasonOfStatuses(statuses) : null;
+): Promise<ProposedActionExecuteNotExecutableFields> {
+  return proposedActionExecuteNotExecutableFieldsOfStatuses(await actionLogStatusesOfMessage(supabase, messageId, userId));
 }
 
 /**
@@ -177,11 +192,12 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
         return internalError(EXECUTE_ROUTE_NAME, msgError, { userId: user.id, table: 'ai_action_logs' });
       }
       if (!actionByMessage) {
-        // 実行を待っている行が無い。実行中・実行済みなら、画面は頼み直しを勧めない案内にする (#2195 V2)
-        return notExecutableResponse(
+        // 実行を待っている行が無い。実行中・実行済みなら、画面は頼み直しを勧めない案内にする (#2195 V2)。
+        // 断った提案なら、画面はカードを閉じる (#2299)
+        return notExecutableFieldsResponse(
           AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE,
           404,
-          await notExecutableReasonOfMessage(supabase, params.actionId, user.id),
+          await notExecutableFieldsOfMessage(supabase, params.actionId, user.id),
         );
       }
       action = actionByMessage;
@@ -198,10 +214,11 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
     }
 
     if (action.status !== AI_ACTION_LOG_STATUS.pending) {
-      return notExecutableResponse(
+      // 読んだ 1 行の状態で決める。断った (rejected) 行はカードを閉じる (#2299)、それ以外は今までの理由
+      return notExecutableFieldsResponse(
         AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE,
         400,
-        proposedActionNotExecutableReasonOfStatus(action.status),
+        proposedActionExecuteNotExecutableFieldsOfStatuses([action.status]),
       );
     }
 
@@ -229,11 +246,15 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
       return internalError(EXECUTE_ROUTE_NAME, claimError, { userId: user.id, table: 'ai_action_logs' });
     }
     if (!claimed) {
-      // 読んだあとに別の画面・自動実行が先に取った (実行中か実行済み)
-      return notExecutableResponse(
+      // 読んだあとに別の画面・自動実行が先に取った (実行中か実行済み)。間に別の画面が断ったこともあるので、そのメッセージの行の状態を
+      // 読み直す (#2299。以前は runningOrDone に決め打ちし、断った提案にも「実行中か実行済み」と出ていた)。断った提案はカードを閉じ、
+      // それ以外 (実行中の印・実行済み・読めない など) は今までどおり runningOrDone
+      const statusesAfterClaimLost =
+        typeof action.message_id === 'string' ? await actionLogStatusesOfMessage(supabase, action.message_id, user.id) : null;
+      return notExecutableFieldsResponse(
         AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE,
         400,
-        PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone,
+        proposedActionExecuteClaimLostFieldsOfStatuses(statusesAfterClaimLost),
       );
     }
 

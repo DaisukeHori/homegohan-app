@@ -814,7 +814,6 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
     ['approved', 'unconfirmed'],
     ['executed', 'runningOrDone'],
     ['failed', 'failed'],
-    ['rejected', 'failed'],
   ])('(c) 行 ID で読んだ行が pending でない (%s): 400 に理由 %s', async (rowStatus, reason) => {
     h.single.ai_action_logs = { ...pendingLog('add_pantry_item'), status: rowStatus };
 
@@ -822,6 +821,16 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
 
     expect(status).toBe(400);
     expect(body).toEqual({ error: AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE, notExecutableReason: reason });
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it('(c) 行 ID で読んだ行が rejected (断った): 400 に proposedActionHidden (理由は添えない。#2299)', async () => {
+    h.single.ai_action_logs = { ...pendingLog('add_pantry_item'), status: 'rejected' };
+
+    const { status, body } = await execute();
+
+    expect(status).toBe(400);
+    expect(body).toEqual({ error: AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE, proposedActionHidden: true });
     expect(h.run).not.toHaveBeenCalled();
   });
 
@@ -856,7 +865,7 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
       [['failed', 'approved'], 'unconfirmed'],
       [['approved', 'executed'], 'runningOrDone'],
       [['failed'], 'failed'],
-      [['rejected'], 'failed'],
+      [['rejected', 'executed'], 'runningOrDone'],
     ] as const)('そのメッセージの行 %j: 404 に理由 %s', async (statuses, reason) => {
       h.single.ai_action_logs = null;
       h.rows.ai_action_logs = statuses.map((status) => ({ status, ai_consultation_sessions: { user_id: USER } }));
@@ -871,6 +880,16 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
         ['message_id', ACTION_LOG_ID],
         ['ai_consultation_sessions.user_id', USER],
       ]);
+    });
+
+    it('そのメッセージの行が rejected だけ (別のタブで断った): 404 に proposedActionHidden (理由は添えない。#2299)', async () => {
+      h.single.ai_action_logs = null;
+      h.rows.ai_action_logs = [{ status: 'rejected', ai_consultation_sessions: { user_id: USER } }];
+
+      const { status, body } = await execute();
+
+      expect(status).toBe(404);
+      expect(body).toEqual({ error: '提案された操作が見つかりません', proposedActionHidden: true });
     });
 
     it('そのメッセージの行が無い: 404 に理由を添えない (画面は頼み直しの案内)', async () => {
