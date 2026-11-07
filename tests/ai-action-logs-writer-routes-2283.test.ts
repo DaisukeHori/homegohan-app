@@ -217,12 +217,15 @@ describe('POST /api/ai/consultation/actions/[actionId]/execute (#2283 Y1)', () =
       ['service', 'update', 'approved'],
       ['service', 'update', 'executed'],
     ]);
-    // 取得は行の id と pending の 2 つの条件 (今の条件のまま)・書き戻しは行の id
+    // 取得は行の id と pending の 2 つの条件 (今の条件のまま)・書き戻しは行の id と実行中の印 (approved) の 2 つの条件 (#2295)
     expect(writes[0].filters).toEqual([
       ['id', ACTION_LOG_ID],
       ['status', 'pending'],
     ]);
-    expect(writes[1].filters).toEqual([['id', ACTION_LOG_ID]]);
+    expect(writes[1].filters).toEqual([
+      ['id', ACTION_LOG_ID],
+      ['status', 'approved'],
+    ]);
     expect(actionLogReads().length).toBeGreaterThan(0);
     expect(actionLogReads().every((r) => r.client === 'user')).toBe(true);
     expect((h.run.mock.calls[0][0] as { kind: string }).kind).toBe('user');
@@ -379,7 +382,10 @@ describe.each([
       ['service', 'update', 'executed'],
     ]);
     expect(writes[0].payload).toMatchObject({ session_id: SESSION_ID, message_id: AI_MESSAGE_ID, action_type: 'add_pantry_item' });
-    expect(writes[1].filters).toEqual([['id', ACTION_LOG_ID]]);
+    expect(writes[1].filters).toEqual([
+      ['id', ACTION_LOG_ID],
+      ['status', 'approved'],
+    ]);
     expect((h.run.mock.calls[0][0] as { kind: string }).kind).toBe('user');
     // 提案の記録のほか (メッセージ・相談) は、利用者のセッションのまま書く (この Y1 では移さない)
     expect(h.writes.filter((w) => w.table !== ACTION_LOGS).every((w) => w.client === 'user')).toBe(true);
